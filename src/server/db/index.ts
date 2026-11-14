@@ -1191,7 +1191,15 @@ function createClient() {
 
   // In production, DATABASE_URL is strictly required; fail loudly with no in-memory fallback
   if (process.env.NODE_ENV === "production") {
+    const isBuildPhase =
+      process.env.NEXT_PHASE === "phase-production-build" ||
+      process.env.npm_lifecycle_event === "build";
+
     if (!connString || connString.trim() === "") {
+      if (isBuildPhase) {
+        // Allow static compilation/tracing during build phase without live DB connection
+        return new LocalDevMockDb() as any;
+      }
       throw new Error(
         "FATAL: DATABASE_URL environment variable is missing in production. Refusing to start with in-memory fallback."
       );
