@@ -25,13 +25,18 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Install tini process supervisor and curl for healthchecks
+# Install tini process supervisor, gosu for privilege dropping, and curl for healthchecks
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    gosu \
     tini \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Create nextjs system group and user (non-root)
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
 
 # Copy built Next.js artifacts and dependencies
 COPY --from=builder /app/public ./public
@@ -48,8 +53,9 @@ COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh
 RUN chmod +x /app/docker/entrypoint.sh
 
-# Create persistent directories for uploads and backups
-RUN mkdir -p /data/uploads /data/backups
+# Create persistent directories for uploads and backups and set ownership
+RUN mkdir -p /data/uploads /data/backups && \
+    chown -R nextjs:nodejs /app /data
 
 EXPOSE 3000
 
