@@ -98,6 +98,46 @@ export function getEffectiveAccountDailyLimit(account: {
 }
 
 /**
+ * Validates whether an email account has operational reply detection.
+ * Required for follow-up sequence execution and stop-on-reply guarantee.
+ */
+export function accountHasWorkingReplyDetection(account: {
+  provider: string;
+  imap_host?: string | null;
+  imap_password_enc?: string | null;
+  has_imap_password?: boolean;
+  oauth_scopes?: string[] | null;
+  reply_inbox_account_id?: string | null;
+  reply_inbox?: any;
+  status?: string | null;
+}): { capable: boolean; reason?: string } {
+  // If account delegates replies to a designated reply inbox
+  if (account.reply_inbox_account_id || account.reply_inbox) {
+    return { capable: true };
+  }
+
+  // If account has direct IMAP configured with host & password
+  const hasPass = Boolean(account.imap_password_enc || account.has_imap_password);
+  if (account.imap_host && (hasPass || account.provider === "smtp")) {
+    return { capable: true };
+  }
+
+  // If account is Google OAuth with gmail.readonly granted
+  if (
+    account.provider === "gmail_api" &&
+    Array.isArray(account.oauth_scopes) &&
+    account.oauth_scopes.some((s) => s.includes("gmail.readonly") || s.includes("mail.google.com"))
+  ) {
+    return { capable: true };
+  }
+
+  return {
+    capable: false,
+    reason: "For follow-ups and stop-on-reply, connect with App Password + IMAP",
+  };
+}
+
+/**
  * Nightly maintenance task: Increments warmup_day by 1 for accounts with warmup_enabled = true.
  * - Idempotent: Skips accounts already incremented on the same calendar day (UTC).
  * - Capped: Capped at the day where calculated limit reaches warmup_max_limit.
@@ -598,10 +638,13 @@ function sanitizeAccount(acc: any) {
     oauth_refresh_token_enc,
     ...rest
   } = acc;
+  const replyCheck = accountHasWorkingReplyDetection(acc);
   return {
     ...rest,
     has_smtp_password: Boolean(smtp_password_enc),
     has_imap_password: Boolean(imap_password_enc),
     has_oauth_token: Boolean(oauth_access_token_enc || oauth_refresh_token_enc),
+    has_reply_detection: replyCheck.capable,
+    reply_detection_reason: replyCheck.reason,
   };
 }

@@ -181,12 +181,31 @@ export async function pollInboxesForReplies(): Promise<PollResult> {
               const bodyText = parsed.text || "";
 
               // 3. Match against campaign recipients:
-              // Priority 1: exact Message-ID (In-Reply-To) across this user's campaigns
+              // Priority 1: exact Message-ID (In-Reply-To / References) across this user's campaigns
               let matchingRecipient: any = null;
+              const refCandidates: string[] = [];
               if (inReplyTo) {
+                refCandidates.push(inReplyTo);
+              }
+              const headerRefs = parsed.headers?.get("references");
+              if (typeof headerRefs === "string") {
+                const matches = headerRefs.match(/<[^>]+>/g);
+                if (matches) {
+                  refCandidates.push(...matches);
+                }
+              } else if (Array.isArray(headerRefs)) {
+                for (const r of headerRefs) {
+                  if (typeof r === "string") {
+                    const matches = r.match(/<[^>]+>/g);
+                    if (matches) refCandidates.push(...matches);
+                  }
+                }
+              }
+
+              if (refCandidates.length > 0) {
                 matchingRecipient = await db.campaign_recipients.findFirst({
                   where: {
-                    thread_message_id: inReplyTo,
+                    thread_message_id: { in: refCandidates },
                     user_id: account.user_id,
                   },
                 });

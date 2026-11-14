@@ -1,11 +1,12 @@
-import nodemailer from "nodemailer";
+import crypto from "node:crypto";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { decrypt } from "@/server/crypto";
-import { getDecryptedAccountCredentials } from "@/server/email/account-service";
+import { accountHasWorkingReplyDetection } from "@/server/email/account-service";
 import { renderEmailTemplate } from "@/server/email/template-renderer";
 import { getUserApiKey } from "@/server/api-keys/service";
 import { generateOutreachEmail } from "@/server/ai/outreach-generator";
+import { buildEmailMultipartBodies, dispatchEmailTransport } from "@/server/email/sending-engine";
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
@@ -176,6 +177,19 @@ export async function sendSingleRecipientFollowup(
     return { skipped: true, reason: "Assigned sender account is not active" };
   }
 
+  // Pre-dispatch Reply Detection Guard: Do not send follow-ups if account cannot detect replies
+  const replyCheck = accountHasWorkingReplyDetection(account);
+  if (!replyCheck.capable) {
+    logger.warn(
+      { recipientId: recipient.id, accountId: account.id, email: account.from_email },
+      "Skipping follow-up dispatch: account does not have working reply detection"
+    );
+    return {
+      skipped: true,
+      reason: "Sender account does not support reply detection. Follow-ups disabled.",
+    };
+  }
+
   const sixtyMinutesAgo = new Date(now.getTime() - 60 * 60 * 1000);
   const sentLastHour = await db.email_messages.count({
     where: {
@@ -271,38 +285,31 @@ export async function sendSingleRecipientFollowup(
       );
     }
 
-    const emailFooter = `\n\n---\n${legalAddress}\nTo unsubscribe: ${unsubscribeUrl}`;
-    const fullBodyText = finalBody + emailFooter;
-
-    // 4. Send via nodemailer with Threading Headers
-    const creds = await getDecryptedAccountCredentials(account.id);
-    if (!creds || !creds.smtp_host) {
-      throw new Error("Invalid SMTP credentials for account");
-    }
-
-    const transport = nodemailer.createTransport({
-      host: creds.smtp_host,
-      port: creds.smtp_port || 587,
-      secure: creds.smtp_security === "ssl" || creds.smtp_port === 465,
-      auth: {
-        user: creds.smtp_username || account.from_email,
-        pass: creds.smtp_password,
-      },
-      connectionTimeout: 8000,
-      greetingTimeout: 6000,
-      socketTimeout: 10000,
+    // 4. Construct multipart body and dispatch via shared transport (Gmail API or SMTP)
+    const { text: plainTextBody, html: htmlBody } = buildEmailMultipartBodies({
+      bodyText: finalBody,
+      legalAddress,
+      unsubscribeUrl,
+      trackingOpen: Boolean(campaign.tracking_open),
+      trackingClick: Boolean(campaign.tracking_click),
+      unsubscribeToken: recipient.unsubscribe_token,
+      baseUrl: BASE_URL,
     });
 
+    const senderDomain = account.from_email.split("@")[1] || "leadreach.ai";
+    const explicitMessageId = `<${crypto.randomUUID()}@${senderDomain}>`;
     const threadHeader = recipient.thread_message_id || undefined;
 
-    const sendResult = await transport.sendMail({
-      from: `"${account.from_name || account.from_email}" <${account.from_email}>`,
+    const transportResult = await dispatchEmailTransport({
+      account,
       to: recipient.email,
-      replyTo: account.reply_to || account.from_email,
       subject: finalSubject,
-      text: fullBodyText,
+      text: plainTextBody,
+      html: htmlBody,
+      explicitMessageId,
+      inReplyTo: threadHeader,
+      references: threadHeader,
       headers: {
-        ...(threadHeader ? { "In-Reply-To": threadHeader, References: threadHeader } : {}),
         "List-Unsubscribe": `<${unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         "X-LeadReachAI-Campaign-Id": campaign.id,
@@ -311,9 +318,7 @@ export async function sendSingleRecipientFollowup(
       },
     });
 
-    transport.close();
-
-    const messageId = sendResult.messageId || `msg_followup_${Date.now()}`;
+    const messageId = transportResult.messageId;
 
     // 5. Record message and update recipient step
     await db.email_messages.create({

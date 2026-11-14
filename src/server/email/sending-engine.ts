@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import nodemailer from "nodemailer";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
@@ -289,6 +290,129 @@ export async function selectAvailableAccountForCampaign(campaignId: string, user
   return { account: evaluatedAccounts[0].account, throttled: false };
 }
 
+export interface DispatchTransportInput {
+  account: {
+    id: string;
+    provider: string;
+    from_name?: string | null;
+    from_email: string;
+    reply_to?: string | null;
+    reply_inbox_account_id?: string | null;
+  };
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  explicitMessageId: string;
+  inReplyTo?: string | null;
+  references?: string | null;
+  headers?: Record<string, string>;
+}
+
+/**
+ * Shared email transport: routes through Gmail API or validated external SMTP.
+ * Enforces explicit RFC Message-ID and threading headers for both send paths.
+ */
+export async function dispatchEmailTransport(
+  input: DispatchTransportInput
+): Promise<{ messageId: string }> {
+  const {
+    account,
+    to,
+    subject,
+    text,
+    html,
+    explicitMessageId,
+    inReplyTo,
+    references,
+    headers = {},
+  } = input;
+
+  // Resolve effective Reply-To header: account.reply_to -> linked reply_inbox -> account.from_email
+  let effectiveReplyTo = account.reply_to?.trim() || "";
+  if (!effectiveReplyTo && account.reply_inbox_account_id) {
+    try {
+      const linkedInbox = await db.email_accounts.findUnique({
+        where: { id: account.reply_inbox_account_id },
+        select: { from_email: true },
+      });
+      if (linkedInbox?.from_email) {
+        effectiveReplyTo = linkedInbox.from_email.trim();
+      }
+    } catch {}
+  }
+  if (!effectiveReplyTo) {
+    effectiveReplyTo = account.from_email;
+  }
+
+  const mergedHeaders: Record<string, string> = {
+    ...headers,
+    "Message-ID": explicitMessageId,
+  };
+  if (inReplyTo) {
+    mergedHeaders["In-Reply-To"] = inReplyTo;
+    mergedHeaders["References"] = references || inReplyTo;
+  }
+
+  if (account.provider === "gmail_api") {
+    const accessToken = await ensureFreshGoogleAccessToken(account.id);
+    const fromAddr = account.from_name
+      ? `"${account.from_name}" <${account.from_email}>`
+      : account.from_email;
+
+    const result = await sendViaGmailApi(accessToken, {
+      from: fromAddr,
+      to,
+      replyTo: effectiveReplyTo,
+      subject,
+      text,
+      html,
+      messageId: explicitMessageId,
+      inReplyTo: inReplyTo || undefined,
+      references: (references || inReplyTo) || undefined,
+      headers: mergedHeaders,
+    });
+    return { messageId: result.messageId || explicitMessageId };
+  } else {
+    // SMTP transport
+    const creds = await getDecryptedAccountCredentials(account.id);
+    if (!creds || !creds.smtp_host) {
+      throw new Error("Invalid SMTP credentials for account");
+    }
+
+    const transport = nodemailer.createTransport({
+      host: creds.smtp_host,
+      port: creds.smtp_port || 587,
+      secure: creds.smtp_security === "ssl" || creds.smtp_port === 465,
+      auth: {
+        user: creds.smtp_username || account.from_email,
+        pass: creds.smtp_password,
+      },
+      connectionTimeout: 8000,
+      greetingTimeout: 6000,
+      socketTimeout: 10000,
+    });
+
+    try {
+      await transport.sendMail({
+        from: `"${account.from_name || account.from_email}" <${account.from_email}>`,
+        to,
+        replyTo: effectiveReplyTo,
+        subject,
+        text,
+        html,
+        messageId: explicitMessageId,
+        headers: mergedHeaders,
+      });
+      return { messageId: explicitMessageId };
+    } finally {
+      if (transport && typeof transport.close === "function") {
+        transport.close();
+      }
+    }
+  }
+}
+
 /**
  * Sends a single email to a recipient, observing rate limits, headers, suppressions,
  * dual dispatch (Gmail REST API vs SMTP), and threading.
@@ -514,93 +638,28 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       baseUrl: BASE_URL,
     });
 
-    let messageId = "";
+    // Generate explicit RFC Message-ID
+    const senderDomain = account.from_email.split("@")[1] || "leadreach.ai";
+    const explicitMessageId = `<${crypto.randomUUID()}@${senderDomain}>`;
 
-    // Resolve effective Reply-To header: account.reply_to -> linked reply_inbox -> account.from_email
-    let effectiveReplyTo = account.reply_to?.trim() || "";
-    if (!effectiveReplyTo && account.reply_inbox_account_id) {
-      try {
-        const linkedInbox = await db.email_accounts.findUnique({
-          where: { id: account.reply_inbox_account_id },
-          select: { from_email: true },
-        });
-        if (linkedInbox?.from_email) {
-          effectiveReplyTo = linkedInbox.from_email.trim();
-        }
-      } catch {}
-    }
-    if (!effectiveReplyTo) {
-      effectiveReplyTo = account.from_email;
-    }
-
-    // 5. Dual Dispatch: Gmail API vs SMTP (multipart/alternative)
-    if (account.provider === "gmail_api") {
-      const accessToken = await ensureFreshGoogleAccessToken(account.id);
-      const fromAddr = account.from_name
-        ? `"${account.from_name}" <${account.from_email}>`
-        : account.from_email;
-
-      const headers: Record<string, string> = {
+    const transportResult = await dispatchEmailTransport({
+      account,
+      to: recipient.email,
+      subject: finalSubject,
+      text: plainTextBody,
+      html: htmlBody,
+      explicitMessageId,
+      inReplyTo: inReplyToId,
+      references: inReplyToId,
+      headers: {
         "List-Unsubscribe": `<${unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         "X-LeadReachAI-Campaign-Id": campaign.id,
         "X-LeadReachAI-Recipient-Id": recipient.id,
-      };
+      },
+    });
 
-      const result = await sendViaGmailApi(accessToken, {
-        from: fromAddr,
-        to: recipient.email,
-        replyTo: effectiveReplyTo,
-        subject: finalSubject,
-        text: plainTextBody,
-        html: htmlBody,
-        inReplyTo: inReplyToId,
-        references: inReplyToId,
-        headers,
-      });
-      messageId = result.messageId;
-    } else {
-      // SMTP transport
-      const creds = await getDecryptedAccountCredentials(account.id);
-      if (!creds || !creds.smtp_host) {
-        throw new Error("Invalid SMTP credentials for account");
-      }
-
-      const transport = nodemailer.createTransport({
-        host: creds.smtp_host,
-        port: creds.smtp_port || 587,
-        secure: creds.smtp_security === "ssl" || creds.smtp_port === 465,
-        auth: {
-          user: creds.smtp_username || account.from_email,
-          pass: creds.smtp_password,
-        },
-        connectionTimeout: 8000,
-        greetingTimeout: 6000,
-        socketTimeout: 10000,
-      });
-
-      const sendResult = await transport.sendMail({
-        from: `"${account.from_name || account.from_email}" <${account.from_email}>`,
-        to: recipient.email,
-        replyTo: effectiveReplyTo,
-        subject: finalSubject,
-        text: plainTextBody,
-        html: htmlBody,
-        inReplyTo: inReplyToId,
-        references: inReplyToId,
-        headers: {
-          "List-Unsubscribe": `<${unsubscribeUrl}>`,
-          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-          "X-LeadReachAI-Campaign-Id": campaign.id,
-          "X-LeadReachAI-Recipient-Id": recipient.id,
-        },
-      });
-
-      if (transport && typeof transport.close === "function") {
-        transport.close();
-      }
-      messageId = sendResult?.messageId || `msg_${Date.now()}`;
-    }
+    const messageId = transportResult.messageId;
 
     // 6. Record message in database
     await db.email_messages.create({

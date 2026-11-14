@@ -254,6 +254,7 @@ export async function sendViaGmailApi(
     subject: string;
     text: string;
     html?: string;
+    messageId?: string;
     inReplyTo?: string;
     references?: string;
     headers?: Record<string, string>;
@@ -269,6 +270,10 @@ export async function sendViaGmailApi(
     `Subject: =?UTF-8?B?${Buffer.from(emailData.subject).toString("base64")}?=`,
     "MIME-Version: 1.0",
   ];
+
+  if (emailData.messageId) {
+    lines.push(`Message-ID: ${emailData.messageId}`);
+  }
 
   if (isMultipart) {
     lines.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
@@ -342,5 +347,5 @@ export async function sendViaGmailApi(
     throw new Error(resData.error?.message || "Failed to send email via Gmail API");
   }
 
-  return { messageId: resData.id || `gmail_${Date.now()}` };
+  return { messageId: emailData.messageId || resData.id || `gmail_${Date.now()}` };
 }
