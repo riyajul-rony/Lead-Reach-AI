@@ -28,6 +28,29 @@ export async function GET() {
     redisOk = false;
   }
 
+  // 3. Check Worker Heartbeat
+  let workerInfo: { status: "up" | "down" | "unknown"; lastHeartbeat: string | null; schedulersEnabled: boolean } = {
+    status: "unknown",
+    lastHeartbeat: null,
+    schedulersEnabled: false,
+  };
+  if (redisOk) {
+    try {
+      const redis = getRedisConnection();
+      const heartbeatRaw = await redis.get("leadreach:worker:heartbeat");
+      if (heartbeatRaw) {
+        const parsed = JSON.parse(heartbeatRaw);
+        workerInfo = {
+          status: "up",
+          lastHeartbeat: parsed.timestamp || null,
+          schedulersEnabled: Boolean(parsed.schedulersEnabled),
+        };
+      } else {
+        workerInfo.status = "down";
+      }
+    } catch {}
+  }
+
   const allHealthy = dbOk && redisOk;
 
   return NextResponse.json(
@@ -37,6 +60,7 @@ export async function GET() {
       components: {
         database: { status: dbOk ? "up" : "down", latencyMs: dbLatency },
         redis: { status: redisOk ? "up" : "down" },
+        worker: workerInfo,
       },
     },
     { status: allHealthy ? 200 : 503 }

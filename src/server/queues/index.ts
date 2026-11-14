@@ -150,5 +150,103 @@ export async function queueEmailSend(recipientId: string, delayMs = 0): Promise<
   }
 }
 
+let plannerQueue: Queue | null = null;
+export function getPlannerQueue(): Queue {
+  if (!plannerQueue) {
+    plannerQueue = createQueue(QUEUE_NAMES.PLANNER);
+  }
+  return plannerQueue;
+}
+
+let replyPollQueue: Queue | null = null;
+export function getReplyPollQueue(): Queue {
+  if (!replyPollQueue) {
+    replyPollQueue = createQueue(QUEUE_NAMES.REPLY_POLL);
+  }
+  return replyPollQueue;
+}
+
+let maintenanceQueue: Queue | null = null;
+export function getMaintenanceQueue(): Queue {
+  if (!maintenanceQueue) {
+    maintenanceQueue = createQueue(QUEUE_NAMES.MAINTENANCE);
+  }
+  return maintenanceQueue;
+}
+
+/**
+ * Registers BullMQ repeatable job schedulers for planner, email dispatch, reply polling, and maintenance.
+ * - Idempotent: uses upsertJobScheduler (safe on restarts, updates in place)
+ * - Safe-start switch: ONLY registered when process.env.SCHEDULERS_ENABLED === 'true'
+ */
+export async function registerRepeatableSchedulers(): Promise<{ registered: boolean; schedulers: string[] }> {
+  const schedulersEnabled = process.env.SCHEDULERS_ENABLED === "true";
+  if (!schedulersEnabled) {
+    logger.info("Schedulers are DISABLED (SCHEDULERS_ENABLED is not 'true'). Repeatable jobs will not be registered.");
+    return { registered: false, schedulers: [] };
+  }
+
+  const registered: string[] = [];
+  logger.info("Registering BullMQ repeatable job schedulers (SCHEDULERS_ENABLED=true)...");
+
+  // 1. Planner: every 60 seconds (1 minute)
+  try {
+    const q = getPlannerQueue();
+    await q.upsertJobScheduler(
+      "leadreach:scheduler:planner",
+      { every: 60 * 1000 },
+      { name: "planner-tick", data: {} }
+    );
+    registered.push("planner (every 60s)");
+    logger.info("Registered repeatable scheduler: planner (every 60s)");
+  } catch (err) {
+    logger.error({ err }, "Failed to register planner job scheduler");
+  }
+
+  // 2. Email Dispatch: every 60 seconds (1 minute)
+  try {
+    const q = getEmailDispatchQueue();
+    await q.upsertJobScheduler(
+      "leadreach:scheduler:email-dispatch",
+      { every: 60 * 1000 },
+      { name: "email-dispatch-tick", data: {} }
+    );
+    registered.push("email-dispatch (every 60s)");
+    logger.info("Registered repeatable scheduler: email-dispatch (every 60s)");
+  } catch (err) {
+    logger.error({ err }, "Failed to register email-dispatch job scheduler");
+  }
+
+  // 3. Reply Poll: every 300 seconds (5 minutes)
+  try {
+    const q = getReplyPollQueue();
+    await q.upsertJobScheduler(
+      "leadreach:scheduler:reply-poll",
+      { every: 5 * 60 * 1000 },
+      { name: "reply-poll-tick", data: {} }
+    );
+    registered.push("reply-poll (every 5m)");
+    logger.info("Registered repeatable scheduler: reply-poll (every 5m)");
+  } catch (err) {
+    logger.error({ err }, "Failed to register reply-poll job scheduler");
+  }
+
+  // 4. Maintenance: daily at 02:00 UTC
+  try {
+    const q = getMaintenanceQueue();
+    await q.upsertJobScheduler(
+      "leadreach:scheduler:maintenance",
+      { pattern: "0 2 * * *" },
+      { name: "maintenance-daily", data: {} }
+    );
+    registered.push("maintenance (daily 02:00 UTC)");
+    logger.info("Registered repeatable scheduler: maintenance (daily 02:00 UTC)");
+  } catch (err) {
+    logger.error({ err }, "Failed to register maintenance job scheduler");
+  }
+
+  return { registered: true, schedulers: registered };
+}
+
 
 

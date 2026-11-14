@@ -807,9 +807,38 @@ export async function dispatchRunningCampaigns(): Promise<{ dispatched: number; 
         continue; // Outside active window, will resume on next cycle
       }
 
-      // 2. Fetch candidate queued recipients
+      // 2. Stale catch-up protection: Mark queued recipients older than stale threshold as needs_review
+      const staleHours = Number(process.env.STALE_THRESHOLD_HOURS) || 24;
+      const staleCutoff = new Date(now.getTime() - staleHours * 60 * 60 * 1000);
+      try {
+        const staleQueued = await db.campaign_recipients.updateMany({
+          where: {
+            campaign_id: campaign.id,
+            status: "queued",
+            created_at: { lt: staleCutoff },
+          },
+          data: {
+            status: "needs_review",
+            error: `Campaign queued email is older than stale threshold (${staleHours}h). Requires review before dispatch.`,
+          },
+        });
+        if (staleQueued.count > 0) {
+          logger.warn(
+            { campaignId: campaign.id, count: staleQueued.count },
+            "Catch-up protection: Marked overdue queued recipients as needs_review"
+          );
+        }
+      } catch (err) {
+        logger.error({ err, campaignId: campaign.id }, "Failed to apply catch-up protection to queued recipients");
+      }
+
+      // Fetch candidate queued recipients within safe threshold
       const queuedRecipients = await db.campaign_recipients.findMany({
-        where: { campaign_id: campaign.id, status: "queued" },
+        where: {
+          campaign_id: campaign.id,
+          status: "queued",
+          created_at: { gte: staleCutoff },
+        },
         take: 20,
       });
 

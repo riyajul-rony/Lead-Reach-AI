@@ -407,8 +407,40 @@ export async function dispatchDueFollowups(
         continue;
       }
 
+      // Stale catch-up protection: Mark overdue follow-ups older than stale threshold as needs_review
+      const staleHours = Number(process.env.STALE_THRESHOLD_HOURS) || 24;
+      const staleCutoff = new Date(now.getTime() - staleHours * 60 * 60 * 1000);
+      try {
+        const staleRecipients = await db.campaign_recipients.updateMany({
+          where: {
+            campaign_id: campaign.id,
+            status: "sent",
+            next_followup_at: { lt: staleCutoff },
+          },
+          data: {
+            status: "needs_review",
+            error: `Follow-up due date is older than stale threshold (${staleHours}h). Requires review.`,
+          },
+        });
+        if (staleRecipients.count > 0) {
+          logger.warn(
+            { campaignId: campaign.id, count: staleRecipients.count },
+            "Catch-up protection: Marked overdue follow-ups as needs_review"
+          );
+        }
+      } catch (err) {
+        logger.error({ err, campaignId: campaign.id }, "Failed to apply catch-up protection to followups");
+      }
+
       const eligibleRecipients = await db.campaign_recipients.findMany({
-        where: { campaign_id: campaign.id, status: "sent" },
+        where: {
+          campaign_id: campaign.id,
+          status: "sent",
+          OR: [
+            { next_followup_at: null },
+            { next_followup_at: { gte: staleCutoff, lte: now } },
+          ],
+        },
         take: 20,
       });
 

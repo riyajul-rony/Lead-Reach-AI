@@ -407,6 +407,30 @@ class LocalDevMockDb {
       const existing = localDevStore.findRecipient((r) => (!where?.id || r.id === where.id) && (!where?.unsubscribe_token || r.unsubscribe_token === where.unsubscribe_token));
       return localDevStore.saveRecipient({ ...existing, ...data });
     },
+    updateMany: async ({ where, data }: any = {}) => {
+      const items = localDevStore.getRecipients((r) => {
+        if (where?.campaign_id && r.campaign_id !== where.campaign_id) return false;
+        if (where?.user_id && r.user_id !== where.user_id) return false;
+        if (where?.status) {
+          if (where.status?.in && Array.isArray(where.status.in)) {
+            if (!where.status.in.includes(r.status)) return false;
+          } else if (r.status !== where.status) {
+            return false;
+          }
+        }
+        if (where?.next_followup_at?.lt && r.next_followup_at) {
+          if (new Date(r.next_followup_at) >= new Date(where.next_followup_at.lt)) return false;
+        }
+        if (where?.created_at?.lt && r.created_at) {
+          if (new Date(r.created_at) >= new Date(where.created_at.lt)) return false;
+        }
+        return true;
+      });
+      for (const item of items) {
+        localDevStore.saveRecipient({ ...item, ...data });
+      }
+      return { count: items.length };
+    },
     count: async ({ where }: any = {}) => {
       return localDevStore.getRecipients(
         (r) =>
@@ -773,6 +797,9 @@ class LocalDevMockDb {
           } else if (p.status !== where.status) {
             return false;
           }
+        }
+        if (where?.scheduled_for?.lt && p.scheduled_for) {
+          if (new Date(p.scheduled_for) >= new Date(where.scheduled_for.lt)) return false;
         }
         return true;
       });

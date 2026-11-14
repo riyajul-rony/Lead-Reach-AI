@@ -33,9 +33,20 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   APIFY_TOKEN: z.string().optional(),
+  SCHEDULERS_ENABLED: z.string().optional().default("false"),
+  STALE_THRESHOLD_HOURS: z.coerce.number().min(1).default(24),
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;
+
+export function areSchedulersEnabled(): boolean {
+  return process.env.SCHEDULERS_ENABLED === "true";
+}
+
+export function getStaleThresholdHours(): number {
+  const val = Number(process.env.STALE_THRESHOLD_HOURS);
+  return Number.isFinite(val) && val > 0 ? val : 24;
+}
 
 let validated = false;
 

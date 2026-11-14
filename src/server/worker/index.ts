@@ -23,6 +23,7 @@ export function startPlannerWorker() {
   return new Worker(
     QUEUE_NAMES.PLANNER,
     async () => {
+      const startedAt = Date.now();
       const now = new Date();
       logger.info({ at: now.toISOString() }, "Planner tick starting");
 
@@ -72,13 +73,38 @@ export function startPlannerWorker() {
         }
       }
 
-      // Enqueue any runs that are currently due
+      // Stale catch-up protection: Mark overdue post runs older than stale cutoff as needs_review
+      const staleHours = Number(process.env.STALE_THRESHOLD_HOURS) || 24;
+      const staleCutoff = new Date(now.getTime() - staleHours * 60 * 60 * 1000);
+      try {
+        const staleRuns = await db.post_runs.updateMany({
+          where: {
+            status: "scheduled",
+            scheduled_for: { lt: staleCutoff },
+          },
+          data: {
+            status: "needs_review",
+            error_message: `Post run scheduled_for is older than stale threshold (${staleHours}h). Marked as needs_review for safety.`,
+          },
+        });
+        if (staleRuns.count > 0) {
+          logger.warn(
+            { count: staleRuns.count, staleCutoff: staleCutoff.toISOString() },
+            "Catch-up protection: Marked overdue post runs as needs_review"
+          );
+        }
+      } catch (err) {
+        logger.error({ err }, "Failed to apply catch-up protection to overdue post runs");
+      }
+
+      // Enqueue any runs that are currently due within the safe window (max 10 to prevent burst)
       try {
         const dueRuns = await db.post_runs.findMany({
           where: {
             status: "scheduled",
-            scheduled_for: { lte: now },
+            scheduled_for: { gte: staleCutoff, lte: now },
           },
+          take: 10,
         });
 
         for (const run of dueRuns) {
@@ -87,6 +113,21 @@ export function startPlannerWorker() {
       } catch (err) {
         logger.error({ err }, "Failed to dispatch due post runs to BullMQ queue");
       }
+
+      // Record last run in Redis
+      try {
+        const redis = getRedisConnection();
+        await redis.set(
+          "leadreach:worker:last_run:planner",
+          JSON.stringify({
+            jobType: "planner",
+            timestamp: now.toISOString(),
+            durationMs: Date.now() - startedAt,
+          }),
+          "EX",
+          86400
+        );
+      } catch {}
     },
     { connection: getRedisConnection(), concurrency: 1 }
   );
@@ -268,10 +309,31 @@ export function startEmailDispatchWorker() {
   return new Worker(
     QUEUE_NAMES.EMAIL_DISPATCH,
     async () => {
+      const startedAt = Date.now();
       logger.info("Email dispatch worker tick starting");
       const result = await dispatchRunningCampaigns();
       const followupResult = await dispatchDueFollowups();
-      logger.info({ initialDispatches: result, followupDispatches: followupResult }, "Email dispatch tick completed");
+      const durationMs = Date.now() - startedAt;
+      logger.info(
+        { initialDispatches: result, followupDispatches: followupResult, durationMs },
+        "Email dispatch tick completed"
+      );
+
+      try {
+        const redis = getRedisConnection();
+        await redis.set(
+          "leadreach:worker:last_run:email-dispatch",
+          JSON.stringify({
+            jobType: "email-dispatch",
+            timestamp: new Date().toISOString(),
+            durationMs,
+            initialDispatches: result,
+            followupDispatches: followupResult,
+          }),
+          "EX",
+          86400
+        );
+      } catch {}
     },
     { connection: getRedisConnection(), concurrency: 1 }
   );
@@ -310,9 +372,26 @@ export function startReplyPollWorker() {
   return new Worker(
     QUEUE_NAMES.REPLY_POLL,
     async () => {
+      const startedAt = Date.now();
       logger.info("IMAP reply poll worker tick starting");
       const result = await pollInboxesForReplies();
-      logger.info(result, "IMAP reply poll tick completed");
+      const durationMs = Date.now() - startedAt;
+      logger.info({ ...result, durationMs }, "IMAP reply poll tick completed");
+
+      try {
+        const redis = getRedisConnection();
+        await redis.set(
+          "leadreach:worker:last_run:reply-poll",
+          JSON.stringify({
+            jobType: "reply-poll",
+            timestamp: new Date().toISOString(),
+            durationMs,
+            result,
+          }),
+          "EX",
+          86400
+        );
+      } catch {}
     },
     { connection: getRedisConnection(), concurrency: 1 }
   );
@@ -325,20 +404,41 @@ export function startMaintenanceWorker() {
   return new Worker(
     QUEUE_NAMES.MAINTENANCE,
     async () => {
+      const startedAt = Date.now();
       logger.info("Maintenance worker tick starting");
       const result = await resetOrArchiveOldUsageCounters();
       const lifecycleResult = await processSubscriptionLifecycles();
       const purgeResult = await cleanupOldLogs(90);
       const warmupResult = await incrementWarmupDayForActiveAccounts();
+      const durationMs = Date.now() - startedAt;
       logger.info(
         {
           archivedCounters: result,
           lifecycles: lifecycleResult,
           purgedLogs: purgeResult,
           warmupIncrements: warmupResult,
+          durationMs,
         },
         "Maintenance tick completed (archived counters, processed lifecycles, purged 90d logs & warmup incremented)"
       );
+
+      try {
+        const redis = getRedisConnection();
+        await redis.set(
+          "leadreach:worker:last_run:maintenance",
+          JSON.stringify({
+            jobType: "maintenance",
+            timestamp: new Date().toISOString(),
+            durationMs,
+            archivedCounters: result,
+            lifecycles: lifecycleResult,
+            purgedLogs: purgeResult,
+            warmupIncrements: warmupResult,
+          }),
+          "EX",
+          86400
+        );
+      } catch {}
     },
     { connection: getRedisConnection(), concurrency: 1 }
   );
