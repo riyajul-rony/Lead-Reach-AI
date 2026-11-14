@@ -32,6 +32,13 @@ export async function POST(req: NextRequest) {
   const defaultProviderId = await getDefaultProviderId();
   const provider = getPaymentProvider(defaultProviderId);
 
+  if (provider.id === "online") {
+    return NextResponse.json(
+      { error: "Online automated checkout is currently disabled. Please use manual payment options or contact the administrator." },
+      { status: 400 }
+    );
+  }
+
   const appUrl = process.env.APP_URL || "http://localhost:3000";
 
   try {
