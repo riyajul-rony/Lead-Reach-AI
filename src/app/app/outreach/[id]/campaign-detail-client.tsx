@@ -34,6 +34,7 @@ export interface CampaignDetail {
     bounced: number;
     unsubscribed: number;
     failed: number;
+    needs_review?: number;
     opened?: number;
     clicked?: number;
     replyRate: string;
@@ -181,7 +182,7 @@ export function CampaignDetailClient({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5 flex-wrap">
-          {stats.failed > 0 && (
+          {((stats.failed || 0) > 0 || (stats.needs_review || 0) > 0 || recipients.some(r => r.status === "failed" || r.status === "needs_review")) && (
             <Button
               variant="secondary"
               size="sm"
@@ -189,7 +190,7 @@ export function CampaignDetailClient({
               disabled={retryLoading}
               icon={<RefreshCw size={13} className={retryLoading ? "animate-spin" : ""} />}
             >
-              Retry Failed Leads ({stats.failed})
+              Retry / Reschedule Leads ({recipients.filter(r => r.status === "failed" || r.status === "needs_review").length})
             </Button>
           )}
 
@@ -401,7 +402,7 @@ export function CampaignDetailClient({
 
         {/* Status Filter Tabs */}
         <div className="flex items-center gap-1 p-1 bg-bgSubtle border border-border rounded-lg text-xs overflow-x-auto">
-          {["all", "queued", "sent", "replied", "bounced", "failed", "unsubscribed"].map((tab) => (
+          {["all", "queued", "sent", "replied", "bounced", "failed", "needs_review", "unsubscribed"].map((tab) => (
             <button
               key={tab}
               onClick={() => setRecipientFilter(tab)}
@@ -409,7 +410,7 @@ export function CampaignDetailClient({
                 recipientFilter === tab ? "bg-surface text-fg shadow-xs" : "text-muted hover:text-fg"
               }`}
             >
-              {tab}
+              {tab === "needs_review" ? "needs review" : tab}
             </button>
           ))}
         </div>
@@ -439,6 +440,7 @@ export function CampaignDetailClient({
                     if (status === "sent") return "success";
                     if (status === "sending") return "warning";
                     if (status === "bounced" || status === "failed") return "danger";
+                    if (status === "needs_review") return "danger";
                     return "neutral";
                   };
 

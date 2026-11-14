@@ -21,34 +21,35 @@ export async function POST(
     return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
   }
 
-  // Find recipients with status: 'failed'
-  const failedRecipients = await db.campaign_recipients.findMany({
+  // Find recipients with status: 'failed' or 'needs_review'
+  const retryableRecipients = await db.campaign_recipients.findMany({
     where: {
       campaign_id: id,
       user_id: session.user.id,
-      status: "failed",
+      status: { in: ["failed", "needs_review"] },
     },
     select: { id: true },
   });
 
-  if (failedRecipients.length === 0) {
+  if (retryableRecipients.length === 0) {
     return NextResponse.json({
       success: true,
       retriedCount: 0,
-      message: "No failed recipients found to retry",
+      message: "No failed or needs_review recipients found to retry",
     });
   }
 
-  // Update failed recipients back to 'queued' and clear error
+  // Update recipients back to 'queued' and clear error
   await db.campaign_recipients.updateMany({
     where: {
       campaign_id: id,
       user_id: session.user.id,
-      status: "failed",
+      status: { in: ["failed", "needs_review"] },
     },
     data: {
       status: "queued",
       error: null,
+      next_followup_at: new Date(),
     },
   });
 
@@ -59,7 +60,7 @@ export async function POST(
 
   return NextResponse.json({
     success: true,
-    retriedCount: failedRecipients.length,
-    message: `Successfully re-queued ${failedRecipients.length} failed recipient(s).`,
+    retriedCount: retryableRecipients.length,
+    message: `Successfully re-queued ${retryableRecipients.length} recipient(s).`,
   });
 }
