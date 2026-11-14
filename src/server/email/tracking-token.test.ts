@@ -94,4 +94,22 @@ describe("HIGH-02: Secure Click Tracking & Link Wrapping", () => {
     expect(bodies.html).toContain(`href="${unsubUrl}"`);
     expect(bodies.html).not.toContain(`/api/v1/track/click/`);
   });
+
+  it("never wraps mailto:, tel:, or #anchor links", () => {
+    const bodies = buildEmailMultipartBodies({
+      bodyText: "Contact me at mailto:hello@leadreach.ai or call tel:+123456789 or jump to #section",
+      legalAddress: "123 Business St, City",
+      unsubscribeUrl: "http://localhost:3000/api/v1/unsubscribe/unsub_123",
+      unsubscribeToken: "unsub_123",
+      baseUrl: "http://localhost:3000",
+      trackingOpen: false,
+      trackingClick: true,
+    });
+
+    // None of mailto, tel, or anchor links should be wrapped by track/click
+    expect(bodies.html).not.toContain("/api/v1/track/click/");
+    expect(bodies.html).toContain("mailto:hello@leadreach.ai");
+    expect(bodies.html).toContain("tel:+123456789");
+    expect(bodies.html).toContain("#section");
+  });
 });
