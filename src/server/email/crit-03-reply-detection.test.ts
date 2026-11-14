@@ -58,6 +58,19 @@ describe("CRIT-03: Reply Detection & Threading Guarantees", () => {
       const result = accountHasWorkingReplyDetection(account);
       expect(result.capable).toBe(true);
     });
+
+    it("rejects accounts whose status is needs_attention (e.g. failing IMAP credentials)", () => {
+      const account = {
+        provider: "smtp",
+        imap_host: "imap.gmail.com",
+        imap_password_enc: "encrypted_app_pass",
+        status: "needs_attention",
+      };
+
+      const result = accountHasWorkingReplyDetection(account);
+      expect(result.capable).toBe(false);
+      expect(result.reason).toContain("needs_attention");
+    });
   });
 
   describe("2. Pre-dispatch Follow-up Guard in sequence-service", () => {

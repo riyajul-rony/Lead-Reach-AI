@@ -111,6 +111,14 @@ export function accountHasWorkingReplyDetection(account: {
   reply_inbox?: any;
   status?: string | null;
 }): { capable: boolean; reason?: string } {
+  // If account credentials or connection have actively failed (e.g., status is needs_attention or inactive)
+  if (account.status && account.status !== "active") {
+    return {
+      capable: false,
+      reason: `Account status is '${account.status}'. Reply polling is paused until credentials are fixed.`,
+    };
+  }
+
   // If account delegates replies to a designated reply inbox
   if (account.reply_inbox_account_id || account.reply_inbox) {
     return { capable: true };
