@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { areSchedulersEnabled, getStaleThresholdHours } from "@/server/env";
-import { registerRepeatableSchedulers } from "@/server/queues";
+import { registerRepeatableSchedulers, removeRepeatableSchedulers } from "@/server/queues";
 import { db } from "@/server/db";
 import { dispatchDueFollowups } from "@/server/email/sequence-service";
 import { dispatchRunningCampaigns } from "@/server/email/sending-engine";
 
-const { mockUpsertJobScheduler, mockAdd } = vi.hoisted(() => ({
+const { mockUpsertJobScheduler, mockAdd, mockRemoveJobScheduler } = vi.hoisted(() => ({
   mockUpsertJobScheduler: vi.fn().mockResolvedValue({ id: "mock-scheduler" }),
   mockAdd: vi.fn().mockResolvedValue({ id: "mock-job" }),
+  mockRemoveJobScheduler: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("bullmq", () => {
@@ -18,6 +19,7 @@ vi.mock("bullmq", () => {
     }
     upsertJobScheduler = mockUpsertJobScheduler;
     add = mockAdd;
+    removeJobScheduler = mockRemoveJobScheduler;
   }
 
   class MockWorker {
@@ -89,6 +91,26 @@ describe("CRIT-02: Repeatable Job Schedulers & Catch-Up Protection", () => {
       expect(result.schedulers).toContain("email-dispatch (every 60s)");
       expect(result.schedulers).toContain("reply-poll (every 5m)");
       expect(result.schedulers).toContain("maintenance (daily 02:00 UTC)");
+    });
+
+    it("calls removeJobScheduler for all 4 schedulers when SCHEDULERS_ENABLED is false (kill switch)", async () => {
+      process.env.SCHEDULERS_ENABLED = "false";
+      mockRemoveJobScheduler.mockClear();
+      const result = await registerRepeatableSchedulers();
+      expect(result.registered).toBe(false);
+      // removeJobScheduler must have been called once per scheduler (4 total)
+      expect(mockRemoveJobScheduler).toHaveBeenCalledTimes(4);
+      expect(mockRemoveJobScheduler).toHaveBeenCalledWith("leadreach:scheduler:planner");
+      expect(mockRemoveJobScheduler).toHaveBeenCalledWith("leadreach:scheduler:email-dispatch");
+      expect(mockRemoveJobScheduler).toHaveBeenCalledWith("leadreach:scheduler:reply-poll");
+      expect(mockRemoveJobScheduler).toHaveBeenCalledWith("leadreach:scheduler:maintenance");
+    });
+
+    it("removeRepeatableSchedulers() alone calls removeJobScheduler for all 4 IDs", async () => {
+      mockRemoveJobScheduler.mockClear();
+      const result = await removeRepeatableSchedulers();
+      expect(result.removed).toHaveLength(4);
+      expect(mockRemoveJobScheduler).toHaveBeenCalledTimes(4);
     });
   });
 

@@ -174,15 +174,63 @@ export function getMaintenanceQueue(): Queue {
   return maintenanceQueue;
 }
 
+// Scheduler IDs — must match what was used in upsertJobScheduler calls
+const SCHEDULER_IDS: Array<{ queue: () => Queue; id: string }> = [
+  { queue: getPlannerQueue, id: "leadreach:scheduler:planner" },
+  { queue: getEmailDispatchQueue, id: "leadreach:scheduler:email-dispatch" },
+  { queue: getReplyPollQueue, id: "leadreach:scheduler:reply-poll" },
+  { queue: getMaintenanceQueue, id: "leadreach:scheduler:maintenance" },
+];
+
+/**
+ * Removes all repeatable job schedulers from Redis.
+ * Called on startup when SCHEDULERS_ENABLED is false so that setting the flag
+ * to false after it was true truly stops new jobs from being scheduled.
+ * Note: Jobs already in waiting/delayed state are NOT flushed — to stop those
+ * immediately, run `docker compose stop worker` as an emergency stop.
+ */
+export async function removeRepeatableSchedulers(): Promise<{ removed: string[]; errors: string[] }> {
+  const removed: string[] = [];
+  const errors: string[] = [];
+  logger.info("Removing all BullMQ repeatable schedulers from Redis (SCHEDULERS_ENABLED is not 'true')...");
+
+  for (const { queue, id } of SCHEDULER_IDS) {
+    try {
+      const q = queue();
+      await (q as any).removeJobScheduler(id);
+      removed.push(id);
+      logger.info({ schedulerId: id }, "Removed repeatable scheduler from Redis");
+    } catch (err: any) {
+      // removeJobScheduler returns false (not an error) when the scheduler did not exist
+      // Log at warn level only if it was an unexpected error
+      const msg = err?.message || String(err);
+      if (!msg.includes("false") && !msg.includes("not found")) {
+        logger.warn({ schedulerId: id, err: msg }, "Could not remove repeatable scheduler (may not have existed)");
+        errors.push(id);
+      } else {
+        removed.push(id); // did not exist — effectively removed
+      }
+    }
+  }
+
+  logger.info(
+    { removed, errors },
+    "Repeatable scheduler removal complete. Emergency stop: `docker compose stop worker`"
+  );
+  return { removed, errors };
+}
+
 /**
  * Registers BullMQ repeatable job schedulers for planner, email dispatch, reply polling, and maintenance.
  * - Idempotent: uses upsertJobScheduler (safe on restarts, updates in place)
- * - Safe-start switch: ONLY registered when process.env.SCHEDULERS_ENABLED === 'true'
+ * - Safe-start switch: when SCHEDULERS_ENABLED !== 'true', removes any previously registered schedulers
+ *   so that toggling the flag back to false truly stops new jobs from being queued.
  */
 export async function registerRepeatableSchedulers(): Promise<{ registered: boolean; schedulers: string[] }> {
   const schedulersEnabled = process.env.SCHEDULERS_ENABLED === "true";
   if (!schedulersEnabled) {
-    logger.info("Schedulers are DISABLED (SCHEDULERS_ENABLED is not 'true'). Repeatable jobs will not be registered.");
+    logger.info("Schedulers are DISABLED (SCHEDULERS_ENABLED is not 'true'). Removing any previously registered schedulers from Redis...");
+    await removeRepeatableSchedulers();
     return { registered: false, schedulers: [] };
   }
 
