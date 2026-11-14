@@ -253,20 +253,29 @@ export async function sendViaGmailApi(
     replyTo?: string;
     subject: string;
     text: string;
+    html?: string;
     inReplyTo?: string;
     references?: string;
     headers?: Record<string, string>;
   }
 ): Promise<{ messageId: string }> {
-  // Construct standard RFC 2822 email message
+  // Construct standard RFC 2822 email message (multipart/alternative when html is present)
+  const boundary = `====LeadReach_${Date.now()}_${Math.random().toString(36).slice(2, 10)}====`;
+  const isMultipart = Boolean(emailData.html);
+
   const lines: string[] = [
     `From: ${emailData.from}`,
     `To: ${emailData.to}`,
     `Subject: =?UTF-8?B?${Buffer.from(emailData.subject).toString("base64")}?=`,
     "MIME-Version: 1.0",
-    "Content-Type: text/plain; charset=utf-8",
-    "Content-Transfer-Encoding: base64",
   ];
+
+  if (isMultipart) {
+    lines.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+  } else {
+    lines.push("Content-Type: text/plain; charset=utf-8");
+    lines.push("Content-Transfer-Encoding: base64");
+  }
 
   if (emailData.replyTo) {
     lines.push(`Reply-To: ${emailData.replyTo}`);
@@ -286,7 +295,29 @@ export async function sendViaGmailApi(
     }
   }
 
-  lines.push("", Buffer.from(emailData.text, "utf8").toString("base64"));
+  lines.push(""); // End of headers
+
+  if (isMultipart) {
+    // 1. Plain text part (no tracking pixel)
+    lines.push(`--${boundary}`);
+    lines.push("Content-Type: text/plain; charset=utf-8");
+    lines.push("Content-Transfer-Encoding: base64");
+    lines.push("");
+    lines.push(Buffer.from(emailData.text, "utf8").toString("base64"));
+
+    // 2. HTML part (with tracking pixel & rendered links)
+    lines.push(`--${boundary}`);
+    lines.push("Content-Type: text/html; charset=utf-8");
+    lines.push("Content-Transfer-Encoding: base64");
+    lines.push("");
+    lines.push(Buffer.from(emailData.html!, "utf8").toString("base64"));
+
+    // End boundary
+    lines.push(`--${boundary}--`);
+  } else {
+    lines.push(Buffer.from(emailData.text, "utf8").toString("base64"));
+  }
+
   const rawRfc2822 = lines.join("\r\n");
 
   // Gmail API requires base64url encoding (replace + with -, / with _, remove trailing =)
@@ -305,7 +336,7 @@ export async function sendViaGmailApi(
     body: JSON.stringify({ raw: rawBase64Url }),
   });
 
-  const resData = await res.json();
+  const resData = await res.json().catch(() => ({}));
   if (!res.ok || resData.error) {
     logger.error({ resData }, "Gmail API send rejected");
     throw new Error(resData.error?.message || "Failed to send email via Gmail API");

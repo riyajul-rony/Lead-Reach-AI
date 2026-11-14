@@ -21,6 +21,67 @@ export interface SendingWindowOptions {
 }
 
 /**
+ * Constructs strict multipart/alternative email bodies:
+ * - text: Pure plaintext without raw HTML tags or tracking pixels.
+ * - html: Semantic HTML carrying the open tracking pixel and a styled unsubscribe link.
+ */
+export function buildEmailMultipartBodies(opts: {
+  bodyText: string;
+  legalAddress: string;
+  unsubscribeUrl: string;
+  trackingOpen: boolean;
+  unsubscribeToken: string;
+  baseUrl: string;
+}): { text: string; html: string } {
+  // 1. Clean plain-text body (strictly NO HTML tags or tracking pixels)
+  const text = `${opts.bodyText}\n\n---\n${opts.legalAddress}\nTo unsubscribe: ${opts.unsubscribeUrl}`;
+
+  // 2. Formatted HTML body
+  const escapedBody = opts.bodyText
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
+  const formattedHtmlParagraphs = escapedBody
+    .split(/\r?\n\r?\n/)
+    .map((para) => `<p style="margin: 0 0 16px 0; line-height: 1.6;">${para.replace(/\r?\n/g, "<br />")}</p>`)
+    .join("");
+
+  const escapedAddress = opts.legalAddress
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\r?\n/g, "<br />");
+
+  let html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; color: #1e293b; background-color: #ffffff;">
+  <div>
+    ${formattedHtmlParagraphs}
+  </div>
+  <div style="margin-top: 28px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">
+    <p style="margin: 0 0 8px 0;">${escapedAddress}</p>
+    <p style="margin: 0;"><a href="${opts.unsubscribeUrl}" style="color: #64748b; text-decoration: underline;">Unsubscribe</a></p>
+  </div>
+`;
+
+  if (opts.trackingOpen) {
+    html += `  <img src="${opts.baseUrl}/api/v1/track/open/${opts.unsubscribeToken}" width="1" height="1" style="display:none !important;" alt="" />\n`;
+  }
+
+  html += `</body>
+</html>`;
+
+  return { text, html };
+}
+
+/**
  * Parses local date/time components (weekday, hour, minute) in an IANA timezone with UTC fallback.
  */
 export function getLocalTimeParts(
@@ -412,14 +473,15 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       }
     }
 
-    // Append compliant footer
-    let fullBodyText = `${finalBody}\n\n---\n${legalAddress}\nTo unsubscribe: ${unsubscribeUrl}`;
-
-    // Optional open tracking pixel
-    if (campaign.tracking_open) {
-      const trackingPixel = `\n<img src="${BASE_URL}/api/v1/track/open/${recipient.unsubscribe_token}" width="1" height="1" style="display:none" alt="" />`;
-      fullBodyText += trackingPixel;
-    }
+    // Construct clean multipart/alternative bodies (pure plain-text + semantic HTML)
+    const { text: plainTextBody, html: htmlBody } = buildEmailMultipartBodies({
+      bodyText: finalBody,
+      legalAddress,
+      unsubscribeUrl,
+      trackingOpen: Boolean(campaign.tracking_open),
+      unsubscribeToken: recipient.unsubscribe_token,
+      baseUrl: BASE_URL,
+    });
 
     let messageId = "";
 
@@ -440,7 +502,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       effectiveReplyTo = account.from_email;
     }
 
-    // 5. Dual Dispatch: Gmail API vs SMTP
+    // 5. Dual Dispatch: Gmail API vs SMTP (multipart/alternative)
     if (account.provider === "gmail_api") {
       const accessToken = await ensureFreshGoogleAccessToken(account.id);
       const fromAddr = account.from_name
@@ -459,7 +521,8 @@ export async function sendSingleRecipientEmail(recipientId: string) {
         to: recipient.email,
         replyTo: effectiveReplyTo,
         subject: finalSubject,
-        text: fullBodyText,
+        text: plainTextBody,
+        html: htmlBody,
         inReplyTo: inReplyToId,
         references: inReplyToId,
         headers,
@@ -490,7 +553,8 @@ export async function sendSingleRecipientEmail(recipientId: string) {
         to: recipient.email,
         replyTo: effectiveReplyTo,
         subject: finalSubject,
-        text: fullBodyText,
+        text: plainTextBody,
+        html: htmlBody,
         inReplyTo: inReplyToId,
         references: inReplyToId,
         headers: {

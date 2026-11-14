@@ -7,6 +7,7 @@ import {
   selectAvailableAccountForCampaign,
   sendSingleRecipientEmail,
   dispatchRunningCampaigns,
+  buildEmailMultipartBodies,
 } from "./sending-engine";
 
 vi.mock("nodemailer", () => ({
@@ -331,6 +332,45 @@ describe("Phase 5: Sending Engine & BullMQ Scheduler", () => {
       // Attempt to send 2nd email now that wait gap expired -> MUST SUCCEED
       const send2AfterCooldown = await sendSingleRecipientEmail(rec2.id);
       expect(send2AfterCooldown).toHaveProperty("success", true);
+    });
+  });
+
+  describe("4. Multipart/alternative Email Construction (CRIT-01)", () => {
+    it("constructs clean plain-text without HTML tags or open tracking pixel", () => {
+      const bodies = buildEmailMultipartBodies({
+        bodyText: "Hello John,\n\nWe would love to connect with your team.\nBest,\nSarah",
+        legalAddress: "123 Business Way, Suite 100",
+        unsubscribeUrl: "https://example.com/u/tok-123",
+        trackingOpen: true,
+        unsubscribeToken: "tok-123",
+        baseUrl: "https://example.com",
+      });
+
+      // Plaintext must NOT contain any HTML tags or image pixels
+      expect(bodies.text).not.toContain("<img");
+      expect(bodies.text).not.toContain("<p");
+      expect(bodies.text).not.toContain("<br");
+      expect(bodies.text).toContain("To unsubscribe: https://example.com/u/tok-123");
+      expect(bodies.text).toContain("Hello John,");
+
+      // HTML body must carry the semantic elements and the open tracking pixel
+      expect(bodies.html).toContain("<img src=\"https://example.com/api/v1/track/open/tok-123\"");
+      expect(bodies.html).toContain("<a href=\"https://example.com/u/tok-123\"");
+      expect(bodies.html).toContain("123 Business Way, Suite 100");
+    });
+
+    it("omits the tracking pixel from HTML when trackingOpen is disabled", () => {
+      const bodies = buildEmailMultipartBodies({
+        bodyText: "Hello John,\n\nChecking in.",
+        legalAddress: "123 Business Way",
+        unsubscribeUrl: "https://example.com/u/tok-456",
+        trackingOpen: false,
+        unsubscribeToken: "tok-456",
+        baseUrl: "https://example.com",
+      });
+
+      expect(bodies.html).not.toContain("<img src=");
+      expect(bodies.html).toContain("<a href=\"https://example.com/u/tok-456\"");
     });
   });
 });
