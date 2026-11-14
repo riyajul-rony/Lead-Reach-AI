@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
+import { verifySignedTrackingToken } from "@/server/email/tracking-token";
 
 function extractUrlsFromText(text?: string | null): string[] {
   if (!text) return [];
@@ -21,7 +22,20 @@ export async function GET(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
-  const targetUrl = req.nextUrl.searchParams.get("url")?.trim();
+  let targetUrl: string | null = null;
+  let recipientLookupToken = token;
+
+  // Verify HMAC-signed token or fallback to legacy query parameter
+  if (token.includes(".")) {
+    const verified = verifySignedTrackingToken(token);
+    if (!verified) {
+      return NextResponse.json({ error: "Invalid tracking token" }, { status: 404 });
+    }
+    targetUrl = verified.targetUrl;
+    recipientLookupToken = verified.recipientToken;
+  } else {
+    targetUrl = req.nextUrl.searchParams.get("url")?.trim() || null;
+  }
 
   // Validate redirect URL format and protocol strictly
   if (!targetUrl) {
@@ -40,7 +54,7 @@ export async function GET(
   try {
     // 1. Resolve recipient and associated campaign
     const recipient = await db.campaign_recipients.findFirst({
-      where: { unsubscribe_token: token },
+      where: { unsubscribe_token: recipientLookupToken },
       include: {
         campaign: {
           include: {

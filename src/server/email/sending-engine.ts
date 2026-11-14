@@ -10,6 +10,7 @@ import { generateOutreachEmail } from "@/server/ai/outreach-generator";
 import { assertLimit } from "@/server/billing/limits";
 import { trackUsageIncrement } from "@/server/billing/usage-tracker";
 import { queueEmailSend } from "@/server/queues";
+import { createSignedTrackingToken } from "@/server/email/tracking-token";
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
@@ -29,31 +30,60 @@ export function buildEmailMultipartBodies(opts: {
   bodyText: string;
   legalAddress: string;
   unsubscribeUrl: string;
-  trackingOpen: boolean;
+  trackingOpen?: boolean;
+  trackingClick?: boolean;
   unsubscribeToken: string;
   baseUrl: string;
 }): { text: string; html: string } {
-  // 1. Clean plain-text body (strictly NO HTML tags or tracking pixels)
+  // 1. Clean plain-text body (strictly NO HTML tags or tracking pixels, raw URLs untouched)
   const text = `${opts.bodyText}\n\n---\n${opts.legalAddress}\nTo unsubscribe: ${opts.unsubscribeUrl}`;
 
-  // 2. Formatted HTML body
-  const escapedBody = opts.bodyText
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+  // Helper to escape HTML characters safely
+  const escapeHtml = (str: string) =>
+    str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
 
-  const formattedHtmlParagraphs = escapedBody
+  // 2. Formatted HTML body with conditional click-tracking link wrapping
+  const formattedHtmlParagraphs = opts.bodyText
     .split(/\r?\n\r?\n/)
-    .map((para) => `<p style="margin: 0 0 16px 0; line-height: 1.6;">${para.replace(/\r?\n/g, "<br />")}</p>`)
+    .map((para) => {
+      const urlRegex = /(https?:\/\/[^\s<>"']+)/gi;
+      let lastIndex = 0;
+      let htmlPara = "";
+      let match: RegExpExecArray | null;
+
+      while ((match = urlRegex.exec(para)) !== null) {
+        const rawUrl = match[0];
+        const matchStart = match.index;
+        htmlPara += escapeHtml(para.slice(lastIndex, matchStart)).replace(/\r?\n/g, "<br />");
+        lastIndex = matchStart + rawUrl.length;
+
+        // Unsubscribe links are NEVER wrapped with click tracking
+        const isUnsubLink =
+          rawUrl === opts.unsubscribeUrl ||
+          rawUrl.includes("/api/v1/unsubscribe/") ||
+          rawUrl.includes("/unsubscribe/");
+
+        if (isUnsubLink || !opts.trackingClick) {
+          htmlPara += `<a href="${escapeHtml(rawUrl)}" style="color: #0284c7; text-decoration: underline;">${escapeHtml(rawUrl)}</a>`;
+        } else {
+          // Wrap destination securely via HMAC-signed token
+          const signedToken = createSignedTrackingToken(opts.unsubscribeToken, rawUrl);
+          const clickUrl = `${opts.baseUrl}/api/v1/track/click/${signedToken}`;
+          htmlPara += `<a href="${clickUrl}" style="color: #0284c7; text-decoration: underline;">${escapeHtml(rawUrl)}</a>`;
+        }
+      }
+
+      htmlPara += escapeHtml(para.slice(lastIndex)).replace(/\r?\n/g, "<br />");
+      return `<p style="margin: 0 0 16px 0; line-height: 1.6;">${htmlPara}</p>`;
+    })
     .join("");
 
-  const escapedAddress = opts.legalAddress
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\r?\n/g, "<br />");
+  const escapedAddress = escapeHtml(opts.legalAddress).replace(/\r?\n/g, "<br />");
 
   let html = `<!DOCTYPE html>
 <html>
@@ -479,6 +509,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       legalAddress,
       unsubscribeUrl,
       trackingOpen: Boolean(campaign.tracking_open),
+      trackingClick: Boolean(campaign.tracking_click),
       unsubscribeToken: recipient.unsubscribe_token,
       baseUrl: BASE_URL,
     });
