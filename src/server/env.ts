@@ -42,8 +42,12 @@ let validated = false;
 export function validateEnv(): boolean {
   if (validated) return true;
 
-  // In test or non-production environment, allow graceful defaults if not set
-  if (process.env.NODE_ENV === "test") {
+  // In test environment or during Next.js build phase, skip validation so docker builds succeed without runtime secrets
+  const isBuildPhase =
+    process.env.NEXT_PHASE === "phase-production-build" ||
+    process.env.npm_lifecycle_event === "build";
+
+  if (process.env.NODE_ENV === "test" || isBuildPhase) {
     validated = true;
     return true;
   }
@@ -69,6 +73,9 @@ export function validateEnv(): boolean {
         console.error(`  - ${err}`);
       }
       console.error("========================================================\n");
+      throw new Error(
+        `FATAL: Server startup failed due to missing or invalid required environment variables in production: ${missingOrInvalidNames.join(", ")}`
+      );
     }
     return false;
   }

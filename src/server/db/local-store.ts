@@ -1,18 +1,46 @@
 // In-memory test mock store. File-based dev_store.json has been removed in favor of real PostgreSQL.
+import { hashPassword } from "@/server/auth/password";
 
+let devAdminUserInitialized = false;
 
-const DEFAULT_ADMIN_USER = {
-  id: "00000000-0000-0000-0000-000000000001",
-  email: "admin@example.com",
-  name: "Admin User",
-  password_hash: "$argon2id$v=19$m=19456,t=2,p=1$placeholder",
-  email_verified_at: new Date("2026-01-01T00:00:00.000Z"),
-  onboarded_at: new Date("2026-01-01T00:00:00.000Z"),
-  role: "super_admin",
-  status: "active",
-  plan: "free",
-  timezone: "Asia/Dhaka",
-};
+export async function ensureDevAdminUser(): Promise<void> {
+  if (process.env.NODE_ENV !== "development") return;
+  if (devAdminUserInitialized) return;
+
+  const email = process.env.DEV_ADMIN_EMAIL?.trim().toLowerCase();
+  const plainPassword = process.env.DEV_ADMIN_PASSWORD;
+  const passwordHash = process.env.DEV_ADMIN_PASSWORD_HASH;
+
+  // Create dev user ONLY when NODE_ENV=development and env variables are explicitly set
+  if (!email || (!plainPassword && !passwordHash)) {
+    devAdminUserInitialized = true;
+    return;
+  }
+
+  const hash = passwordHash || (plainPassword ? await hashPassword(plainPassword) : "");
+  if (!hash) {
+    devAdminUserInitialized = true;
+    return;
+  }
+
+  const store = loadStore();
+  if (!store.users) store.users = [];
+  if (!store.users.some((u) => u.email?.toLowerCase() === email)) {
+    store.users.push({
+      id: "dev_admin_user",
+      email,
+      name: "Dev Administrator",
+      password_hash: hash,
+      email_verified_at: new Date("2026-01-01T00:00:00.000Z"),
+      onboarded_at: new Date("2026-01-01T00:00:00.000Z"),
+      role: "super_admin",
+      status: "active",
+      plan: "free",
+      timezone: "Asia/Dhaka",
+    });
+  }
+  devAdminUserInitialized = true;
+}
 
 interface StoreSchema {
   users: any[];
@@ -48,7 +76,7 @@ interface StoreSchema {
 
 function getInitialStore(): StoreSchema {
   return {
-    users: [{ ...DEFAULT_ADMIN_USER }],
+    users: [],
     sessions: [],
     verification_tokens: [],
     api_keys: [],
@@ -97,17 +125,17 @@ export const localDevStore = {
   // --- Users ---
   getUsers: (filter?: (item: any) => boolean) => {
     const store = loadStore();
-    if (!store.users) store.users = [{ ...DEFAULT_ADMIN_USER }];
+    if (!store.users) store.users = [];
     return filter ? store.users.filter(filter) : store.users;
   },
   findUser: (filter: (item: any) => boolean) => {
     const store = loadStore();
-    if (!store.users) store.users = [{ ...DEFAULT_ADMIN_USER }];
+    if (!store.users) store.users = [];
     return store.users.find(filter) || null;
   },
   saveUser: (item: any) => {
     const store = loadStore();
-    if (!store.users) store.users = [{ ...DEFAULT_ADMIN_USER }];
+    if (!store.users) store.users = [];
     const idx = store.users.findIndex((u) => u.id === item.id || (u.email && u.email.toLowerCase() === item.email?.toLowerCase()));
     if (idx >= 0) {
       store.users[idx] = { ...store.users[idx], ...item };
@@ -130,7 +158,7 @@ export const localDevStore = {
   },
   updateUser: (idOrEmail: string, data: any) => {
     const store = loadStore();
-    if (!store.users) store.users = [{ ...DEFAULT_ADMIN_USER }];
+    if (!store.users) store.users = [];
     const idx = store.users.findIndex((u) => u.id === idOrEmail || (u.email && u.email.toLowerCase() === idOrEmail?.toLowerCase()));
     if (idx >= 0) {
       store.users[idx] = { ...store.users[idx], ...data };
@@ -141,7 +169,7 @@ export const localDevStore = {
   },
   deleteUser: (idOrEmail: string) => {
     const store = loadStore();
-    if (!store.users) store.users = [{ ...DEFAULT_ADMIN_USER }];
+    if (!store.users) store.users = [];
     const idx = store.users.findIndex((u) => u.id === idOrEmail || (u.email && u.email.toLowerCase() === idOrEmail?.toLowerCase()));
     if (idx >= 0) {
       const deleted = store.users.splice(idx, 1)[0];

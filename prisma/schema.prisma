@@ -840,6 +840,7 @@ model campaign_recipients {
   @@index([campaign_id, status])
   @@index([assigned_account_id, status])
   @@index([next_followup_at])
+  @@index([thread_message_id])
 }
 
 model email_messages {
