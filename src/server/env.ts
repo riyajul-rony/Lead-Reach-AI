@@ -69,6 +69,9 @@ export function validateEnv(): boolean {
         console.error(`  - ${err}`);
       }
       console.error("========================================================\n");
+      throw new Error(
+        `FATAL: Server startup failed due to missing or invalid required environment variables in production: ${missingOrInvalidNames.join(", ")}`
+      );
     }
     return false;
   }

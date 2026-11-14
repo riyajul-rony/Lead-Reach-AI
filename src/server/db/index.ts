@@ -1,7 +1,7 @@
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../generated/prisma/client";
-import { localDevStore } from "./local-store";
+import { localDevStore, ensureDevAdminUser } from "./local-store";
 import { validateEnv } from "@/server/env";
 
 const globalForPrisma = globalThis as unknown as { prisma?: any; pgPool?: pg.Pool };
@@ -10,6 +10,7 @@ const globalForPrisma = globalThis as unknown as { prisma?: any; pgPool?: pg.Poo
 class LocalDevMockDb {
   users = {
     findMany: async ({ where, take, skip, orderBy }: any = {}) => {
+      await ensureDevAdminUser();
       let items = localDevStore.getUsers((u) => {
         if (where?.role) {
           if (where.role.in && Array.isArray(where.role.in)) {
@@ -55,9 +56,11 @@ class LocalDevMockDb {
       return items;
     },
     findUnique: async ({ where }: any = {}) => {
+      await ensureDevAdminUser();
       return localDevStore.findUser((u) => (where?.id && u.id === where.id) || (where?.email && u.email?.toLowerCase() === where.email?.toLowerCase()));
     },
     findFirst: async ({ where }: any = {}) => {
+      await ensureDevAdminUser();
       return localDevStore.findUser((u) => (where?.id && u.id === where.id) || (where?.email && u.email?.toLowerCase() === where.email?.toLowerCase()));
     },
     create: async ({ data }: any) => localDevStore.saveUser(data),
@@ -72,6 +75,7 @@ class LocalDevMockDb {
       return { count: 0 };
     },
     count: async ({ where }: any = {}) => {
+      await ensureDevAdminUser();
       return localDevStore.getUsers((u) => {
         if (where?.role) {
           if (where.role.in && Array.isArray(where.role.in)) {
@@ -1184,7 +1188,25 @@ class LocalDevMockDb {
 function createClient() {
   validateEnv();
   const connString = process.env.DATABASE_URL;
-  // If we're in production or live DB is available, use standard client
+
+  // In production, DATABASE_URL is strictly required; fail loudly with no in-memory fallback
+  if (process.env.NODE_ENV === "production") {
+    if (!connString || connString.trim() === "") {
+      throw new Error(
+        "FATAL: DATABASE_URL environment variable is missing in production. Refusing to start with in-memory fallback."
+      );
+    }
+    const pool = new pg.Pool({
+      connectionString: connString,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    });
+    const adapter = new PrismaPg(pool);
+    return new PrismaClient({ adapter });
+  }
+
+  // Development / test fallback
   try {
     const pool =
       globalForPrisma.pgPool ??
@@ -1194,7 +1216,7 @@ function createClient() {
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
       });
-    if (process.env.NODE_ENV !== "production") globalForPrisma.pgPool = pool;
+    globalForPrisma.pgPool = pool;
     const adapter = new PrismaPg(pool);
     return new PrismaClient({ adapter });
   } catch {
