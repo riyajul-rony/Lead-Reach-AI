@@ -17,6 +17,8 @@ describe("CRIT-06: OnlinePaymentProvider (Fail-Closed & Manual Billing Mode)", (
         userEmail: "test@example.com",
         planId: "pro-plan-id",
         planSlug: "pro",
+        planName: "Pro Plan",
+        currency: "USD",
         amount: 49,
         interval: "monthly",
         successUrl: "http://localhost:3000/success",

@@ -483,6 +483,7 @@ model email_accounts {
   warmup_start_limit  Int                @default(10)
   warmup_daily_increment Int             @default(5)
   warmup_max_limit    Int                @default(50)
+  warmup_last_incremented_at DateTime?   @db.Timestamptz
   dns_spf_status      String?
   dns_dkim_status     String?
   dns_dmarc_status    String?

@@ -14,6 +14,7 @@ import { trackUsageIncrement, resetOrArchiveOldUsageCounters } from "@/server/bi
 import { processSubscriptionLifecycles } from "@/server/billing/lifecycle";
 import { recordErrorLog } from "@/server/logging/error-logger";
 import { cleanupOldLogs } from "@/server/logging/cleaner";
+import { incrementWarmupDayForActiveAccounts } from "@/server/email/account-service";
 
 /**
  * 1. PLANNER WORKER: runs every minute, computes scheduled runs from DB campaigns
@@ -328,9 +329,15 @@ export function startMaintenanceWorker() {
       const result = await resetOrArchiveOldUsageCounters();
       const lifecycleResult = await processSubscriptionLifecycles();
       const purgeResult = await cleanupOldLogs(90);
+      const warmupResult = await incrementWarmupDayForActiveAccounts();
       logger.info(
-        { archivedCounters: result, lifecycles: lifecycleResult, purgedLogs: purgeResult },
-        "Maintenance tick completed (archived counters, processed lifecycles & purged 90d logs)"
+        {
+          archivedCounters: result,
+          lifecycles: lifecycleResult,
+          purgedLogs: purgeResult,
+          warmupIncrements: warmupResult,
+        },
+        "Maintenance tick completed (archived counters, processed lifecycles, purged 90d logs & warmup incremented)"
       );
     },
     { connection: getRedisConnection(), concurrency: 1 }

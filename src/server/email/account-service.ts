@@ -97,6 +97,96 @@ export function getEffectiveAccountDailyLimit(account: {
   return Math.min(calculated, max, account.daily_limit || 150);
 }
 
+/**
+ * Nightly maintenance task: Increments warmup_day by 1 for accounts with warmup_enabled = true.
+ * - Idempotent: Skips accounts already incremented on the same calendar day (UTC).
+ * - Capped: Capped at the day where calculated limit reaches warmup_max_limit.
+ */
+export async function incrementWarmupDayForActiveAccounts(now: Date = new Date()): Promise<{
+  checked: number;
+  incremented: number;
+  capped: number;
+  skippedAlreadyIncremented: number;
+}> {
+  const activeWarmupAccounts = await db.email_accounts.findMany({
+    where: {
+      status: "active",
+      warmup_enabled: true,
+    },
+    select: {
+      id: true,
+      from_email: true,
+      warmup_day: true,
+      warmup_start_limit: true,
+      warmup_daily_increment: true,
+      warmup_max_limit: true,
+      warmup_last_incremented_at: true,
+    },
+  });
+
+  let incremented = 0;
+  let capped = 0;
+  let skippedAlreadyIncremented = 0;
+  const todayDateStr = now.toISOString().slice(0, 10);
+
+  for (const account of activeWarmupAccounts) {
+    const lastIncStr = account.warmup_last_incremented_at
+      ? new Date(account.warmup_last_incremented_at).toISOString().slice(0, 10)
+      : null;
+
+    if (lastIncStr === todayDateStr) {
+      skippedAlreadyIncremented++;
+      continue;
+    }
+
+    const currentDay = Math.max(1, account.warmup_day || 1);
+    const start = Math.max(1, account.warmup_start_limit || 10);
+    const inc = Math.max(1, account.warmup_daily_increment || 5);
+    const max = Math.max(start, account.warmup_max_limit || 50);
+
+    // Calculate maximum days needed to reach max limit
+    const maxDays = Math.max(1, Math.ceil((max - start) / inc) + 1);
+
+    if (currentDay >= maxDays) {
+      capped++;
+      await db.email_accounts.update({
+        where: { id: account.id },
+        data: {
+          warmup_last_incremented_at: now,
+        },
+      });
+      continue;
+    }
+
+    const nextDay = currentDay + 1;
+    await db.email_accounts.update({
+      where: { id: account.id },
+      data: {
+        warmup_day: nextDay,
+        warmup_last_incremented_at: now,
+      },
+    });
+    incremented++;
+  }
+
+  logger.info(
+    {
+      checked: activeWarmupAccounts.length,
+      incremented,
+      capped,
+      skippedAlreadyIncremented,
+    },
+    "Nightly warmup day increment task completed"
+  );
+
+  return {
+    checked: activeWarmupAccounts.length,
+    incremented,
+    capped,
+    skippedAlreadyIncremented,
+  };
+}
+
 function formatSmtpError(err: any, host: string = ""): string {
   const msg = err?.message || String(err);
   const code = err?.code || "";
