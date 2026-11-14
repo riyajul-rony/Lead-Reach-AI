@@ -155,12 +155,7 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
   if (!a.ok || !b.ok) return { error: "Too many login attempts. Try again in a few minutes." };
 
   const user = await db.users.findUnique({ where: { email } });
-  let ok = user?.password_hash ? await verifyPassword(user.password_hash, password) : false;
-  
-  // In local development without live Postgres, allow entering with any password
-  if (!ok && process.env.NODE_ENV !== "production" && email) {
-    ok = true;
-  }
+  const ok = user?.password_hash ? await verifyPassword(user.password_hash, password) : false;
 
   if (!user || !ok) return { error: "Incorrect email or password." };
   if (user.status !== "active") return { error: "This account is not active." };

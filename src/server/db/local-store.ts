@@ -3,9 +3,12 @@
 
 const DEFAULT_ADMIN_USER = {
   id: "00000000-0000-0000-0000-000000000001",
-  email: "admin@example.com",
+  email: process.env.DEV_ADMIN_EMAIL || "admin@example.com",
   name: "Admin User",
-  password_hash: "$argon2id$v=19$m=19456,t=2,p=1$placeholder",
+  // Argon2id hash for dev admin password (default: "Admin12345!" or overridden via DEV_ADMIN_PASSWORD_HASH)
+  password_hash:
+    process.env.DEV_ADMIN_PASSWORD_HASH ||
+    "$argon2id$v=19$m=19456,p=1,t=2$AES4ObMsGCEbzokcCDpsRA$dGrEwj5D4FZAsneAPLNeDtVsnCUgIKPuuC05LnNIGng",
   email_verified_at: new Date("2026-01-01T00:00:00.000Z"),
   onboarded_at: new Date("2026-01-01T00:00:00.000Z"),
   role: "super_admin",

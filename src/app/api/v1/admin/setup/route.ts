@@ -20,17 +20,7 @@ function maskSecret(val?: string, prefixLen = 3): string {
 }
 
 export async function GET() {
-  let session = await getSessionUser();
-  if (!session && process.env.NODE_ENV !== "production") {
-    session = {
-      sessionId: "dev-session",
-      user: {
-        id: "00000000-0000-0000-0000-000000000001",
-        email: "admin@example.com",
-        role: "super_admin",
-      } as any,
-    };
-  }
+  const session = await getSessionUser();
 
   if (!session || !hasPermission(session.user.role, "settings.manage")) {
     return NextResponse.json({ error: "Forbidden: settings.manage permission required" }, { status: 403 });
@@ -89,17 +79,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  let session = await getSessionUser();
-  if (!session && process.env.NODE_ENV !== "production") {
-    session = {
-      sessionId: "dev-session",
-      user: {
-        id: "00000000-0000-0000-0000-000000000001",
-        email: "admin@example.com",
-        role: "super_admin",
-      } as any,
-    };
-  }
+  const session = await getSessionUser();
 
   if (!session || !hasPermission(session.user.role, "settings.manage")) {
     return NextResponse.json({ error: "Forbidden: settings.manage permission required" }, { status: 403 });
