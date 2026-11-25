@@ -516,6 +516,37 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     return { throttled: true, reason: `Account wait gap active (cooldown: ${cooldownSec}s remaining)` };
   }
 
+  const currentStep = recipient.current_step || 0;
+
+  // Never resend initial email if recipient already has sent metadata
+  if (currentStep === 0 && (recipient.sent_at || recipient.last_sent_at || recipient.thread_message_id)) {
+    await db.campaign_recipients.update({
+      where: { id: recipient.id },
+      data: { status: "sent" },
+    }).catch(() => null);
+    return { skipped: true, reason: "Initial email already sent" };
+  }
+
+  // Idempotency guard: check if this exact step was already recorded as sent
+  try {
+    const alreadySentStep = await db.email_messages.findFirst({
+      where: {
+        recipient_id: recipient.id,
+        direction: "out",
+        kind: currentStep === 0 ? "initial" : "followup",
+        step_no: currentStep,
+        status: "sent",
+      },
+    });
+    if (alreadySentStep) {
+      await db.campaign_recipients.update({
+        where: { id: recipient.id },
+        data: { status: "sent" },
+      }).catch(() => null);
+      return { skipped: true, reason: `Step ${currentStep} already sent` };
+    }
+  } catch {}
+
   // 3. Mark recipient as sending
   await db.campaign_recipients.update({
     where: { id: recipient.id },
@@ -532,8 +563,6 @@ export async function sendSingleRecipientEmail(recipientId: string) {
   let finalBody = "";
   let isThreadedFollowup = false;
   let inReplyToId: string | undefined = undefined;
-
-  const currentStep = recipient.current_step || 0;
 
   try {
     // 4. Generate content for initial outreach or follow-up step

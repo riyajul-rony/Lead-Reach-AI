@@ -28,7 +28,14 @@ export async function POST(
       user_id: session.user.id,
       status: { in: ["failed", "needs_review"] },
     },
-    select: { id: true },
+    select: {
+      id: true,
+      sent_at: true,
+      last_sent_at: true,
+      current_step: true,
+      next_followup_at: true,
+      thread_message_id: true,
+    },
   });
 
   if (retryableRecipients.length === 0) {
@@ -39,19 +46,72 @@ export async function POST(
     });
   }
 
-  // Update recipients back to 'queued' and clear error
-  await db.campaign_recipients.updateMany({
-    where: {
-      campaign_id: id,
-      user_id: session.user.id,
-      status: { in: ["failed", "needs_review"] },
-    },
-    data: {
-      status: "queued",
-      error: null,
-      next_followup_at: new Date(),
-    },
-  });
+  const now = new Date();
+  const initialIds: string[] = [];
+  const followupDueIds: string[] = [];
+  const followupFutureIds: string[] = [];
+
+  for (const r of retryableRecipients) {
+    const alreadySentPriorStep =
+      Boolean(r.sent_at || r.last_sent_at || r.thread_message_id) ||
+      (r.current_step || 0) > 0;
+
+    if (!alreadySentPriorStep) {
+      initialIds.push(r.id);
+    } else if (r.next_followup_at && new Date(r.next_followup_at) > now) {
+      followupFutureIds.push(r.id);
+    } else {
+      followupDueIds.push(r.id);
+    }
+  }
+
+  // Never sent yet -> return to 'queued' for initial email dispatch
+  if (initialIds.length > 0) {
+    await db.campaign_recipients.updateMany({
+      where: {
+        campaign_id: id,
+        user_id: session.user.id,
+        id: { in: initialIds },
+        status: { in: ["failed", "needs_review"] },
+      },
+      data: {
+        status: "queued",
+        error: null,
+      },
+    });
+  }
+
+  // Already sent step 0/1+ -> restore 'sent' status (preserving current_step) so sequence-service handles the next step
+  if (followupDueIds.length > 0) {
+    await db.campaign_recipients.updateMany({
+      where: {
+        campaign_id: id,
+        user_id: session.user.id,
+        id: { in: followupDueIds },
+        status: { in: ["failed", "needs_review"] },
+      },
+      data: {
+        status: "sent",
+        error: null,
+        next_followup_at: now,
+      },
+    });
+  }
+
+  if (followupFutureIds.length > 0) {
+    await db.campaign_recipients.updateMany({
+      where: {
+        campaign_id: id,
+        user_id: session.user.id,
+        id: { in: followupFutureIds },
+        status: { in: ["failed", "needs_review"] },
+      },
+      data: {
+        status: "sent",
+        error: null,
+      },
+    });
+  }
 
   // If campaign is running, enqueue email dispatch immediately
   if (campaign.status === "running") {
@@ -61,6 +121,8 @@ export async function POST(
   return NextResponse.json({
     success: true,
     retriedCount: retryableRecipients.length,
+    initialRequeued: initialIds.length,
+    followupsRestored: followupDueIds.length + followupFutureIds.length,
     message: `Successfully re-queued ${retryableRecipients.length} recipient(s).`,
   });
 }

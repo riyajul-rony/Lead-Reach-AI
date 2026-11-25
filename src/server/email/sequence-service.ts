@@ -136,6 +136,33 @@ export async function sendSingleRecipientFollowup(
     return { skipped: true, reason: "All sequence steps completed for recipient" };
   }
 
+  // Idempotency guard: ensure this exact follow-up step was not already sent (prevents duplicate step on partial failures/retries)
+  try {
+    const alreadySentStep = await db.email_messages.findFirst({
+      where: {
+        recipient_id: recipient.id,
+        direction: "out",
+        kind: "followup",
+        step_no: step.step_no,
+        status: "sent",
+      },
+    });
+    if (alreadySentStep) {
+      const subsequentStep = sequence.steps.find((s: FollowupStep) => s.step_no === step.step_no + 1);
+      const nextAt = subsequentStep
+        ? new Date(now.getTime() + (Number(subsequentStep.delay_days) || 1) * 86400000)
+        : null;
+      await db.campaign_recipients.update({
+        where: { id: recipient.id },
+        data: {
+          current_step: step.step_no,
+          next_followup_at: nextAt,
+        },
+      });
+      return { skipped: true, reason: `Follow-up step ${step.step_no} already sent` };
+    }
+  } catch {}
+
   // Delay verification
   const delayDays = Math.max(Number(step.delay_days) || 1, 1);
   const delayMs = delayDays * 24 * 60 * 60 * 1000;

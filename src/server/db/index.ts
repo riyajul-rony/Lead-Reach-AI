@@ -372,8 +372,10 @@ class LocalDevMockDb {
         (r) =>
           (!where?.user_id || r.user_id === where.user_id) &&
           (!where?.campaign_id || r.campaign_id === where.campaign_id) &&
+          (!where?.id || (where.id?.in ? where.id.in.includes(r.id) : r.id === where.id)) &&
           (!where?.status || (where.status?.in ? where.status.in.includes(r.status) : r.status === where.status)) &&
-          (!where?.assigned_account_id || r.assigned_account_id === where.assigned_account_id)
+          (!where?.assigned_account_id || r.assigned_account_id === where.assigned_account_id) &&
+          (!where?.sending_started_at?.lt || (r.sending_started_at && new Date(r.sending_started_at) < new Date(where.sending_started_at.lt)))
       );
       if (take && typeof take === "number") {
         items = items.slice(0, take);
@@ -409,6 +411,13 @@ class LocalDevMockDb {
     },
     updateMany: async ({ where, data }: any = {}) => {
       const items = localDevStore.getRecipients((r) => {
+        if (where?.id) {
+          if (where.id?.in && Array.isArray(where.id.in)) {
+            if (!where.id.in.includes(r.id)) return false;
+          } else if (r.id !== where.id) {
+            return false;
+          }
+        }
         if (where?.campaign_id && r.campaign_id !== where.campaign_id) return false;
         if (where?.user_id && r.user_id !== where.user_id) return false;
         if (where?.status) {
@@ -418,11 +427,14 @@ class LocalDevMockDb {
             return false;
           }
         }
-        if (where?.next_followup_at?.lt && r.next_followup_at) {
-          if (new Date(r.next_followup_at) >= new Date(where.next_followup_at.lt)) return false;
+        if (where?.next_followup_at?.lt) {
+          if (!r.next_followup_at || new Date(r.next_followup_at) >= new Date(where.next_followup_at.lt)) return false;
         }
-        if (where?.created_at?.lt && r.created_at) {
-          if (new Date(r.created_at) >= new Date(where.created_at.lt)) return false;
+        if (where?.created_at?.lt) {
+          if (!r.created_at || new Date(r.created_at) >= new Date(where.created_at.lt)) return false;
+        }
+        if (where?.sending_started_at?.lt) {
+          if (!r.sending_started_at || new Date(r.sending_started_at) >= new Date(where.sending_started_at.lt)) return false;
         }
         return true;
       });
@@ -475,6 +487,8 @@ class LocalDevMockDb {
       let items = localDevStore.getEmailMessages((m) => {
         if (where?.user_id && m.user_id !== where.user_id) return false;
         if (where?.direction && m.direction !== where.direction) return false;
+        if (where?.kind && m.kind !== where.kind) return false;
+        if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
         if (where?.status && m.status !== where.status) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
         if (where?.recipient_id && m.recipient_id !== where.recipient_id) return false;
@@ -486,6 +500,18 @@ class LocalDevMockDb {
       if (skip && typeof skip === "number") items = items.slice(skip);
       if (take && typeof take === "number") items = items.slice(0, take);
       return items;
+    },
+    findFirst: async ({ where }: any = {}) => {
+      return localDevStore.getEmailMessages((m) => {
+        if (where?.user_id && m.user_id !== where.user_id) return false;
+        if (where?.direction && m.direction !== where.direction) return false;
+        if (where?.kind && m.kind !== where.kind) return false;
+        if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
+        if (where?.status && m.status !== where.status) return false;
+        if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
+        if (where?.recipient_id && m.recipient_id !== where.recipient_id) return false;
+        return true;
+      })[0] || null;
     },
     create: async ({ data }: any) => localDevStore.saveEmailMessage(data),
     count: async ({ where }: any = {}) => {
