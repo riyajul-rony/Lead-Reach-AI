@@ -1,6 +1,9 @@
 {
     admin off
     email {$ADMIN_EMAIL:admin@example.com}
+    on_demand_tls {
+        ask http://web:3000/api/internal/tls-ask?secret={$CTD_TLS_ASK_SECRET:}
+    }
 }
 
 {$APP_DOMAIN:localhost} {
@@ -28,5 +31,30 @@
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-For {remote_host}
         header_up X-Forwarded-Proto {scheme}
+    }
+}
+
+# Verified Custom Tracking Domains (CNAME on-demand TLS)
+https:// {
+    tls {
+        on_demand
+    }
+    encode zstd gzip
+
+    @allowed_tracking {
+        path /api/v1/track/*
+        path /api/v1/unsubscribe/*
+        path /u/*
+    }
+    handle @allowed_tracking {
+        reverse_proxy web:3000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+    handle {
+        respond "Not Found" 404
     }
 }

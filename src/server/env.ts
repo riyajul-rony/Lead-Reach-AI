@@ -39,6 +39,8 @@ const envSchema = z.object({
   REPLY_AI_PROVIDER: z.string().optional().default("openai"),
   REPLY_AI_MODEL: z.string().optional().default("gpt-4o-mini"),
   REPLY_AI_API_KEY: z.string().optional(),
+  TRACKING_CNAME_TARGET: z.string().optional(),
+  CTD_TLS_ASK_SECRET: z.string().optional(),
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;

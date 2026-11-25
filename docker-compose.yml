@@ -35,6 +35,8 @@ services:
       REPLY_AI_PROVIDER: ${REPLY_AI_PROVIDER:-openai}
       REPLY_AI_MODEL: ${REPLY_AI_MODEL:-gpt-4o-mini}
       REPLY_AI_API_KEY: ${REPLY_AI_API_KEY:-}
+      TRACKING_CNAME_TARGET: ${TRACKING_CNAME_TARGET:-}
+      CTD_TLS_ASK_SECRET: ${CTD_TLS_ASK_SECRET:-}
       TZ: UTC
     volumes:
       - appdata:/data

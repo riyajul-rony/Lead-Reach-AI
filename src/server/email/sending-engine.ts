@@ -13,6 +13,7 @@ import { trackUsageIncrement } from "@/server/billing/usage-tracker";
 import { queueEmailSend } from "@/server/queues";
 import { createSignedTrackingToken } from "@/server/email/tracking-token";
 import { selectVariantForRecipient } from "@/server/email/variant-service";
+import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
@@ -564,7 +565,11 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     return { skipped: true, reason: "Recipient already claimed or no longer queued" };
   }
 
-  const unsubscribeUrl = `${BASE_URL}/u/${recipient.unsubscribe_token}`;
+  const trackingBaseUrl = await resolveTrackingBaseUrl(
+    recipient.user_id,
+    campaign.tracking_domain_id
+  );
+  const unsubscribeUrl = `${trackingBaseUrl}/u/${recipient.unsubscribe_token}`;
   const legalAddress =
     (campaign.source_ref as any)?.sender_address_footer ||
     account.signature ||
@@ -691,7 +696,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       trackingOpen: Boolean(campaign.tracking_open),
       trackingClick: Boolean(campaign.tracking_click),
       unsubscribeToken: recipient.unsubscribe_token,
-      baseUrl: BASE_URL,
+      baseUrl: trackingBaseUrl,
     });
 
     // Generate explicit RFC Message-ID

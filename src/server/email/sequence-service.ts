@@ -10,6 +10,7 @@ import { assertLimit } from "@/server/billing/limits";
 import { trackUsageIncrement } from "@/server/billing/usage-tracker";
 import { buildEmailMultipartBodies, calculateRandomJitterSec, dispatchEmailTransport } from "@/server/email/sending-engine";
 import { selectVariantForRecipient } from "@/server/email/variant-service";
+import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
@@ -276,7 +277,11 @@ export async function sendSingleRecipientFollowup(
   }
 
   // 3. Render Subject and Body
-  const unsubscribeUrl = `${BASE_URL}/u/${recipient.unsubscribe_token}`;
+  const trackingBaseUrl = await resolveTrackingBaseUrl(
+    recipient.user_id,
+    campaign.tracking_domain_id
+  );
+  const unsubscribeUrl = `${trackingBaseUrl}/u/${recipient.unsubscribe_token}`;
   const legalAddress =
     campaign.source_ref?.sender_address_footer ||
     account.signature ||
@@ -368,7 +373,7 @@ export async function sendSingleRecipientFollowup(
       trackingOpen: Boolean(campaign.tracking_open),
       trackingClick: Boolean(campaign.tracking_click),
       unsubscribeToken: recipient.unsubscribe_token,
-      baseUrl: BASE_URL,
+      baseUrl: trackingBaseUrl,
     });
 
     const senderDomain = account.from_email.split("@")[1] || "leadreach.ai";

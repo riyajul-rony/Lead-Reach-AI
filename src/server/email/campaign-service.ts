@@ -51,6 +51,7 @@ export interface CreateCampaignInput {
   daysOfWeek?: number[];
   trackingOpen?: boolean;
   trackingClick?: boolean;
+  trackingDomainId?: string | null;
   dailyLeadLimit?: number;
   previewApproved?: boolean;
   aiConfig?: {
@@ -86,6 +87,27 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
 
   if (input.variants && Array.isArray(input.variants) && input.variants.length > 0) {
     validateVariantInputs(input.variants);
+  }
+
+  // Validate custom tracking domain ownership & verified status if explicitly specified
+  let validatedTrackingDomainId: string | null = null;
+  if (input.trackingDomainId) {
+    const td = await db.tracking_domains.findFirst({
+      where: {
+        id: input.trackingDomainId,
+        user_id: userId,
+      },
+      select: { id: true, status: true, domain: true },
+    });
+    if (!td) {
+      throw new Error("Selected custom tracking domain not found.");
+    }
+    if (td.status !== "verified") {
+      throw new Error(
+        `Custom tracking domain (${td.domain}) is not verified yet. Please verify its CNAME DNS record first.`
+      );
+    }
+    validatedTrackingDomainId = td.id;
   }
 
   // Verify accounts belong to user and are active
@@ -190,6 +212,7 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
       jitter_max_sec: Math.min(input.jitterMaxSec ?? 180, 600),
       tracking_open: Boolean(input.trackingOpen),
       tracking_click: Boolean(input.trackingClick),
+      tracking_domain_id: validatedTrackingDomainId,
       preset_mode: input.presetMode || "balanced",
       days_of_week: input.daysOfWeek && input.daysOfWeek.length > 0 ? input.daysOfWeek : [1, 2, 3, 4, 5],
       daily_lead_limit: input.dailyLeadLimit || null,

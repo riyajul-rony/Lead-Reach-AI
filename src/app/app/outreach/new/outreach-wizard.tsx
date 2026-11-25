@@ -112,6 +112,8 @@ export function OutreachWizard() {
   const [daysOfWeek, setDaysOfWeek] = useState<number[]>([1, 2, 3, 4, 5]);
   const [trackingOpen, setTrackingOpen] = useState(false);
   const [trackingClick, setTrackingClick] = useState(false);
+  const [trackingDomainId, setTrackingDomainId] = useState("");
+  const [trackingDomains, setTrackingDomains] = useState<Array<{ id: string; domain: string; is_default?: boolean }>>([]);
   const [physicalAddress, setPhysicalAddress] = useState(
     "123 Innovation Way, Suite 400, Wilmington, DE 19801"
   );
@@ -263,7 +265,7 @@ export function OutreachWizard() {
     setDraftRestored(false);
   };
 
-  // Fetch accounts on mount
+  // Fetch accounts and verified tracking domains on mount
   useEffect(() => {
     fetch("/api/v1/email-accounts")
       .then((r) => r.json())
@@ -277,6 +279,16 @@ export function OutreachWizard() {
         }
       })
       .finally(() => setLoadingAccounts(false));
+
+    fetch("/api/v1/tracking-domains?limit=50")
+      .then((r) => r.json())
+      .then((res) => {
+        const verified = (res.data?.items || []).filter((d: any) => d.status === "verified");
+        setTrackingDomains(verified);
+        const def = verified.find((d: any) => d.is_default);
+        if (def) setTrackingDomainId((prev) => prev || def.id);
+      })
+      .catch(() => {});
   }, []);
 
   // Auto-distribute leads across selected accounts
@@ -658,6 +670,7 @@ export function OutreachWizard() {
         daysOfWeek,
         trackingOpen,
         trackingClick,
+        trackingDomainId: trackingDomainId || undefined,
         previewApproved: mode === "ai" ? previewsApproved : true,
         aiConfig: {
           goalOrOffer: aiGoal,
@@ -976,6 +989,32 @@ export function OutreachWizard() {
                       onChange={(e) => setPhysicalAddress(e.target.value)}
                       className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-surface text-fg"
                     />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-fg">
+                        Custom Tracking Domain (Optional)
+                      </label>
+                      <Link
+                        href="/app/settings/integrations"
+                        className="text-[11px] text-primary hover:underline"
+                      >
+                        Manage Domains
+                      </Link>
+                    </div>
+                    <select
+                      value={trackingDomainId}
+                      onChange={(e) => setTrackingDomainId(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-surface text-fg"
+                    >
+                      <option value="">Default App Domain</option>
+                      {trackingDomains.map((td) => (
+                        <option key={td.id} value={td.id}>
+                          https://{td.domain} {td.is_default ? "(Default)" : ""}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}

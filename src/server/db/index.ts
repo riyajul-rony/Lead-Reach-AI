@@ -671,6 +671,68 @@ class LocalDevMockDb {
     },
   };
 
+  tracking_domains = {
+    findMany: async ({ where, take, skip, orderBy }: any = {}) => {
+      let items = localDevStore.getTrackingDomains((d: any) => {
+        if (where?.user_id && d.user_id !== where.user_id) return false;
+        if (where?.status && d.status !== where.status) return false;
+        if (where?.domain && d.domain !== where.domain) return false;
+        if (where?.is_default !== undefined && d.is_default !== where.is_default) return false;
+        return true;
+      });
+      if (orderBy?.created_at === "desc") {
+        items = [...items].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+      }
+      if (skip) items = items.slice(skip);
+      if (take) items = items.slice(0, take);
+      return items;
+    },
+    findFirst: async ({ where }: any = {}) => {
+      return localDevStore.findTrackingDomain((d: any) => {
+        if (where?.id && d.id !== where.id) return false;
+        if (where?.user_id && d.user_id !== where.user_id) return false;
+        if (where?.domain && d.domain !== where.domain) return false;
+        if (where?.status && d.status !== where.status) return false;
+        if (where?.is_default !== undefined && d.is_default !== where.is_default) return false;
+        return true;
+      });
+    },
+    findUnique: async ({ where }: any = {}) => {
+      return localDevStore.findTrackingDomain((d: any) => {
+        if (where?.id && d.id !== where.id) return false;
+        if (where?.domain && d.domain !== where.domain) return false;
+        return true;
+      });
+    },
+    create: async ({ data }: any) => localDevStore.saveTrackingDomain(data),
+    update: async ({ where, data }: any) => {
+      const existing = localDevStore.findTrackingDomain((d: any) => d.id === where.id);
+      return localDevStore.saveTrackingDomain({ ...existing, ...data });
+    },
+    updateMany: async ({ where, data }: any) => {
+      const matching = localDevStore.getTrackingDomains((d: any) => {
+        if (where?.user_id && d.user_id !== where.user_id) return false;
+        if (where?.id?.not && d.id === where.id.not) return false;
+        return true;
+      });
+      matching.forEach((m: any) => localDevStore.saveTrackingDomain({ ...m, ...data }));
+      return { count: matching.length };
+    },
+    delete: async ({ where }: any) => {
+      localDevStore.deleteTrackingDomain(where.id);
+      return { id: where.id };
+    },
+    count: async ({ where }: any = {}) => {
+      return localDevStore.getTrackingDomains((d: any) => {
+        if (where?.user_id && d.user_id !== where.user_id) return false;
+        if (where?.status && d.status !== where.status) return false;
+        return true;
+      }).length;
+    },
+  };
+
   lead_searches = {
     create: async ({ data }: any) => localDevStore.saveLeadSearch(data),
     update: async ({ where, data }: any) => {

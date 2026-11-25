@@ -57,6 +57,7 @@ interface StoreSchema {
   campaign_steps: any[];
   campaign_variants: any[];
   tracking_events: any[];
+  tracking_domains: any[];
   suppressions: any[];
   lead_searches: any[];
   leads: any[];
@@ -92,6 +93,7 @@ function getInitialStore(): StoreSchema {
     campaign_steps: [],
     campaign_variants: [],
     tracking_events: [],
+    tracking_domains: [],
     suppressions: [],
     lead_searches: [],
     leads: [],
@@ -1353,5 +1355,55 @@ export const localDevStore = {
     store.apify_keys = store.apify_keys.filter((item) => !filter(item));
     saveStore();
     return { count: beforeCount - store.apify_keys.length };
+  },
+
+  // --- Custom Tracking Domains ---
+  getTrackingDomains: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.tracking_domains) store.tracking_domains = [];
+    return filter ? store.tracking_domains.filter(filter) : store.tracking_domains;
+  },
+  findTrackingDomain: (filter: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.tracking_domains) store.tracking_domains = [];
+    return store.tracking_domains.find(filter) || null;
+  },
+  saveTrackingDomain: (item: any) => {
+    const store = loadStore();
+    if (!store.tracking_domains) store.tracking_domains = [];
+    const idx = store.tracking_domains.findIndex((d) => d.id === item.id);
+    if (idx >= 0) {
+      store.tracking_domains[idx] = {
+        ...store.tracking_domains[idx],
+        ...item,
+        updated_at: new Date().toISOString(),
+      };
+    } else {
+      store.tracking_domains.push({
+        id: item.id || `td-${Math.random().toString(36).slice(2, 10)}`,
+        status: "pending",
+        is_default: false,
+        last_checked_at: null,
+        last_error: null,
+        verified_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        ...item,
+      });
+    }
+    saveStore();
+    return idx >= 0
+      ? store.tracking_domains[idx]
+      : store.tracking_domains[store.tracking_domains.length - 1];
+  },
+  deleteTrackingDomain: (id: string) => {
+    const store = loadStore();
+    if (!store.tracking_domains) store.tracking_domains = [];
+    store.tracking_domains = store.tracking_domains.filter((d) => d.id !== id);
+    // Mimic ON DELETE SET NULL on outreach_campaigns
+    for (const c of store.outreach_campaigns || []) {
+      if (c.tracking_domain_id === id) c.tracking_domain_id = null;
+    }
+    saveStore();
   },
 };

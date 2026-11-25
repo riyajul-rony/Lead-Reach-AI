@@ -276,6 +276,12 @@ enum PaymentStatus {
   refunded
 }
 
+enum TrackingDomainStatus {
+  pending
+  verified
+  failed
+}
+
 // ───────────── Users & auth ─────────────
 model workspaces {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -341,6 +347,7 @@ model users {
   payments              payments[]
   error_logs            error_logs[]
   apify_usage_logs      apify_usage_logs[]
+  tracking_domains      tracking_domains[]
 
   @@index([created_at(sort: Desc)])
   @@index([role, status])
@@ -778,6 +785,7 @@ model outreach_campaigns {
   allocation_mode  String          @default("round_robin")
   days_of_week     Int[]           @default([1, 2, 3, 4, 5])
   daily_lead_limit Int?
+  tracking_domain_id String?       @db.Uuid
   start_at         DateTime?       @db.Timestamptz
   launched_at      DateTime?       @db.Timestamptz
   completed_at     DateTime?       @db.Timestamptz
@@ -786,6 +794,7 @@ model outreach_campaigns {
 
   user             users           @relation(fields: [user_id], references: [id], onDelete: Cascade)
   openai_key       api_keys?       @relation(fields: [openai_key_id], references: [id])
+  tracking_domain  tracking_domains? @relation(fields: [tracking_domain_id], references: [id], onDelete: SetNull)
   accounts         outreach_campaign_accounts[]
   recipients       campaign_recipients[]
   sequences        followup_sequences[]
@@ -795,6 +804,27 @@ model outreach_campaigns {
 
   @@index([user_id, status])
   @@index([status])
+  @@index([tracking_domain_id])
+}
+
+model tracking_domains {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         String               @db.Uuid
+  domain          String               @unique
+  cname_target    String
+  status          TrackingDomainStatus @default(pending)
+  is_default      Boolean              @default(false)
+  last_checked_at DateTime?            @db.Timestamptz
+  last_error      String?
+  verified_at     DateTime?            @db.Timestamptz
+  created_at      DateTime             @default(now()) @db.Timestamptz
+  updated_at      DateTime             @updatedAt @db.Timestamptz
+
+  user            users                @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  campaigns       outreach_campaigns[]
+
+  @@index([user_id, status])
+  @@index([user_id, is_default])
 }
 
 model campaign_variants {
