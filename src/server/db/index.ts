@@ -733,6 +733,100 @@ class LocalDevMockDb {
     },
   };
 
+  warmup_logs = {
+    findMany: async ({ where, include, take, skip, orderBy }: any = {}) => {
+      let items = localDevStore.getWarmupLogs((w: any) => {
+        if (where?.id && w.id !== where.id) return false;
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.from_account_id && w.from_account_id !== where.from_account_id) return false;
+        if (where?.to_account_id && w.to_account_id !== where.to_account_id) return false;
+        if (where?.status) {
+          if (Array.isArray(where.status?.in) && !where.status.in.includes(w.status)) return false;
+          if (typeof where.status === "string" && w.status !== where.status) return false;
+        }
+        if (where?.sent_at?.gte) {
+          if (new Date(w.sent_at).getTime() < new Date(where.sent_at.gte).getTime()) return false;
+        }
+        return true;
+      });
+      if (orderBy?.sent_at === "desc" || orderBy?.created_at === "desc") {
+        items = [...items].sort(
+          (a, b) => new Date(b.sent_at || b.created_at).getTime() - new Date(a.sent_at || a.created_at).getTime()
+        );
+      }
+      if (skip) items = items.slice(skip);
+      if (take) items = items.slice(0, take);
+      if (include) {
+        return items.map((w: any) => ({
+          ...w,
+          from_account: include.from_account
+            ? localDevStore.findEmailAccount((a: any) => a.id === w.from_account_id)
+            : undefined,
+          to_account: include.to_account
+            ? localDevStore.findEmailAccount((a: any) => a.id === w.to_account_id)
+            : undefined,
+        }));
+      }
+      return items;
+    },
+    findFirst: async ({ where }: any = {}) => {
+      return localDevStore.findWarmupLog((w: any) => {
+        if (where?.id && w.id !== where.id) return false;
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.from_account_id && w.from_account_id !== where.from_account_id) return false;
+        if (where?.to_account_id && w.to_account_id !== where.to_account_id) return false;
+        if (where?.status && w.status !== where.status) return false;
+        if (where?.message_id) {
+          if (Array.isArray(where.message_id?.in) && !where.message_id.in.includes(w.message_id)) return false;
+          if (typeof where.message_id === "string" && w.message_id !== where.message_id) return false;
+        }
+        if (Array.isArray(where?.OR)) {
+          const matchesAny = where.OR.some((clause: any) => {
+            if (clause.id && w.id === clause.id) return true;
+            if (clause.message_id && typeof clause.message_id === "string" && w.message_id === clause.message_id) return true;
+            if (Array.isArray(clause.message_id?.in) && clause.message_id.in.includes(w.message_id)) return true;
+            return false;
+          });
+          if (!matchesAny) return false;
+        }
+        return true;
+      });
+    },
+    create: async ({ data }: any) => localDevStore.saveWarmupLog(data),
+    update: async ({ where, data }: any) => {
+      const existing = localDevStore.findWarmupLog((w: any) => w.id === where.id);
+      return localDevStore.saveWarmupLog({ ...existing, ...data });
+    },
+    updateMany: async ({ where, data }: any) => {
+      const matching = localDevStore.getWarmupLogs((w: any) => {
+        if (where?.id && w.id !== where.id) return false;
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.status && w.status !== where.status) return false;
+        return true;
+      });
+      matching.forEach((m: any) => localDevStore.saveWarmupLog({ ...m, ...data }));
+      return { count: matching.length };
+    },
+    count: async ({ where }: any = {}) => {
+      return localDevStore.getWarmupLogs((w: any) => {
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.from_account_id && w.from_account_id !== where.from_account_id) return false;
+        if (where?.to_account_id && w.to_account_id !== where.to_account_id) return false;
+        if (where?.status) {
+          if (Array.isArray(where.status?.in) && !where.status.in.includes(w.status)) return false;
+          if (typeof where.status === "string" && w.status !== where.status) return false;
+        }
+        if (where?.sent_at?.gte) {
+          if (new Date(w.sent_at).getTime() < new Date(where.sent_at.gte).getTime()) return false;
+        }
+        if (where?.replied_at?.gte) {
+          if (!w.replied_at || new Date(w.replied_at).getTime() < new Date(where.replied_at.gte).getTime()) return false;
+        }
+        return true;
+      }).length;
+    },
+  };
+
   lead_searches = {
     create: async ({ data }: any) => localDevStore.saveLeadSearch(data),
     update: async ({ where, data }: any) => {

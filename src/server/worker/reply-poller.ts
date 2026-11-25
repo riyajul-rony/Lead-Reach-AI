@@ -4,6 +4,7 @@ import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { getDecryptedAccountCredentials } from "@/server/email/account-service";
 import { classifyReplyIntent } from "@/server/ai/reply-classifier";
+import { handleIncomingWarmupEmail, isWarmupMessageHeaders } from "@/server/email/warmup-pool-service";
 
 export interface PollResult {
   checked: number;
@@ -205,7 +206,7 @@ export async function pollInboxesForReplies(): Promise<PollResult> {
         if (totalMsgs > 0) {
           const fetchRange = `${Math.max(1, totalMsgs - 24)}:*`;
 
-          for await (const message of client.fetch(fetchRange, { envelope: true, source: true })) {
+          for await (const message of client.fetch(fetchRange, { envelope: true, source: true, uid: true })) {
             try {
               const envelope = message.envelope;
               if (!envelope || !message.source) continue;
@@ -215,6 +216,44 @@ export async function pollInboxesForReplies(): Promise<PollResult> {
               const subject = envelope.subject || "";
 
               if (!fromAddress) continue;
+
+              // 0. Intercept Self Warm-up Pool messages BEFORE bounce or campaign lead matching
+              const sourcePeek = Buffer.isBuffer(message.source)
+                ? message.source.subarray(0, 8192).toString("utf8").toLowerCase()
+                : String(message.source).slice(0, 8192).toLowerCase();
+              if (sourcePeek.includes("x-leadreachai-warmup")) {
+                const warmupParsed = await (simpleParser as any)(message.source);
+                if (isWarmupMessageHeaders(warmupParsed.headers)) {
+                  const rawRefs = warmupParsed.headers?.get("references");
+                  const refIds: string[] = [];
+                  if (typeof rawRefs === "string") {
+                    const m = rawRefs.match(/<[^>]+>/g);
+                    if (m) refIds.push(...m);
+                  } else if (Array.isArray(rawRefs)) {
+                    for (const item of rawRefs) {
+                      const m = typeof item === "string" ? item.match(/<[^>]+>/g) : null;
+                      if (m) refIds.push(...m);
+                    }
+                  }
+
+                  await handleIncomingWarmupEmail({
+                    receivingAccount: account,
+                    fromAddress,
+                    messageId: envelope.messageId || "",
+                    inReplyTo,
+                    references: refIds,
+                    subject,
+                    headers: warmupParsed.headers,
+                  });
+
+                  try {
+                    if (message.uid) {
+                      await client.messageFlagsAdd(String(message.uid), ["\\Seen"], { uid: true });
+                    }
+                  } catch {}
+                  continue;
+                }
+              }
 
               // 1. Check for Bounce (mailer-daemon / postmaster)
               if (isBounceMessage(fromAddress, subject)) {

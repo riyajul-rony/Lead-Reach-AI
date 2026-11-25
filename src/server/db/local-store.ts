@@ -58,6 +58,7 @@ interface StoreSchema {
   campaign_variants: any[];
   tracking_events: any[];
   tracking_domains: any[];
+  warmup_logs: any[];
   suppressions: any[];
   lead_searches: any[];
   leads: any[];
@@ -94,6 +95,7 @@ function getInitialStore(): StoreSchema {
     campaign_variants: [],
     tracking_events: [],
     tracking_domains: [],
+    warmup_logs: [],
     suppressions: [],
     lead_searches: [],
     leads: [],
@@ -1405,5 +1407,40 @@ export const localDevStore = {
       if (c.tracking_domain_id === id) c.tracking_domain_id = null;
     }
     saveStore();
+  },
+
+  // --- Self Warm-up Logs ---
+  getWarmupLogs: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.warmup_logs) store.warmup_logs = [];
+    return filter ? store.warmup_logs.filter(filter) : store.warmup_logs;
+  },
+  findWarmupLog: (filter: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.warmup_logs) store.warmup_logs = [];
+    return store.warmup_logs.find(filter) || null;
+  },
+  saveWarmupLog: (item: any) => {
+    const store = loadStore();
+    if (!store.warmup_logs) store.warmup_logs = [];
+    const idx = store.warmup_logs.findIndex((w) => w.id === item.id);
+    if (idx >= 0) {
+      store.warmup_logs[idx] = { ...store.warmup_logs[idx], ...item };
+    } else {
+      store.warmup_logs.push({
+        id: item.id || `wu-${Math.random().toString(36).slice(2, 10)}`,
+        status: item.status || "sent",
+        reply_message_id: null,
+        replied_at: null,
+        error: null,
+        sent_at: item.sent_at || new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        ...item,
+      });
+    }
+    saveStore();
+    return idx >= 0
+      ? store.warmup_logs[idx]
+      : store.warmup_logs[store.warmup_logs.length - 1];
   },
 };

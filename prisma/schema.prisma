@@ -282,6 +282,12 @@ enum TrackingDomainStatus {
   failed
 }
 
+enum WarmupLogStatus {
+  sent
+  replied
+  failed
+}
+
 // ───────────── Users & auth ─────────────
 model workspaces {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -348,6 +354,7 @@ model users {
   error_logs            error_logs[]
   apify_usage_logs      apify_usage_logs[]
   tracking_domains      tracking_domains[]
+  warmup_logs           warmup_logs[]
 
   @@index([created_at(sort: Desc)])
   @@index([role, status])
@@ -524,6 +531,8 @@ model email_accounts {
   recipients          campaign_recipients[]
   messages            email_messages[]
   sequences           followup_sequences[]
+  warmup_sent_logs    warmup_logs[]        @relation("WarmupSentLogs")
+  warmup_received_logs warmup_logs[]       @relation("WarmupReceivedLogs")
 
   @@unique([user_id, from_email])
   @@index([reply_inbox_account_id])
@@ -825,6 +834,30 @@ model tracking_domains {
 
   @@index([user_id, status])
   @@index([user_id, is_default])
+}
+
+model warmup_logs {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String          @db.Uuid
+  from_account_id  String          @db.Uuid
+  to_account_id    String          @db.Uuid
+  message_id       String
+  reply_message_id String?
+  subject          String
+  status           WarmupLogStatus @default(sent)
+  replied_at       DateTime?       @db.Timestamptz
+  error            String?
+  sent_at          DateTime        @default(now()) @db.Timestamptz
+  created_at       DateTime        @default(now()) @db.Timestamptz
+
+  user             users           @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  from_account     email_accounts  @relation("WarmupSentLogs", fields: [from_account_id], references: [id], onDelete: Cascade)
+  to_account       email_accounts  @relation("WarmupReceivedLogs", fields: [to_account_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, sent_at(sort: Desc)])
+  @@index([from_account_id, sent_at])
+  @@index([to_account_id, status])
+  @@index([message_id])
 }
 
 model campaign_variants {

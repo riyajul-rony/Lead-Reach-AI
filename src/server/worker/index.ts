@@ -15,6 +15,7 @@ import { processSubscriptionLifecycles } from "@/server/billing/lifecycle";
 import { recordErrorLog } from "@/server/logging/error-logger";
 import { cleanupOldLogs } from "@/server/logging/cleaner";
 import { incrementWarmupDayForActiveAccounts } from "@/server/email/account-service";
+import { runSelfWarmupTick } from "@/server/email/warmup-pool-service";
 
 /**
  * 1. PLANNER WORKER: runs every minute, computes scheduled runs from DB campaigns
@@ -444,6 +445,41 @@ export function startMaintenanceWorker() {
   );
 }
 
+/**
+ * 7. SELF WARM-UP POOL WORKER: rotates internal warm-up emails between user's own active inboxes
+ */
+export function startWarmupWorker() {
+  return new Worker(
+    QUEUE_NAMES.WARMUP,
+    async () => {
+      const startedAt = Date.now();
+      const result = await runSelfWarmupTick();
+      const durationMs = Date.now() - startedAt;
+
+      logger.info(
+        { ...result, durationMs },
+        "Self warm-up pool tick completed"
+      );
+
+      try {
+        const redis = getRedisConnection();
+        await redis.set(
+          "leadreach:worker:last_run:warmup",
+          JSON.stringify({
+            jobType: "warmup-pool",
+            timestamp: new Date().toISOString(),
+            durationMs,
+            ...result,
+          }),
+          "EX",
+          86400
+        );
+      } catch {}
+    },
+    { connection: getRedisConnection(), concurrency: 1 }
+  );
+}
+
 import { startLeadSearchWorker } from "./lead-search-worker";
 
 /**
@@ -452,9 +488,10 @@ import { startLeadSearchWorker } from "./lead-search-worker";
  * 2. Social Publish (executes social media posts)
  * 3. Email Dispatch (outreach loop & followup sequences)
  * 4. Email Send (transports single recipient emails)
- * 5. Reply Poll (IMAP inboxes for stop-on-reply & bounces)
+ * 5. Reply Poll (IMAP inboxes for stop-on-reply, bounces & self warm-up replies)
  * 6. Maintenance (archives old usage counters)
  * 7. Lead Search (scrapes, enriches & deduplicates leads)
+ * 8. Self Warm-up Pool (internal inbox warm-up between user accounts)
  */
 export function startAllWorkers() {
   logger.info("Starting all Lead Reach AI background workers...");
@@ -465,9 +502,10 @@ export function startAllWorkers() {
   const replyPoll = startReplyPollWorker();
   const maintenance = startMaintenanceWorker();
   const leadSearch = startLeadSearchWorker();
+  const warmup = startWarmupWorker();
 
-  logger.info("All 7 Lead Reach AI background workers are active.");
-  return { planner, social, emailDispatch, emailSend, replyPoll, maintenance, leadSearch };
+  logger.info("All 8 Lead Reach AI background workers are active.");
+  return { planner, social, emailDispatch, emailSend, replyPoll, maintenance, leadSearch, warmup };
 }
 
 

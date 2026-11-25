@@ -28,6 +28,7 @@ export const QUEUE_NAMES = {
   EMAIL_SEND: "email-send",
   REPLY_POLL: "reply-poll",
   MAINTENANCE: "maintenance",
+  WARMUP: "warmup-pool",
 } as const;
 
 export function createQueue(name: string): Queue {
@@ -174,12 +175,21 @@ export function getMaintenanceQueue(): Queue {
   return maintenanceQueue;
 }
 
+let warmupQueue: Queue | null = null;
+export function getWarmupQueue(): Queue {
+  if (!warmupQueue) {
+    warmupQueue = createQueue(QUEUE_NAMES.WARMUP);
+  }
+  return warmupQueue;
+}
+
 // Scheduler IDs — must match what was used in upsertJobScheduler calls
 const SCHEDULER_IDS: Array<{ queue: () => Queue; id: string }> = [
   { queue: getPlannerQueue, id: "leadreach:scheduler:planner" },
   { queue: getEmailDispatchQueue, id: "leadreach:scheduler:email-dispatch" },
   { queue: getReplyPollQueue, id: "leadreach:scheduler:reply-poll" },
   { queue: getMaintenanceQueue, id: "leadreach:scheduler:maintenance" },
+  { queue: getWarmupQueue, id: "leadreach:scheduler:warmup" },
 ];
 
 /**
@@ -291,6 +301,24 @@ export async function registerRepeatableSchedulers(): Promise<{ registered: bool
     logger.info("Registered repeatable scheduler: maintenance (daily 02:00 UTC)");
   } catch (err) {
     logger.error({ err }, "Failed to register maintenance job scheduler");
+  }
+
+  // 5. Self Warm-up Pool: every SELF_WARMUP_INTERVAL_MINUTES (default 15m)
+  try {
+    const warmupMinutes = Math.min(
+      1440,
+      Math.max(1, Number(process.env.SELF_WARMUP_INTERVAL_MINUTES || "15"))
+    );
+    const q = getWarmupQueue();
+    await q.upsertJobScheduler(
+      "leadreach:scheduler:warmup",
+      { every: warmupMinutes * 60 * 1000 },
+      { name: "warmup-pool-tick", data: {} }
+    );
+    registered.push(`warmup-pool (every ${warmupMinutes}m)`);
+    logger.info({ warmupMinutes }, "Registered repeatable scheduler: warmup-pool");
+  } catch (err) {
+    logger.error({ err }, "Failed to register warmup-pool job scheduler");
   }
 
   return { registered: true, schedulers: registered };
