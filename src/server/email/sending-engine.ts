@@ -439,9 +439,10 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     return { skipped: true, reason: "Campaign is not running" };
   }
 
-  // Check plan limits
+  // Check plan limits (monthly and daily outreach quotas)
   try {
     await assertLimit(recipient.user_id, "monthly_outreach_emails", 1);
+    await assertLimit(recipient.user_id, "daily_outreach_emails", 1);
   } catch (err: any) {
     logger.warn({ recipientId, userId: recipient.user_id, err: err.message }, "Outreach quota exceeded");
     return { skipped: true, reason: err.message };

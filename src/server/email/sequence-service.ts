@@ -2,11 +2,13 @@ import crypto from "node:crypto";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { decrypt } from "@/server/crypto";
-import { accountHasWorkingReplyDetection } from "@/server/email/account-service";
+import { accountHasWorkingReplyDetection, getEffectiveAccountDailyLimit } from "@/server/email/account-service";
 import { renderEmailTemplate } from "@/server/email/template-renderer";
 import { getUserApiKey } from "@/server/api-keys/service";
 import { generateOutreachEmail } from "@/server/ai/outreach-generator";
-import { buildEmailMultipartBodies, dispatchEmailTransport } from "@/server/email/sending-engine";
+import { assertLimit } from "@/server/billing/limits";
+import { trackUsageIncrement } from "@/server/billing/usage-tracker";
+import { buildEmailMultipartBodies, calculateRandomJitterSec, dispatchEmailTransport } from "@/server/email/sending-engine";
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
@@ -235,6 +237,43 @@ export async function sendSingleRecipientFollowup(
     return { throttled: true, reason: "Hourly limit reached" };
   }
 
+  // Per-account daily limit (including dynamic warmup_day limit)
+  const dailyCap = getEffectiveAccountDailyLimit(account);
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+  const sentToday = await db.email_messages.count({
+    where: {
+      email_account_id: account.id,
+      sent_at: { gte: startOfDay },
+      status: "sent",
+    },
+  });
+
+  if (sentToday >= dailyCap) {
+    logger.warn(
+      { accountId: account.id, sentToday, dailyCap },
+      "Account reached daily warmup limit, postponing followup"
+    );
+    return { throttled: true, reason: "Daily warmup limit reached" };
+  }
+
+  // Per-account wait gap cooldown
+  if (account.next_allowed_at && new Date(account.next_allowed_at) > now) {
+    const cooldownMs = new Date(account.next_allowed_at).getTime() - now.getTime();
+    const cooldownSec = Math.ceil(cooldownMs / 1000);
+    logger.warn({ accountId: account.id, cooldownSec }, "Account wait gap cooldown active, postponing followup");
+    return { throttled: true, reason: `Account wait gap active (cooldown: ${cooldownSec}s remaining)` };
+  }
+
+  // Plan limits (monthly and daily outreach quotas)
+  try {
+    await assertLimit(recipient.user_id, "monthly_outreach_emails", 1);
+    await assertLimit(recipient.user_id, "daily_outreach_emails", 1);
+  } catch (err: any) {
+    logger.warn({ recipientId: recipient.id, userId: recipient.user_id, err: err.message }, "Outreach quota exceeded for followup");
+    return { skipped: true, throttled: true, reason: err.message };
+  }
+
   // 3. Render Subject and Body
   const unsubscribeUrl = `${BASE_URL}/u/${recipient.unsubscribe_token}`;
   const legalAddress =
@@ -378,6 +417,20 @@ export async function sendSingleRecipientFollowup(
         next_followup_at: nextFollowupAt,
       },
     });
+
+    // Update account's next_allowed_at wait gap cooldown
+    const minGap = Math.max(Number(account.min_gap_seconds) || Number(account.gap_seconds) || 180, 30);
+    const maxGap = Math.max(Number(account.max_gap_seconds) || minGap * 2 || 420, minGap);
+    const gapSec = calculateRandomJitterSec(minGap, maxGap);
+    const nextAllowed = new Date(now.getTime() + gapSec * 1000);
+    try {
+      await db.email_accounts.update({
+        where: { id: account.id },
+        data: { next_allowed_at: nextAllowed },
+      });
+    } catch {}
+
+    trackUsageIncrement(recipient.user_id, "monthly_outreach_emails", 1).catch(() => null);
 
     logger.info(
       {
