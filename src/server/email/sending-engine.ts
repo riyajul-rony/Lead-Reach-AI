@@ -6,7 +6,7 @@ import { decrypt } from "@/server/crypto";
 import { getDecryptedAccountCredentials, getEffectiveAccountDailyLimit } from "@/server/email/account-service";
 import { ensureFreshGoogleAccessToken, sendViaGmailApi } from "@/server/email/google-oauth";
 import { getUserApiKey } from "@/server/api-keys/service";
-import { renderEmailTemplate } from "@/server/email/template-renderer";
+import { renderEmailTemplate, resolveSpintax } from "@/server/email/template-renderer";
 import { generateOutreachEmail } from "@/server/ai/outreach-generator";
 import { assertLimit } from "@/server/billing/limits";
 import { trackUsageIncrement } from "@/server/billing/usage-tracker";
@@ -606,8 +606,8 @@ export async function sendSingleRecipientEmail(recipientId: string) {
             tone: (campaign.ai_config as any)?.tone,
             textModel: campaign.text_model || (campaign.ai_config as any)?.textModel,
           });
-          finalSubject = generated.subject;
-          finalBody = generated.body;
+          finalSubject = resolveSpintax(generated.subject);
+          finalBody = resolveSpintax(generated.body);
         } else {
           finalSubject = renderEmailTemplate(
             campaign.subject_template || "Quick question for {{company_name|your business}}",

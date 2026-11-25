@@ -43,6 +43,7 @@ import { FollowupStepBuilder, FollowupStepData } from "@/components/outreach/fol
 import { AiPreviewApprover, GeneratedPreview } from "@/components/outreach/ai-preview-approver";
 import { SpamCheckResult } from "@/server/email/spam-checker";
 import { InfoTooltip } from "@/components/outreach/info-tooltip";
+import { renderEmailTemplate } from "@/server/email/template-renderer";
 
 interface EmailAccountItem {
   id: string;
@@ -161,6 +162,7 @@ export function OutreachWizard() {
   const [followupSteps, setFollowupSteps] = useState<FollowupStepData[]>([]);
   const [previewsApproved, setPreviewsApproved] = useState(false);
   const [aiPreviews, setAiPreviews] = useState<GeneratedPreview[]>([]);
+  const [spinSeed, setSpinSeed] = useState(0);
 
   // Spam checker state
   const [spamResult, setSpamResult] = useState<SpamCheckResult | null>(null);
@@ -379,19 +381,31 @@ export function OutreachWizard() {
     );
   }, [recipients]);
 
+  const previewVars = useMemo(
+    () => ({
+      first_name: sampleRecipient.name ? String(sampleRecipient.name).split(" ")[0] : "there",
+      company_name: sampleRecipient.company || "your business",
+      website: sampleRecipient.website || "your website",
+      city: (sampleRecipient as any).city || "",
+    }),
+    [sampleRecipient]
+  );
+
+  const makePreviewRng = (seedOffset: number) => {
+    let state = (spinSeed * 1664525 + seedOffset + 1013904223) >>> 0;
+    return () => {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      return state / 4294967296;
+    };
+  };
+
   const previewSubject = useMemo(() => {
-    return subjectTemplate
-      .replace(/\{\{\s*first_name(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.name || "there")
-      .replace(/\{\{\s*company_name(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.company || "your business")
-      .replace(/\{\{\s*website(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.website || "your website");
-  }, [subjectTemplate, sampleRecipient]);
+    return renderEmailTemplate(subjectTemplate, previewVars, undefined, makePreviewRng(17));
+  }, [subjectTemplate, previewVars, spinSeed]);
 
   const previewBody = useMemo(() => {
-    return bodyTemplate
-      .replace(/\{\{\s*first_name(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.name || "there")
-      .replace(/\{\{\s*company_name(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.company || "your company")
-      .replace(/\{\{\s*website(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.website || "your website");
-  }, [bodyTemplate, sampleRecipient]);
+    return renderEmailTemplate(bodyTemplate, previewVars, undefined, makePreviewRng(73));
+  }, [bodyTemplate, previewVars, spinSeed]);
 
   // Live Spam Deliverability check with debouncing
   useEffect(() => {
@@ -1594,9 +1608,19 @@ export function OutreachWizard() {
             {/* Right Column: Live Prospect Preview & Spam Checker */}
             <div className="space-y-4">
               <div className="rounded-xl border border-border bg-bgSubtle p-4 space-y-3">
-                <div className="flex items-center justify-between text-xs text-muted border-b border-border pb-2">
+                <div className="flex items-center justify-between text-xs text-muted border-b border-border pb-2 gap-2 flex-wrap">
                   <span className="font-semibold text-fg">Live Preview for Lead #1</span>
-                  <span className="text-[11px] font-mono">{sampleRecipient.email}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono">{sampleRecipient.email}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSpinSeed((s) => s + 1)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-surface border border-border text-fg hover:border-primary/50 hover:text-primary transition-colors cursor-pointer"
+                      title="Sample another spintax variation"
+                    >
+                      <RotateCcw size={11} /> Spin Preview
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-2 text-xs">

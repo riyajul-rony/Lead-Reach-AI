@@ -3,7 +3,7 @@ import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { decrypt } from "@/server/crypto";
 import { accountHasWorkingReplyDetection, getEffectiveAccountDailyLimit } from "@/server/email/account-service";
-import { renderEmailTemplate } from "@/server/email/template-renderer";
+import { renderEmailTemplate, resolveSpintax } from "@/server/email/template-renderer";
 import { getUserApiKey } from "@/server/api-keys/service";
 import { generateOutreachEmail } from "@/server/ai/outreach-generator";
 import { assertLimit } from "@/server/billing/limits";
@@ -313,9 +313,9 @@ export async function sendSingleRecipientFollowup(
             tone: campaign.ai_config?.tone || "conversational",
             textModel: campaign.text_model || campaign.ai_config?.textModel,
           });
-          const rawSubj = generated.subject || "Quick follow-up";
+          const rawSubj = resolveSpintax(generated.subject || "Quick follow-up");
           finalSubject = rawSubj.startsWith("Re:") ? rawSubj : `Re: ${rawSubj}`;
-          finalBody = generated.body;
+          finalBody = resolveSpintax(generated.body);
         } catch {
           // Fallback if AI generation encounters issue
           finalSubject = renderEmailTemplate(
