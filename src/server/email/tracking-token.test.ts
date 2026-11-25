@@ -112,4 +112,48 @@ describe("HIGH-02: Secure Click Tracking & Link Wrapping", () => {
     expect(bodies.html).toContain("tel:+123456789");
     expect(bodies.html).toContain("#section");
   });
+
+  it("rewrites only HTML href attribute while keeping visible anchor text and plain-text part unchanged, and uses TRACKING_SECRET when set", () => {
+    const prevTracking = process.env.TRACKING_SECRET;
+    const prevAuth = process.env.AUTH_SECRET;
+    try {
+      process.env.AUTH_SECRET = "auth_secret_32_chars_long_12345678";
+      process.env.TRACKING_SECRET = "dedicated_tracking_secret_value_1";
+
+      const target = "https://example.com/offer";
+      const tokenWithDedicated = createSignedTrackingToken("tok_1", target);
+
+      const bodies = buildEmailMultipartBodies({
+        bodyText: `Visit ${target} or unsubscribe at http://localhost:3000/u/tok_1`,
+        legalAddress: "123 Business St",
+        unsubscribeUrl: "http://localhost:3000/u/tok_1",
+        unsubscribeToken: "tok_1",
+        baseUrl: "http://localhost:3000",
+        trackingOpen: false,
+        trackingClick: true,
+      });
+
+      // Plain-text part has raw URL untouched
+      expect(bodies.text).toContain(`Visit ${target}`);
+      expect(bodies.text).not.toContain("/api/v1/track/click/");
+
+      // HTML href uses signed tracking URL, while visible anchor text remains raw URL
+      expect(bodies.html).toContain(`href="http://localhost:3000/api/v1/track/click/${tokenWithDedicated}"`);
+      expect(bodies.html).toContain(`>${target}</a>`);
+
+      // /u/<token> unsubscribe link is untouched in both body and footer
+      expect(bodies.html).toContain('href="http://localhost:3000/u/tok_1"');
+
+      // Rotating AUTH_SECRET does not break tokens signed with TRACKING_SECRET
+      process.env.AUTH_SECRET = "rotated_auth_secret_32_chars_long_99";
+      const verified = verifySignedTrackingToken(tokenWithDedicated);
+      expect(verified?.targetUrl).toBe(target);
+      expect(verified?.recipientToken).toBe("tok_1");
+    } finally {
+      if (prevTracking === undefined) delete process.env.TRACKING_SECRET;
+      else process.env.TRACKING_SECRET = prevTracking;
+      if (prevAuth === undefined) delete process.env.AUTH_SECRET;
+      else process.env.AUTH_SECRET = prevAuth;
+    }
+  });
 });

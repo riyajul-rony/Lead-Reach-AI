@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 function getTrackingSecret(): string {
   return (
+    process.env.TRACKING_SECRET ||
     process.env.AUTH_SECRET ||
     process.env.APP_ENCRYPTION_KEY ||
     "leadreach_click_tracking_secret"

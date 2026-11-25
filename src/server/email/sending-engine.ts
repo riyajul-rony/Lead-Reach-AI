@@ -67,7 +67,8 @@ export function buildEmailMultipartBodies(opts: {
         const isUnsubLink =
           rawUrl === opts.unsubscribeUrl ||
           rawUrl.includes("/api/v1/unsubscribe/") ||
-          rawUrl.includes("/unsubscribe/");
+          rawUrl.includes("/unsubscribe/") ||
+          (opts.unsubscribeToken ? rawUrl.includes(`/u/${opts.unsubscribeToken}`) : false);
 
         if (isUnsubLink || !opts.trackingClick) {
           htmlPara += `<a href="${escapeHtml(rawUrl)}" style="color: #0284c7; text-decoration: underline;">${escapeHtml(rawUrl)}</a>`;

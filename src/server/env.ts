@@ -15,6 +15,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.string().min(1, "REDIS_URL is required"),
   AUTH_SECRET: z.string().min(32, "AUTH_SECRET must be at least 32 characters"),
+  TRACKING_SECRET: z.string().optional(),
   APP_ENCRYPTION_KEY: z.string().refine((val) => {
     try {
       const buf = parseEncryptionKeyBuffer(val);
