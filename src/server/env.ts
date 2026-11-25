@@ -36,6 +36,9 @@ const envSchema = z.object({
   APIFY_TOKEN: z.string().optional(),
   SCHEDULERS_ENABLED: z.string().optional().default("false"),
   STALE_THRESHOLD_HOURS: z.coerce.number().min(1).default(24),
+  REPLY_AI_PROVIDER: z.string().optional().default("openai"),
+  REPLY_AI_MODEL: z.string().optional().default("gpt-4o-mini"),
+  REPLY_AI_API_KEY: z.string().optional(),
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;

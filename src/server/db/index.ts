@@ -485,11 +485,13 @@ class LocalDevMockDb {
   email_messages = {
     findMany: async ({ where, take, skip, orderBy }: any = {}) => {
       let items = localDevStore.getEmailMessages((m) => {
+        if (where?.id && m.id !== where.id) return false;
         if (where?.user_id && m.user_id !== where.user_id) return false;
         if (where?.direction && m.direction !== where.direction) return false;
         if (where?.kind && m.kind !== where.kind) return false;
         if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
         if (where?.status && m.status !== where.status) return false;
+        if (where?.reply_category && m.reply_category !== where.reply_category) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
         if (where?.variant_id !== undefined) {
           if (where.variant_id?.not === null && (m.variant_id === null || m.variant_id === undefined)) return false;
@@ -513,20 +515,28 @@ class LocalDevMockDb {
     },
     findFirst: async ({ where }: any = {}) => {
       return localDevStore.getEmailMessages((m) => {
+        if (where?.id && m.id !== where.id) return false;
         if (where?.user_id && m.user_id !== where.user_id) return false;
         if (where?.direction && m.direction !== where.direction) return false;
         if (where?.kind && m.kind !== where.kind) return false;
         if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
         if (where?.status && m.status !== where.status) return false;
+        if (where?.reply_category && m.reply_category !== where.reply_category) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
         if (where?.recipient_id && m.recipient_id !== where.recipient_id) return false;
         return true;
       })[0] || null;
     },
     create: async ({ data }: any) => localDevStore.saveEmailMessage(data),
+    update: async ({ where, data }: any) => {
+      const existing = localDevStore.getEmailMessages((m) => m.id === where.id)[0] || { id: where.id };
+      return localDevStore.saveEmailMessage({ ...existing, ...data });
+    },
     count: async ({ where }: any = {}) => {
       return localDevStore.getEmailMessages((m) => {
         if (where?.user_id && m.user_id !== where.user_id) return false;
+        if (where?.direction && m.direction !== where.direction) return false;
+        if (where?.reply_category && m.reply_category !== where.reply_category) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
         if (where?.status && m.status !== where.status) return false;
         if (where?.sent_at?.gte) {

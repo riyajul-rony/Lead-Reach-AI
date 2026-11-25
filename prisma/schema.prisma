@@ -239,6 +239,16 @@ enum MessageStatus {
   received
 }
 
+enum ReplyCategory {
+  interested
+  not_interested
+  out_of_office
+  bounce
+  unsubscribe
+  other
+  uncategorized
+}
+
 enum SequenceStatus {
   draft
   active
@@ -842,6 +852,7 @@ model campaign_recipients {
   preview_approved    Boolean         @default(true)
   open_count          Int             @default(0)
   click_count         Int             @default(0)
+  reply_category      ReplyCategory?
   first_opened_at     DateTime?       @db.Timestamptz
   first_clicked_at    DateTime?       @db.Timestamptz
   last_opened_at      DateTime?       @db.Timestamptz
@@ -882,10 +893,13 @@ model email_messages {
   snippet          String?          @db.VarChar(200)
   body_text        String?          @db.Text
   headers          Json?
-  status           MessageStatus
-  sent_at          DateTime?        @db.Timestamptz
-  error            String?
-  created_at       DateTime         @default(now()) @db.Timestamptz
+  status                    MessageStatus
+  reply_category            ReplyCategory?
+  reply_category_confidence Float?
+  reply_category_source     String?
+  sent_at                   DateTime?        @db.Timestamptz
+  error                     String?
+  created_at                DateTime         @default(now()) @db.Timestamptz
 
   user             users                @relation(fields: [user_id], references: [id], onDelete: Cascade)
   recipient        campaign_recipients? @relation(fields: [recipient_id], references: [id], onDelete: Cascade)
@@ -897,6 +911,7 @@ model email_messages {
   @@index([variant_id])
   @@index([user_id, direction, status])
   @@index([user_id, direction, sent_at])
+  @@index([user_id, direction, reply_category])
 }
 
 model campaign_steps {

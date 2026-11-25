@@ -3,6 +3,7 @@ import { simpleParser } from "mailparser";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { getDecryptedAccountCredentials } from "@/server/email/account-service";
+import { classifyReplyIntent } from "@/server/ai/reply-classifier";
 
 export interface PollResult {
   checked: number;
@@ -49,6 +50,89 @@ export function isBounceMessage(fromAddress = "", subject = ""): boolean {
     cleanSubj.includes("mail delivery failed") ||
     cleanSubj.includes("returned mail")
   );
+}
+
+/**
+ * Records stop-on-reply FIRST, then safely runs AI reply categorization.
+ * Any AI error/timeout leaves reply_category as 'uncategorized' without affecting stop-on-reply
+ * and NEVER auto-adds leads to global suppressions based on an AI guess.
+ */
+export async function recordHumanReplyAndClassify(input: {
+  recipient: { id: string; user_id: string; campaign_id: string; status: string };
+  accountId: string;
+  messageId: string;
+  inReplyTo?: string | null;
+  subject: string;
+  bodyText: string;
+  sentAt?: Date | string;
+}): Promise<{ recorded: boolean; category: string }> {
+  if (input.recipient.status === "replied") {
+    return { recorded: false, category: "uncategorized" };
+  }
+
+  // 1. CRITICAL: Execute Stop-on-Reply BEFORE any AI call
+  await db.campaign_recipients.update({
+    where: { id: input.recipient.id },
+    data: {
+      status: "replied",
+      replied_at: new Date(),
+      next_followup_at: null, // Permanently stops followup sequence
+      reply_category: "uncategorized",
+    },
+  });
+
+  const savedMessage = await db.email_messages.create({
+    data: {
+      user_id: input.recipient.user_id,
+      recipient_id: input.recipient.id,
+      email_account_id: input.accountId,
+      direction: "in",
+      kind: "reply",
+      message_id: input.messageId,
+      in_reply_to: input.inReplyTo || null,
+      subject: input.subject,
+      snippet: input.bodyText.slice(0, 150),
+      status: "received",
+      reply_category: "uncategorized",
+      reply_category_source: "fallback",
+      sent_at: input.sentAt ? new Date(input.sentAt) : new Date(),
+    },
+  });
+
+  // 2. Non-blocking safe AI classification after stop-on-reply is persisted
+  let finalCategory = "uncategorized";
+  try {
+    const classification = await classifyReplyIntent({
+      userId: input.recipient.user_id,
+      subject: input.subject,
+      bodyText: input.bodyText,
+    });
+    finalCategory = classification.category;
+
+    if (classification.category !== "uncategorized" || classification.source === "ai") {
+      if (savedMessage?.id && db.email_messages?.update) {
+        await db.email_messages.update({
+          where: { id: savedMessage.id },
+          data: {
+            reply_category: classification.category as any,
+            reply_category_confidence: classification.confidence,
+            reply_category_source: classification.source,
+          },
+        });
+      }
+      await db.campaign_recipients.update({
+        where: { id: input.recipient.id },
+        data: { reply_category: classification.category as any },
+      });
+    }
+  } catch (aiErr: any) {
+    logger.warn(
+      { recipientId: input.recipient.id, err: aiErr?.message },
+      "Post-reply AI categorization failed; reply kept as uncategorized"
+    );
+  }
+
+  return { recorded: true, category: finalCategory };
 }
 
 /**
@@ -257,6 +341,8 @@ export async function pollInboxesForReplies(): Promise<PollResult> {
                       subject,
                       snippet: bodyText.slice(0, 150),
                       status: "received",
+                      reply_category: "out_of_office",
+                      reply_category_source: "rule",
                       sent_at: envelope.date || new Date(),
                     },
                   });
@@ -268,42 +354,30 @@ export async function pollInboxesForReplies(): Promise<PollResult> {
                   continue;
                 }
 
-                // 4. Genuine human reply: STOP-ON-REPLY GUARANTEE
+                // 4. Genuine human reply: STOP-ON-REPLY GUARANTEE + safe AI classification
                 if (matchingRecipient.status !== "replied") {
-                  await db.campaign_recipients.update({
-                    where: { id: matchingRecipient.id },
-                    data: {
-                      status: "replied",
-                      replied_at: new Date(),
-                      next_followup_at: null, // Permanently stops followup sequence
-                    },
+                  const handled = await recordHumanReplyAndClassify({
+                    recipient: matchingRecipient,
+                    accountId: account.id,
+                    messageId: envelope.messageId || `reply_${Date.now()}`,
+                    inReplyTo,
+                    subject,
+                    bodyText,
+                    sentAt: envelope.date || new Date(),
                   });
 
-                  await db.email_messages.create({
-                    data: {
-                      user_id: matchingRecipient.user_id,
-                      recipient_id: matchingRecipient.id,
-                      email_account_id: account.id,
-                      direction: "in",
-                      kind: "reply",
-                      message_id: envelope.messageId || `reply_${Date.now()}`,
-                      in_reply_to: inReplyTo || null,
-                      subject,
-                      snippet: bodyText.slice(0, 150),
-                      status: "received",
-                      sent_at: envelope.date || new Date(),
-                    },
-                  });
-
-                  repliesFound++;
-                  logger.info(
-                    {
-                      email: fromAddress,
-                      campaignId: matchingRecipient.campaign_id,
-                      accountId: account.id,
-                    },
-                    "Detected human reply from recipient, stop-on-reply activated"
-                  );
+                  if (handled.recorded) {
+                    repliesFound++;
+                    logger.info(
+                      {
+                        email: fromAddress,
+                        campaignId: matchingRecipient.campaign_id,
+                        accountId: account.id,
+                        category: handled.category,
+                      },
+                      "Detected human reply from recipient, stop-on-reply activated"
+                    );
+                  }
                 }
               }
             } catch (msgErr) {

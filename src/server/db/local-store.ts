@@ -761,6 +761,12 @@ export const localDevStore = {
   saveEmailMessage: (item: any) => {
     const store = loadStore();
     if (!store.email_messages) store.email_messages = [];
+    const idx = item.id ? store.email_messages.findIndex((m) => m.id === item.id) : -1;
+    if (idx >= 0) {
+      store.email_messages[idx] = { ...store.email_messages[idx], ...item };
+      saveStore();
+      return store.email_messages[idx];
+    }
     const msg = {
       id: item.id || `msg-${Math.random().toString(36).slice(2, 10)}`,
       created_at: new Date().toISOString(),
