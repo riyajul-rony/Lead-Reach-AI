@@ -45,7 +45,8 @@ export async function GET(
               data: {
                 recipient_id: recipient.id,
                 campaign_id: recipient.campaign_id,
-                type: "open",
+                variant_id: recipient.variant_id || null,
+                event_type: "open",
                 ip_address: ip,
                 user_agent: userAgent,
               },

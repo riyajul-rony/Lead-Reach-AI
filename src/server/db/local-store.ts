@@ -55,6 +55,7 @@ interface StoreSchema {
   email_messages: any[];
   followup_sequences: any[];
   campaign_steps: any[];
+  campaign_variants: any[];
   tracking_events: any[];
   suppressions: any[];
   lead_searches: any[];
@@ -89,6 +90,7 @@ function getInitialStore(): StoreSchema {
     email_messages: [],
     followup_sequences: [],
     campaign_steps: [],
+    campaign_variants: [],
     tracking_events: [],
     suppressions: [],
     lead_searches: [],
@@ -606,6 +608,53 @@ export const localDevStore = {
     store.campaign_steps = filter ? store.campaign_steps.filter((s) => !filter(s)) : [];
     saveStore();
     return { count: beforeCount - store.campaign_steps.length };
+  },
+
+  // --- Campaign Variants (A/B Testing) ---
+  getCampaignVariants: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.campaign_variants) store.campaign_variants = [];
+    return filter ? store.campaign_variants.filter(filter) : store.campaign_variants;
+  },
+  findCampaignVariant: (filter: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.campaign_variants) store.campaign_variants = [];
+    return store.campaign_variants.find(filter) || null;
+  },
+  saveCampaignVariant: (item: any) => {
+    const store = loadStore();
+    if (!store.campaign_variants) store.campaign_variants = [];
+    const idx = store.campaign_variants.findIndex((v) => v.id === item.id);
+    if (idx >= 0) {
+      store.campaign_variants[idx] = { ...store.campaign_variants[idx], ...item };
+    } else {
+      store.campaign_variants.push({
+        id: item.id || `cv-${Math.random().toString(36).slice(2, 10)}`,
+        created_at: new Date().toISOString(),
+        step_no: 0,
+        weight: 50,
+        is_active: true,
+        ...item,
+      });
+    }
+    saveStore();
+    return idx >= 0 ? store.campaign_variants[idx] : store.campaign_variants[store.campaign_variants.length - 1];
+  },
+  deleteCampaignVariant: (id: string) => {
+    const store = loadStore();
+    if (!store.campaign_variants) store.campaign_variants = [];
+    store.campaign_variants = store.campaign_variants.filter((v) => v.id !== id);
+    // Mimic ON DELETE SET NULL
+    for (const r of store.campaign_recipients || []) {
+      if (r.variant_id === id) r.variant_id = null;
+    }
+    for (const m of store.email_messages || []) {
+      if (m.variant_id === id) m.variant_id = null;
+    }
+    for (const te of store.tracking_events || []) {
+      if (te.variant_id === id) te.variant_id = null;
+    }
+    saveStore();
   },
 
   // --- Tracking Events ---

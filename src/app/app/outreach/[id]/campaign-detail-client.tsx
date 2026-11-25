@@ -45,6 +45,7 @@ export interface CampaignDetail {
   senderAccounts: any[];
   recipients: any[];
   steps?: any[];
+  variantStats?: any[];
 }
 
 export function CampaignDetailClient({
@@ -122,7 +123,7 @@ export function CampaignDetailClient({
     }
   };
 
-  const { campaign, stats, senderAccounts, recipients, steps = [] } = data;
+  const { campaign, stats, senderAccounts, recipients, steps = [], variantStats = [] } = data;
   const isRunning = campaign.status === "running";
   const isPaused = campaign.status === "paused";
   const isDraft = campaign.status === "draft";
@@ -279,6 +280,59 @@ export function CampaignDetailClient({
           <span className="text-[10px] text-muted">Auto-Suppressed</span>
         </div>
       </div>
+
+      {/* A/B Test Variant Performance (shown when variants exist) */}
+      {variantStats.length > 0 && (
+        <div className="rounded-xl border border-border bg-surface p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-fg">A/B Test Variant Performance</h2>
+            <span className="text-xs text-muted">Deterministic weighted split</span>
+          </div>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-bgSubtle border-b border-border text-muted font-medium">
+                <tr>
+                  <th className="py-2 px-3">Step / Variant</th>
+                  <th className="py-2 px-3">Subject</th>
+                  <th className="py-2 px-3">Weight</th>
+                  <th className="py-2 px-3">Sent</th>
+                  <th className="py-2 px-3">Opened</th>
+                  <th className="py-2 px-3">Clicked</th>
+                  <th className="py-2 px-3">Replied</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {variantStats.map((v: any) => (
+                  <tr key={v.id} className="hover:bg-surfaceHover">
+                    <td className="py-2 px-3 font-medium text-fg">
+                      Step {v.step_no} &bull; Variant {v.label}
+                      {!v.is_active && (
+                        <Badge variant="neutral" size="sm" className="ml-2 text-[10px]">
+                          Archived
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-muted max-w-[220px] truncate">
+                      {v.subject_template || "Default"}
+                    </td>
+                    <td className="py-2 px-3 text-muted font-mono">{v.weight}%</td>
+                    <td className="py-2 px-3 font-semibold text-fg">{v.sent}</td>
+                    <td className="py-2 px-3 text-muted">
+                      {v.opened} ({v.openRate}%)
+                    </td>
+                    <td className="py-2 px-3 text-muted">
+                      {v.clicked} ({v.clickRate}%)
+                    </td>
+                    <td className="py-2 px-3 text-emerald-600 dark:text-emerald-400 font-semibold">
+                      {v.replied} ({v.replyRate}%)
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Funnel Progress Visualizer */}
       <div className="rounded-xl border border-border bg-surface p-5 space-y-3.5">

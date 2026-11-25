@@ -5,6 +5,11 @@ import { assertLimit } from "@/server/billing/limits";
 import { saveCampaignSequence } from "@/server/email/sequence-service";
 import { queueEmailDispatch } from "@/server/queues";
 import { accountHasWorkingReplyDetection } from "@/server/email/account-service";
+import {
+  VariantInput,
+  validateVariantInputs,
+  getCampaignVariantStats,
+} from "@/server/email/variant-service";
 
 export interface RecipientInput {
   email: string;
@@ -41,6 +46,7 @@ export interface CreateCampaignInput {
   subjectTemplate?: string;
   bodyTemplate?: string;
   steps?: CreateCampaignStepInput[];
+  variants?: VariantInput[];
   presetMode?: "safe" | "balanced" | "aggressive";
   daysOfWeek?: number[];
   trackingOpen?: boolean;
@@ -76,6 +82,10 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
 
   if (!input.senderAccountIds || input.senderAccountIds.length === 0) {
     throw new Error("At least one sender email account must be selected");
+  }
+
+  if (input.variants && Array.isArray(input.variants) && input.variants.length > 0) {
+    validateVariantInputs(input.variants);
   }
 
   // Verify accounts belong to user and are active
@@ -234,6 +244,21 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
     } catch {}
   }
 
+  // Save A/B test variants if provided (supports step 0 and/or follow-up steps)
+  if (input.variants && Array.isArray(input.variants) && input.variants.length > 0 && db.campaign_variants?.createMany) {
+    await db.campaign_variants.createMany({
+      data: input.variants.map((v) => ({
+        campaign_id: campaign.id,
+        step_no: v.step_no ?? 0,
+        label: String(v.label).trim(),
+        subject_template: v.subject_template ?? input.subjectTemplate ?? null,
+        body_template: v.body_template ?? input.bodyTemplate ?? null,
+        weight: Math.max(1, Math.floor(v.weight ?? 50)),
+        is_active: v.is_active !== false,
+      })),
+    });
+  }
+
   // Update email accounts sending limits if provided in allocations
   if (input.accountAllocations && Array.isArray(input.accountAllocations)) {
     for (const alloc of input.accountAllocations) {
@@ -371,6 +396,9 @@ export async function getCampaignDetails(userId: string, campaignId: string) {
     }
   } catch {}
 
+  // Load A/B test variant performance stats
+  const variantStats = await getCampaignVariantStats(campaignId).catch(() => []);
+
   return {
     campaign,
     stats: {
@@ -391,6 +419,7 @@ export async function getCampaignDetails(userId: string, campaignId: string) {
     senderAccounts,
     recipients,
     steps,
+    variantStats,
   };
 }
 

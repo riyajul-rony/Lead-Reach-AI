@@ -491,7 +491,17 @@ class LocalDevMockDb {
         if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
         if (where?.status && m.status !== where.status) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
-        if (where?.recipient_id && m.recipient_id !== where.recipient_id) return false;
+        if (where?.variant_id !== undefined) {
+          if (where.variant_id?.not === null && (m.variant_id === null || m.variant_id === undefined)) return false;
+          else if (typeof where.variant_id === "string" && m.variant_id !== where.variant_id) return false;
+        }
+        if (where?.recipient_id) {
+          if (where.recipient_id?.in && Array.isArray(where.recipient_id.in)) {
+            if (!where.recipient_id.in.includes(m.recipient_id)) return false;
+          } else if (m.recipient_id !== where.recipient_id) {
+            return false;
+          }
+        }
         return true;
       });
       if (orderBy?.sent_at === "desc" || orderBy?.created_at === "desc") {
@@ -585,11 +595,55 @@ class LocalDevMockDb {
     },
   };
 
+  campaign_variants = {
+    findMany: async ({ where, orderBy }: any = {}) => {
+      let items = localDevStore.getCampaignVariants((v: any) => {
+        if (where?.campaign_id && v.campaign_id !== where.campaign_id) return false;
+        if (where?.step_no !== undefined && v.step_no !== where.step_no) return false;
+        if (where?.is_active !== undefined && v.is_active !== where.is_active) return false;
+        return true;
+      });
+      if (orderBy?.label === "asc") items = [...items].sort((a, b) => String(a.label).localeCompare(String(b.label)));
+      return items;
+    },
+    findFirst: async ({ where }: any = {}) => {
+      return localDevStore.findCampaignVariant((v: any) => {
+        if (where?.id && v.id !== where.id) return false;
+        if (where?.campaign_id && v.campaign_id !== where.campaign_id) return false;
+        if (where?.step_no !== undefined && v.step_no !== where.step_no) return false;
+        if (where?.is_active !== undefined && v.is_active !== where.is_active) return false;
+        return true;
+      });
+    },
+    findUnique: async ({ where }: any = {}) => {
+      return localDevStore.findCampaignVariant((v: any) => v.id === where.id);
+    },
+    create: async ({ data }: any) => localDevStore.saveCampaignVariant(data),
+    createMany: async ({ data }: any) => {
+      if (Array.isArray(data)) {
+        data.forEach((d) => localDevStore.saveCampaignVariant(d));
+      }
+      return { count: Array.isArray(data) ? data.length : 0 };
+    },
+    update: async ({ where, data }: any) => {
+      const existing = localDevStore.findCampaignVariant((v: any) => v.id === where.id);
+      return localDevStore.saveCampaignVariant({ ...existing, ...data });
+    },
+    delete: async ({ where }: any) => {
+      localDevStore.deleteCampaignVariant(where.id);
+      return { id: where.id };
+    },
+  };
+
   tracking_events = {
     findMany: async ({ where, take, orderBy }: any = {}) => {
       let items = localDevStore.getTrackingEvents((e: any) => {
         if (where?.campaign_id && e.campaign_id !== where.campaign_id) return false;
         if (where?.recipient_id && e.recipient_id !== where.recipient_id) return false;
+        if (where?.variant_id !== undefined) {
+          if (where.variant_id?.not === null && (e.variant_id === null || e.variant_id === undefined)) return false;
+          else if (typeof where.variant_id === "string" && e.variant_id !== where.variant_id) return false;
+        }
         if (where?.event_type && e.event_type !== where.event_type) return false;
         return true;
       });
@@ -600,6 +654,7 @@ class LocalDevMockDb {
     count: async ({ where }: any = {}) => {
       return localDevStore.getTrackingEvents((e: any) => {
         if (where?.campaign_id && e.campaign_id !== where.campaign_id) return false;
+        if (where?.variant_id && e.variant_id !== where.variant_id) return false;
         if (where?.event_type && e.event_type !== where.event_type) return false;
         return true;
       }).length;

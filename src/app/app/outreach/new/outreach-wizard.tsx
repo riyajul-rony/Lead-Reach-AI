@@ -163,6 +163,9 @@ export function OutreachWizard() {
   const [previewsApproved, setPreviewsApproved] = useState(false);
   const [aiPreviews, setAiPreviews] = useState<GeneratedPreview[]>([]);
   const [spinSeed, setSpinSeed] = useState(0);
+  const [enableAbTest, setEnableAbTest] = useState(false);
+  const [variantBSubject, setVariantBSubject] = useState("");
+  const [variantBBody, setVariantBBody] = useState("");
 
   // Spam checker state
   const [spamResult, setSpamResult] = useState<SpamCheckResult | null>(null);
@@ -632,6 +635,25 @@ export function OutreachWizard() {
         subjectTemplate,
         bodyTemplate,
         steps: followupSteps,
+        variants:
+          enableAbTest && variantBSubject.trim() && variantBBody.trim()
+            ? [
+                {
+                  step_no: 0,
+                  label: "A",
+                  subject_template: subjectTemplate,
+                  body_template: bodyTemplate,
+                  weight: 50,
+                },
+                {
+                  step_no: 0,
+                  label: "B",
+                  subject_template: variantBSubject,
+                  body_template: variantBBody,
+                  weight: 50,
+                },
+              ]
+            : undefined,
         presetMode,
         daysOfWeek,
         trackingOpen,
@@ -1556,6 +1578,62 @@ export function OutreachWizard() {
                   placeholder="Write your email copy here..."
                 />
               </div>
+
+              {/* Optional A/B Test Variant B (Initial Email) */}
+              {mode === "custom" && (
+                <div className="p-3.5 rounded-xl border border-border bg-bgSubtle space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold text-fg">A/B Test Variant B (Optional, 50/50 Split)</div>
+                      <div className="text-[11px] text-muted">
+                        Test an alternate subject and body on the initial email.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!enableAbTest) {
+                          if (!variantBSubject) setVariantBSubject(subjectTemplate);
+                          if (!variantBBody) setVariantBBody(bodyTemplate);
+                        }
+                        setEnableAbTest(!enableAbTest);
+                      }}
+                      className="px-2.5 py-1 rounded-md text-xs font-medium bg-surface border border-border text-fg hover:border-primary/50 transition-colors cursor-pointer"
+                    >
+                      {enableAbTest ? "Remove Variant B" : "+ Add Variant B"}
+                    </button>
+                  </div>
+
+                  {enableAbTest && (
+                    <div className="space-y-2.5 pt-2 border-t border-border">
+                      <div>
+                        <label className="text-[11px] font-medium text-muted block mb-1">
+                          Variant B Subject
+                        </label>
+                        <input
+                          type="text"
+                          value={variantBSubject}
+                          onChange={(e) => setVariantBSubject(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-surface text-fg focus:outline-hidden focus:border-primary"
+                          placeholder="Variant B subject line..."
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-muted block mb-1">
+                          Variant B Body
+                        </label>
+                        <textarea
+                          rows={5}
+                          value={variantBBody}
+                          onChange={(e) => setVariantBBody(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-surface text-fg font-sans leading-relaxed focus:outline-hidden focus:border-primary"
+                          placeholder="Variant B email body..."
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* AI Prompt / Goal if AI mode is active */}
               {mode === "ai" && (
