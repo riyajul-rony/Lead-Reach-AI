@@ -422,8 +422,13 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     where: { id: recipientId },
   });
 
-  if (!recipient || recipient.status === "sent" || recipient.status === "unsubscribed") {
-    return { skipped: true, reason: "Already processed or invalid" };
+  if (!recipient || recipient.status !== "queued") {
+    return {
+      skipped: true,
+      reason: recipient
+        ? `Recipient status is '${recipient.status}' (only 'queued' can be dispatched)`
+        : "Recipient not found",
+    };
   }
 
   const campaign = await db.outreach_campaigns.findFirst({
@@ -547,11 +552,14 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     }
   } catch {}
 
-  // 3. Mark recipient as sending
-  await db.campaign_recipients.update({
-    where: { id: recipient.id },
+  // 3. Atomically claim recipient ('queued' -> 'sending') so concurrent or retried workers cannot double-send
+  const claimed = await db.campaign_recipients.updateMany({
+    where: { id: recipient.id, status: "queued" },
     data: { status: "sending", sending_started_at: new Date() },
   });
+  if (!claimed || claimed.count === 0) {
+    return { skipped: true, reason: "Recipient already claimed or no longer queued" };
+  }
 
   const unsubscribeUrl = `${BASE_URL}/u/${recipient.unsubscribe_token}`;
   const legalAddress =
@@ -563,6 +571,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
   let finalBody = "";
   let isThreadedFollowup = false;
   let inReplyToId: string | undefined = undefined;
+  let transportAcceptedMessageId: string | null = null;
 
   try {
     // 4. Generate content for initial outreach or follow-up step
@@ -689,6 +698,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     });
 
     const messageId = transportResult.messageId;
+    transportAcceptedMessageId = messageId;
 
     // 6. Record message in database
     await db.email_messages.create({
@@ -788,6 +798,22 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       logger.warn({ accountId: account.id, campaignId: campaign.id }, "Sender account requires attention, campaign paused");
     }
 
+    if (transportAcceptedMessageId) {
+      // Partial failure: mail server accepted the message, but DB persistence failed.
+      // Mark as needs_review (never failed/queued) so it is never auto-resent.
+      await db.campaign_recipients.update({
+        where: { id: recipient.id },
+        data: {
+          status: "needs_review",
+          thread_message_id: recipient.thread_message_id || transportAcceptedMessageId,
+          attempts: (recipient.attempts || 0) + 1,
+          error: `Email accepted by transport (${transportAcceptedMessageId}) but DB update failed: ${errorMsg}. Do not auto-resend without verifying Sent folder.`,
+        },
+      }).catch(() => null);
+
+      return { success: false, partialFailure: true, messageId: transportAcceptedMessageId, error: errorMsg };
+    }
+
     await db.campaign_recipients.update({
       where: { id: recipient.id },
       data: {
@@ -798,6 +824,48 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     });
 
     return { success: false, error: errorMsg };
+  }
+}
+
+/**
+ * Safely recovers recipients left in 'sending' state after a worker crash.
+ * Marks them 'needs_review' after STUCK_SENDING_MINUTES (default 15m) — never auto-resends.
+ */
+export async function recoverStuckSendingRecipients(
+  campaignId?: string,
+  now: Date = new Date()
+): Promise<number> {
+  const rawMinutes = Number(process.env.STUCK_SENDING_MINUTES);
+  const stuckMinutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : 15;
+  const stuckCutoff = new Date(now.getTime() - stuckMinutes * 60 * 1000);
+
+  try {
+    const whereClause: any = {
+      status: "sending",
+      sending_started_at: { lt: stuckCutoff },
+    };
+    if (campaignId) {
+      whereClause.campaign_id = campaignId;
+    }
+
+    const res = await db.campaign_recipients.updateMany({
+      where: whereClause,
+      data: {
+        status: "needs_review",
+        error: `Recipient stayed in 'sending' for over ${stuckMinutes}m (possible worker crash). Marked as needs_review; never auto-resend.`,
+      },
+    });
+
+    if (res.count > 0) {
+      logger.warn(
+        { campaignId, count: res.count, stuckMinutes, stuckCutoff: stuckCutoff.toISOString() },
+        "Stuck sending recovery: Marked crashed 'sending' recipients as needs_review"
+      );
+    }
+    return res.count;
+  } catch (err) {
+    logger.error({ err, campaignId }, "Failed to recover stuck 'sending' recipients");
+    return 0;
   }
 }
 
@@ -818,6 +886,9 @@ export async function dispatchRunningCampaigns(): Promise<{ dispatched: number; 
 
   for (const campaign of runningCampaigns) {
     try {
+      // 0. Recover any recipients stuck in 'sending' after a worker crash (marks needs_review, never auto-resends)
+      await recoverStuckSendingRecipients(campaign.id, now);
+
       // 1. Check Sending Window & Working Days
       const windowStart = (campaign.send_window as any)?.startHour ?? 9;
       const windowEnd = (campaign.send_window as any)?.endHour ?? 18;

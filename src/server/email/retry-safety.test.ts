@@ -1,13 +1,17 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { db } from "@/server/db";
+import { localDevStore } from "@/server/db/local-store";
 import { encrypt } from "@/server/crypto";
 import {
   saveCampaignSequence,
   sendSingleRecipientFollowup,
   dispatchDueFollowups,
 } from "@/server/email/sequence-service";
-import { sendSingleRecipientEmail } from "@/server/email/sending-engine";
+import {
+  sendSingleRecipientEmail,
+  recoverStuckSendingRecipients,
+} from "@/server/email/sending-engine";
 import * as RetryRoute from "@/app/api/v1/outreach/campaigns/[id]/retry/route";
 
 const { sentMailMock, mockSession } = vi.hoisted(() => ({
@@ -297,5 +301,125 @@ describe("Retry Safety & Duplicate-Step Prevention", () => {
     const initRes = await sendSingleRecipientEmail(recInitialDone.id);
     expect(initRes).toHaveProperty("skipped", true);
     expect(sentMailMock).not.toHaveBeenCalled();
+  });
+
+  it("recovers stuck 'sending' recipients after 15m into 'needs_review' without auto-resending, and prevents double-send on BullMQ retry after partial failure", async () => {
+    const account = await db.email_accounts.create({
+      data: {
+        id: "acc-stuck-sending-1",
+        user_id: userId,
+        provider: "smtp",
+        label: "Stuck Test SMTP",
+        from_name: "Alex",
+        from_email: "alex-stuck@company.com",
+        smtp_host: "smtp.company.com",
+        smtp_port: 587,
+        smtp_username: "alex-stuck@company.com",
+        smtp_password_enc: encrypt("app-pass"),
+        imap_host: "imap.company.com",
+        imap_port: 993,
+        imap_username: "alex-stuck@company.com",
+        imap_password_enc: encrypt("app-pass"),
+        hourly_limit: 25,
+        daily_limit: 150,
+        status: "active",
+      },
+    });
+
+    const campaign = await db.outreach_campaigns.create({
+      data: {
+        id: "camp-stuck-sending-1",
+        user_id: userId,
+        name: "Stuck Sending Test",
+        mode: "custom",
+        status: "running",
+        timezone: "UTC",
+        send_window: { startHour: 0, endHour: 24 },
+      },
+    });
+
+    const twentyMinsAgo = new Date(Date.now() - 20 * 60 * 1000);
+    const twoMinsAgo = new Date(Date.now() - 2 * 60 * 1000);
+
+    // Crashed worker left recipient in 'sending' 20 minutes ago
+    const stuckRec = await db.campaign_recipients.create({
+      data: {
+        id: "rec-stuck-20m",
+        user_id: userId,
+        campaign_id: campaign.id,
+        email: "stuck20m@target.com",
+        assigned_account_id: account.id,
+        status: "sending",
+        sending_started_at: twentyMinsAgo,
+        current_step: 0,
+        unsubscribe_token: "tok-stuck20m-1234567890",
+      },
+    });
+
+    // Recently claimed recipient in 'sending' 2 minutes ago (still in flight)
+    const activeSendingRec = await db.campaign_recipients.create({
+      data: {
+        id: "rec-inflight-2m",
+        user_id: userId,
+        campaign_id: campaign.id,
+        email: "inflight2m@target.com",
+        assigned_account_id: account.id,
+        status: "sending",
+        sending_started_at: twoMinsAgo,
+        current_step: 0,
+        unsubscribe_token: "tok-inflight2m-123456789",
+      },
+    });
+
+    const recoveredCount = await recoverStuckSendingRecipients(campaign.id, new Date());
+    expect(recoveredCount).toBe(1);
+
+    const updatedStuck = await db.campaign_recipients.findUnique({ where: { id: stuckRec.id } });
+    expect(updatedStuck?.status).toBe("needs_review");
+    expect(updatedStuck?.error).toContain("never auto-resend");
+
+    const updatedInFlight = await db.campaign_recipients.findUnique({ where: { id: activeSendingRec.id } });
+    expect(updatedInFlight?.status).toBe("sending");
+
+    // Simulate BullMQ retry on an already-claimed 'sending' recipient (crash after SMTP accept, before DB update)
+    const retryOnSending = await sendSingleRecipientEmail(activeSendingRec.id);
+    expect(retryOnSending).toHaveProperty("skipped", true);
+    expect((retryOnSending as any).reason).toContain("only 'queued' can be dispatched");
+    expect(sentMailMock).not.toHaveBeenCalled();
+
+    // Simulate partial failure: transport succeeds, DB email_messages.create fails -> must mark needs_review and skip on BullMQ retry
+    const partialFailRec = await db.campaign_recipients.create({
+      data: {
+        id: "rec-partial-fail",
+        user_id: userId,
+        campaign_id: campaign.id,
+        email: "partial@target.com",
+        assigned_account_id: account.id,
+        status: "queued",
+        current_step: 0,
+        unsubscribe_token: "tok-partial-1234567890",
+      },
+    });
+
+    const spyCreate = vi
+      .spyOn(localDevStore, "saveEmailMessage")
+      .mockImplementationOnce(() => {
+        throw new Error("Simulated DB connection drop after SMTP accept");
+      });
+
+    const firstAttempt = await sendSingleRecipientEmail(partialFailRec.id);
+    spyCreate.mockRestore();
+
+    expect(sentMailMock).toHaveBeenCalledTimes(1);
+    expect(firstAttempt).toHaveProperty("partialFailure", true);
+
+    const afterPartial = await db.campaign_recipients.findUnique({ where: { id: partialFailRec.id } });
+    expect(afterPartial?.status).toBe("needs_review");
+    expect(afterPartial?.thread_message_id).toBeTruthy();
+
+    // BullMQ retry MUST skip without sending a second email
+    const secondAttempt = await sendSingleRecipientEmail(partialFailRec.id);
+    expect(secondAttempt).toHaveProperty("skipped", true);
+    expect(sentMailMock).toHaveBeenCalledTimes(1);
   });
 });
