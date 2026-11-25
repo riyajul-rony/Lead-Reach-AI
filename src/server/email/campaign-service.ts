@@ -4,6 +4,7 @@ import { logger } from "@/server/logger";
 import { assertLimit } from "@/server/billing/limits";
 import { saveCampaignSequence } from "@/server/email/sequence-service";
 import { queueEmailDispatch } from "@/server/queues";
+import { accountHasWorkingReplyDetection } from "@/server/email/account-service";
 
 export interface RecipientInput {
   email: string;
@@ -87,6 +88,20 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
 
   if (validAccountIds.length === 0) {
     throw new Error("No active sender email accounts selected");
+  }
+
+  // Pre-launch Reply Detection Guard: block launch if follow-up steps exist but sender lacks reply detection
+  const selectedAccounts = userAccounts.filter((a: any) => validAccountIds.includes(a.id));
+  const hasFollowupSteps = Array.isArray(input.steps) && input.steps.length > 0;
+  if (input.launchNow && hasFollowupSteps) {
+    for (const acc of selectedAccounts) {
+      const check = accountHasWorkingReplyDetection(acc);
+      if (!check.capable) {
+        throw new Error(
+          `Cannot launch campaign with follow-up steps: sender account (${acc.from_email}) does not support reply detection. For follow-ups and stop-on-reply, connect with App Password + IMAP.`
+        );
+      }
+    }
   }
 
   // Load suppressions only for candidate recipients in this batch
@@ -435,6 +450,33 @@ export async function updateCampaignStatus(
   });
 
   if (status === "running") {
+    // Check if campaign has sequence steps and assigned accounts have working reply detection
+    try {
+      const stepsCount = await db.campaign_sequence_steps.count({
+        where: { campaign_id: campaignId },
+      });
+      if (stepsCount > 0) {
+        const campaignAccounts = await db.outreach_campaign_accounts.findMany({
+          where: { campaign_id: campaignId },
+          include: { email_account: true },
+        });
+        for (const ca of campaignAccounts) {
+          if (ca.email_account) {
+            const check = accountHasWorkingReplyDetection(ca.email_account);
+            if (!check.capable) {
+              throw new Error(
+                `Cannot launch campaign with follow-up steps: sender account (${ca.email_account.from_email}) does not support reply detection. For follow-ups and stop-on-reply, connect with App Password + IMAP.`
+              );
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err?.message?.includes("does not support reply detection")) {
+        throw err;
+      }
+    }
+
     queueEmailDispatch(campaignId).catch((err) => {
       logger.warn({ err, campaignId }, "Could not enqueue dispatch job on status update");
     });

@@ -1,11 +1,14 @@
-import nodemailer from "nodemailer";
+import crypto from "node:crypto";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { decrypt } from "@/server/crypto";
-import { getDecryptedAccountCredentials } from "@/server/email/account-service";
+import { accountHasWorkingReplyDetection, getEffectiveAccountDailyLimit } from "@/server/email/account-service";
 import { renderEmailTemplate } from "@/server/email/template-renderer";
 import { getUserApiKey } from "@/server/api-keys/service";
 import { generateOutreachEmail } from "@/server/ai/outreach-generator";
+import { assertLimit } from "@/server/billing/limits";
+import { trackUsageIncrement } from "@/server/billing/usage-tracker";
+import { buildEmailMultipartBodies, calculateRandomJitterSec, dispatchEmailTransport } from "@/server/email/sending-engine";
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
@@ -135,6 +138,33 @@ export async function sendSingleRecipientFollowup(
     return { skipped: true, reason: "All sequence steps completed for recipient" };
   }
 
+  // Idempotency guard: ensure this exact follow-up step was not already sent (prevents duplicate step on partial failures/retries)
+  try {
+    const alreadySentStep = await db.email_messages.findFirst({
+      where: {
+        recipient_id: recipient.id,
+        direction: "out",
+        kind: "followup",
+        step_no: step.step_no,
+        status: "sent",
+      },
+    });
+    if (alreadySentStep) {
+      const subsequentStep = sequence.steps.find((s: FollowupStep) => s.step_no === step.step_no + 1);
+      const nextAt = subsequentStep
+        ? new Date(now.getTime() + (Number(subsequentStep.delay_days) || 1) * 86400000)
+        : null;
+      await db.campaign_recipients.update({
+        where: { id: recipient.id },
+        data: {
+          current_step: step.step_no,
+          next_followup_at: nextAt,
+        },
+      });
+      return { skipped: true, reason: `Follow-up step ${step.step_no} already sent` };
+    }
+  } catch {}
+
   // Delay verification
   const delayDays = Math.max(Number(step.delay_days) || 1, 1);
   const delayMs = delayDays * 24 * 60 * 60 * 1000;
@@ -176,6 +206,19 @@ export async function sendSingleRecipientFollowup(
     return { skipped: true, reason: "Assigned sender account is not active" };
   }
 
+  // Pre-dispatch Reply Detection Guard: Do not send follow-ups if account cannot detect replies
+  const replyCheck = accountHasWorkingReplyDetection(account);
+  if (!replyCheck.capable) {
+    logger.warn(
+      { recipientId: recipient.id, accountId: account.id, email: account.from_email },
+      "Skipping follow-up dispatch: account does not have working reply detection"
+    );
+    return {
+      skipped: true,
+      reason: "Sender account does not support reply detection. Follow-ups disabled.",
+    };
+  }
+
   const sixtyMinutesAgo = new Date(now.getTime() - 60 * 60 * 1000);
   const sentLastHour = await db.email_messages.count({
     where: {
@@ -192,6 +235,43 @@ export async function sendSingleRecipientFollowup(
       "Account reached hourly limit, postponing followup"
     );
     return { throttled: true, reason: "Hourly limit reached" };
+  }
+
+  // Per-account daily limit (including dynamic warmup_day limit)
+  const dailyCap = getEffectiveAccountDailyLimit(account);
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+  const sentToday = await db.email_messages.count({
+    where: {
+      email_account_id: account.id,
+      sent_at: { gte: startOfDay },
+      status: "sent",
+    },
+  });
+
+  if (sentToday >= dailyCap) {
+    logger.warn(
+      { accountId: account.id, sentToday, dailyCap },
+      "Account reached daily warmup limit, postponing followup"
+    );
+    return { throttled: true, reason: "Daily warmup limit reached" };
+  }
+
+  // Per-account wait gap cooldown
+  if (account.next_allowed_at && new Date(account.next_allowed_at) > now) {
+    const cooldownMs = new Date(account.next_allowed_at).getTime() - now.getTime();
+    const cooldownSec = Math.ceil(cooldownMs / 1000);
+    logger.warn({ accountId: account.id, cooldownSec }, "Account wait gap cooldown active, postponing followup");
+    return { throttled: true, reason: `Account wait gap active (cooldown: ${cooldownSec}s remaining)` };
+  }
+
+  // Plan limits (monthly and daily outreach quotas)
+  try {
+    await assertLimit(recipient.user_id, "monthly_outreach_emails", 1);
+    await assertLimit(recipient.user_id, "daily_outreach_emails", 1);
+  } catch (err: any) {
+    logger.warn({ recipientId: recipient.id, userId: recipient.user_id, err: err.message }, "Outreach quota exceeded for followup");
+    return { skipped: true, throttled: true, reason: err.message };
   }
 
   // 3. Render Subject and Body
@@ -271,38 +351,31 @@ export async function sendSingleRecipientFollowup(
       );
     }
 
-    const emailFooter = `\n\n---\n${legalAddress}\nTo unsubscribe: ${unsubscribeUrl}`;
-    const fullBodyText = finalBody + emailFooter;
-
-    // 4. Send via nodemailer with Threading Headers
-    const creds = await getDecryptedAccountCredentials(account.id);
-    if (!creds || !creds.smtp_host) {
-      throw new Error("Invalid SMTP credentials for account");
-    }
-
-    const transport = nodemailer.createTransport({
-      host: creds.smtp_host,
-      port: creds.smtp_port || 587,
-      secure: creds.smtp_security === "ssl" || creds.smtp_port === 465,
-      auth: {
-        user: creds.smtp_username || account.from_email,
-        pass: creds.smtp_password,
-      },
-      connectionTimeout: 8000,
-      greetingTimeout: 6000,
-      socketTimeout: 10000,
+    // 4. Construct multipart body and dispatch via shared transport (Gmail API or SMTP)
+    const { text: plainTextBody, html: htmlBody } = buildEmailMultipartBodies({
+      bodyText: finalBody,
+      legalAddress,
+      unsubscribeUrl,
+      trackingOpen: Boolean(campaign.tracking_open),
+      trackingClick: Boolean(campaign.tracking_click),
+      unsubscribeToken: recipient.unsubscribe_token,
+      baseUrl: BASE_URL,
     });
 
+    const senderDomain = account.from_email.split("@")[1] || "leadreach.ai";
+    const explicitMessageId = `<${crypto.randomUUID()}@${senderDomain}>`;
     const threadHeader = recipient.thread_message_id || undefined;
 
-    const sendResult = await transport.sendMail({
-      from: `"${account.from_name || account.from_email}" <${account.from_email}>`,
+    const transportResult = await dispatchEmailTransport({
+      account,
       to: recipient.email,
-      replyTo: account.reply_to || account.from_email,
       subject: finalSubject,
-      text: fullBodyText,
+      text: plainTextBody,
+      html: htmlBody,
+      explicitMessageId,
+      inReplyTo: threadHeader,
+      references: threadHeader,
       headers: {
-        ...(threadHeader ? { "In-Reply-To": threadHeader, References: threadHeader } : {}),
         "List-Unsubscribe": `<${unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         "X-LeadReachAI-Campaign-Id": campaign.id,
@@ -311,9 +384,7 @@ export async function sendSingleRecipientFollowup(
       },
     });
 
-    transport.close();
-
-    const messageId = sendResult.messageId || `msg_followup_${Date.now()}`;
+    const messageId = transportResult.messageId;
 
     // 5. Record message and update recipient step
     await db.email_messages.create({
@@ -346,6 +417,20 @@ export async function sendSingleRecipientFollowup(
         next_followup_at: nextFollowupAt,
       },
     });
+
+    // Update account's next_allowed_at wait gap cooldown
+    const minGap = Math.max(Number(account.min_gap_seconds) || Number(account.gap_seconds) || 180, 30);
+    const maxGap = Math.max(Number(account.max_gap_seconds) || minGap * 2 || 420, minGap);
+    const gapSec = calculateRandomJitterSec(minGap, maxGap);
+    const nextAllowed = new Date(now.getTime() + gapSec * 1000);
+    try {
+      await db.email_accounts.update({
+        where: { id: account.id },
+        data: { next_allowed_at: nextAllowed },
+      });
+    } catch {}
+
+    trackUsageIncrement(recipient.user_id, "monthly_outreach_emails", 1).catch(() => null);
 
     logger.info(
       {
@@ -402,8 +487,40 @@ export async function dispatchDueFollowups(
         continue;
       }
 
+      // Stale catch-up protection: Mark overdue follow-ups older than stale threshold as needs_review
+      const staleHours = Number(process.env.STALE_THRESHOLD_HOURS) || 24;
+      const staleCutoff = new Date(now.getTime() - staleHours * 60 * 60 * 1000);
+      try {
+        const staleRecipients = await db.campaign_recipients.updateMany({
+          where: {
+            campaign_id: campaign.id,
+            status: "sent",
+            next_followup_at: { lt: staleCutoff },
+          },
+          data: {
+            status: "needs_review",
+            error: `Follow-up due date is older than stale threshold (${staleHours}h). Requires review.`,
+          },
+        });
+        if (staleRecipients.count > 0) {
+          logger.warn(
+            { campaignId: campaign.id, count: staleRecipients.count },
+            "Catch-up protection: Marked overdue follow-ups as needs_review"
+          );
+        }
+      } catch (err) {
+        logger.error({ err, campaignId: campaign.id }, "Failed to apply catch-up protection to followups");
+      }
+
       const eligibleRecipients = await db.campaign_recipients.findMany({
-        where: { campaign_id: campaign.id, status: "sent" },
+        where: {
+          campaign_id: campaign.id,
+          status: "sent",
+          OR: [
+            { next_followup_at: null },
+            { next_followup_at: { gte: staleCutoff, lte: now } },
+          ],
+        },
         take: 20,
       });
 

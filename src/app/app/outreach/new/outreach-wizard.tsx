@@ -1771,12 +1771,10 @@ export function OutreachWizard() {
               {(() => {
                 const selectedAccountsList = accounts.filter((a) => selectedAccountIds.includes(a.id));
                 const accountsWithoutReplyDetection = selectedAccountsList.filter((a) => {
-                  const hasDirect =
-                    a.provider === "gmail_api" ||
-                    a.has_oauth_token ||
-                    Boolean(a.imap_host && a.has_imap_password);
+                  const hasDirect = Boolean(a.imap_host && (a.has_imap_password || a.has_imap_password === undefined));
                   const hasLinked = Boolean(a.reply_inbox_account_id || a.reply_inbox);
-                  return !hasDirect && !hasLinked;
+                  const hasFlag = (a as any).has_reply_detection === true;
+                  return !hasFlag && !hasDirect && !hasLinked;
                 });
                 const hasNoReplyDetection = accountsWithoutReplyDetection.length > 0;
                 const hasFollowups = followupSteps.length > 0;
@@ -1784,24 +1782,24 @@ export function OutreachWizard() {
                 return (
                   <>
                     {hasNoReplyDetection && hasFollowups && (
-                      <div className="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs space-y-3 text-amber-900 dark:text-amber-200">
+                      <div className="p-4 rounded-xl border border-rose-500/40 bg-rose-500/10 text-xs space-y-3 text-rose-900 dark:text-rose-200">
                         <div className="flex items-start gap-2.5">
-                          <AlertTriangle size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                          <AlertTriangle size={18} className="text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
                           <div className="space-y-1">
-                            <div className="font-bold text-sm text-amber-800 dark:text-amber-300">
-                              Replies won&apos;t be detected, so people who reply may still get follow-ups.
+                            <div className="font-bold text-sm text-rose-800 dark:text-rose-300">
+                              For follow-ups and stop-on-reply, connect with App Password + IMAP
                             </div>
                             <p className="text-[11px] text-muted leading-relaxed">
                               The selected sender inbox (
                               <strong className="text-fg">
                                 {accountsWithoutReplyDetection.map((a) => a.from_email).join(", ")}
                               </strong>
-                              ) does not have IMAP or a connected Reply Inbox. Because incoming replies cannot be detected, follow-up emails will continue sending even if a lead responds.
+                              ) does not have reply detection configured (no IMAP or linked reply inbox). Because incoming replies cannot be detected, follow-up sequences cannot be safely executed. Only initial emails may be sent.
                             </p>
                           </div>
                         </div>
 
-                        <div className="pt-2 border-t border-amber-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="pt-2 border-t border-rose-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <Button
                             type="button"
                             variant="secondary"
@@ -1814,16 +1812,6 @@ export function OutreachWizard() {
                           >
                             Turn off follow-ups for this campaign
                           </Button>
-
-                          <label className="flex items-center gap-2 cursor-pointer select-none text-[11px] font-medium text-fg">
-                            <input
-                              type="checkbox"
-                              checked={acknowledgedNoReplyDetection}
-                              onChange={(e) => setAcknowledgedNoReplyDetection(e.target.checked)}
-                              className="rounded h-4 w-4 text-amber-600 cursor-pointer"
-                            />
-                            <span>I understand the risk and want to proceed with follow-ups anyway</span>
-                          </label>
                         </div>
                       </div>
                     )}
@@ -1831,7 +1819,7 @@ export function OutreachWizard() {
                     {hasNoReplyDetection && (
                       <div className="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 text-xs flex items-center gap-2 text-amber-800 dark:text-amber-300">
                         <AlertCircle size={14} className="shrink-0 text-amber-600 dark:text-amber-400" />
-                        <span>⚠ Bounce detection is unavailable for inboxes without IMAP; undelivered emails cannot be automatically marked as bounced.</span>
+                        <span>⚠ For follow-ups and stop-on-reply, connect with App Password + IMAP.</span>
                       </div>
                     )}
                   </>
@@ -1889,16 +1877,14 @@ export function OutreachWizard() {
               {(() => {
                 const selectedAccountsList = accounts.filter((a) => selectedAccountIds.includes(a.id));
                 const accountsWithoutReplyDetection = selectedAccountsList.filter((a) => {
-                  const hasDirect =
-                    a.provider === "gmail_api" ||
-                    a.has_oauth_token ||
-                    Boolean(a.imap_host && a.has_imap_password);
+                  const hasDirect = Boolean(a.imap_host && (a.has_imap_password || a.has_imap_password === undefined));
                   const hasLinked = Boolean(a.reply_inbox_account_id || a.reply_inbox);
-                  return !hasDirect && !hasLinked;
+                  const hasFlag = (a as any).has_reply_detection === true;
+                  return !hasFlag && !hasDirect && !hasLinked;
                 });
                 const hasNoReplyDetection = accountsWithoutReplyDetection.length > 0;
                 const hasFollowups = followupSteps.length > 0;
-                const isLaunchBlocked = hasNoReplyDetection && hasFollowups && !acknowledgedNoReplyDetection;
+                const isLaunchBlocked = hasNoReplyDetection && hasFollowups;
 
                 return (
                   <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
@@ -1916,8 +1902,8 @@ export function OutreachWizard() {
                     </Button>
 
                     {isLaunchBlocked && (
-                      <p className="text-[10px] text-amber-600 dark:text-amber-400 text-center font-medium leading-relaxed">
-                        Please confirm the follow-up reply risk above or click &quot;Turn off follow-ups&quot; to enable launching.
+                      <p className="text-[11px] text-rose-600 dark:text-rose-400 text-center font-medium leading-relaxed">
+                        Cannot launch with follow-up steps: sender account lacks reply detection. For follow-ups and stop-on-reply, connect with App Password + IMAP, or turn off follow-ups.
                       </p>
                     )}
 

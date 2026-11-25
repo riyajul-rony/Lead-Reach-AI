@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 interface PostRun {
   id: string;
   campaign_id: string;
-  status: "scheduled" | "pending_approval" | "published" | "failed" | "rejected";
+  status: "scheduled" | "pending_approval" | "published" | "failed" | "rejected" | "needs_review";
   caption?: string;
   hashtags?: string[];
   external_url?: string;
@@ -39,6 +39,7 @@ export function PostHistoryManager() {
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [reschedulingId, setReschedulingId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [notification, setNotification] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -94,6 +95,25 @@ export function PostHistoryManager() {
     }
   };
 
+  const handleReschedulePost = async (id: string) => {
+    setReschedulingId(id);
+    setNotification(null);
+    try {
+      const res = await fetch(`/api/v1/social/posts/${id}/reschedule`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setNotification({ type: "error", text: data.error || "Failed to reschedule post" });
+        return;
+      }
+      setNotification({ type: "success", text: data.message || "Post re-queued for approval." });
+      await fetchPosts();
+    } catch (err: any) {
+      setNotification({ type: "error", text: err.message || "Failed to reschedule post" });
+    } finally {
+      setReschedulingId(null);
+    }
+  };
+
   const handleGenerateSamplePost = async () => {
     setGenerating(true);
     setNotification(null);
@@ -129,6 +149,7 @@ export function PostHistoryManager() {
           {[
             { id: "all", label: "All Posts" },
             { id: "pending_approval", label: "Pending Approval" },
+            { id: "needs_review", label: "⚠ Needs Review" },
             { id: "published", label: "Published" },
             { id: "failed", label: "Failed" },
           ].map((tab) => (
@@ -249,6 +270,10 @@ export function PostHistoryManager() {
                         <Badge variant="danger" size="sm" className="flex items-center gap-1">
                           <AlertCircle size={11} /> Failed
                         </Badge>
+                      ) : p.status === "needs_review" ? (
+                        <Badge variant="danger" size="sm" className="flex items-center gap-1">
+                          <AlertCircle size={11} /> Needs Review
+                        </Badge>
                       ) : (
                         <Badge variant="warning" size="sm" className="flex items-center gap-1">
                           <Clock size={11} /> Pending Approval
@@ -291,7 +316,26 @@ export function PostHistoryManager() {
 
                 {/* Right Side: Action Controls */}
                 <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
-                  {p.status === "pending_approval" || p.status === "failed" ? (
+                  {p.status === "needs_review" ? (
+                    <>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => handleReject(p.id)}
+                        title="Dismiss / Delete Post"
+                        icon={<Trash2 size={13} />}
+                      />
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => handleReschedulePost(p.id)}
+                        disabled={reschedulingId === p.id}
+                        icon={<RefreshCw size={13} className={reschedulingId === p.id ? "animate-spin" : ""} />}
+                      >
+                        {reschedulingId === p.id ? "Rescheduling..." : "Reschedule / Approve"}
+                      </Button>
+                    </>
+                  ) : p.status === "pending_approval" || p.status === "failed" ? (
                     <>
                       <Button
                         variant="secondary"

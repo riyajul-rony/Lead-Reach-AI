@@ -15,6 +15,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.string().min(1, "REDIS_URL is required"),
   AUTH_SECRET: z.string().min(32, "AUTH_SECRET must be at least 32 characters"),
+  TRACKING_SECRET: z.string().optional(),
   APP_ENCRYPTION_KEY: z.string().refine((val) => {
     try {
       const buf = parseEncryptionKeyBuffer(val);
@@ -33,17 +34,32 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   APIFY_TOKEN: z.string().optional(),
+  SCHEDULERS_ENABLED: z.string().optional().default("false"),
+  STALE_THRESHOLD_HOURS: z.coerce.number().min(1).default(24),
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;
+
+export function areSchedulersEnabled(): boolean {
+  return process.env.SCHEDULERS_ENABLED === "true";
+}
+
+export function getStaleThresholdHours(): number {
+  const val = Number(process.env.STALE_THRESHOLD_HOURS);
+  return Number.isFinite(val) && val > 0 ? val : 24;
+}
 
 let validated = false;
 
 export function validateEnv(): boolean {
   if (validated) return true;
 
-  // In test or non-production environment, allow graceful defaults if not set
-  if (process.env.NODE_ENV === "test") {
+  // In test environment or during Next.js build phase, skip validation so docker builds succeed without runtime secrets
+  const isBuildPhase =
+    process.env.NEXT_PHASE === "phase-production-build" ||
+    process.env.npm_lifecycle_event === "build";
+
+  if (process.env.NODE_ENV === "test" || isBuildPhase) {
     validated = true;
     return true;
   }
@@ -69,6 +85,9 @@ export function validateEnv(): boolean {
         console.error(`  - ${err}`);
       }
       console.error("========================================================\n");
+      throw new Error(
+        `FATAL: Server startup failed due to missing or invalid required environment variables in production: ${missingOrInvalidNames.join(", ")}`
+      );
     }
     return false;
   }

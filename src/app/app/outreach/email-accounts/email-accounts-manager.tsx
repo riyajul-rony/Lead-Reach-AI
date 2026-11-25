@@ -640,6 +640,9 @@ export function EmailAccountsManager({
             const effectiveLimit = account.effective_daily_limit || account.daily_limit;
             const minGap = account.min_gap_seconds || account.gap_seconds || 180;
             const maxGap = account.max_gap_seconds || 420;
+            const hasDirectImap = Boolean(account.imap_host && account.has_imap_password);
+            const hasReplyInbox = Boolean(account.reply_inbox_account_id || account.reply_inbox);
+            const hasWorkingReply = (account as any).has_reply_detection ?? (hasDirectImap || hasReplyInbox);
 
             return (
               <div
@@ -671,26 +674,16 @@ export function EmailAccountsManager({
                         >
                           {isActive ? "Active" : account.status}
                         </Badge>
-                        {(() => {
-                          const hasDirectImap = isOAuth || Boolean(account.imap_host && account.has_imap_password);
-                          const hasReplyInbox = Boolean(account.reply_inbox_account_id || account.reply_inbox);
-                          if (!hasDirectImap && !hasReplyInbox) {
-                            return (
-                              <Badge variant="warning" size="sm">
-                                Reply detection: Off
-                              </Badge>
-                            );
-                          }
-                          if (!hasDirectImap && hasReplyInbox) {
-                            const linkedEmail = account.reply_inbox?.from_email || "Linked Inbox";
-                            return (
-                              <Badge variant="neutral" size="sm">
-                                Reply via: {linkedEmail}
-                              </Badge>
-                            );
-                          }
-                          return null;
-                        })()}
+                        {!hasWorkingReply && (
+                          <Badge variant="warning" size="sm">
+                            Reply detection: Off
+                          </Badge>
+                        )}
+                        {!hasDirectImap && hasReplyInbox && (
+                          <Badge variant="neutral" size="sm">
+                            Reply via: {account.reply_inbox?.from_email || "Linked Inbox"}
+                          </Badge>
+                        )}
                         {account.warmup_enabled && (
                           <Badge variant="warning" size="sm">
                             <Flame size={10} className="mr-0.5" /> Warm-up Day {account.warmup_day || 1}
@@ -762,6 +755,14 @@ export function EmailAccountsManager({
                   >
                     {testResult.ok ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
                     <span>{testResult.message}</span>
+                  </div>
+                )}
+
+                {/* Reply Detection Notice */}
+                {!hasWorkingReply && (
+                  <div className="mt-2.5 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                    <AlertTriangle size={14} className="shrink-0 text-amber-600 dark:text-amber-400" />
+                    <span>For follow-ups and stop-on-reply, connect with App Password + IMAP</span>
                   </div>
                 )}
               </div>

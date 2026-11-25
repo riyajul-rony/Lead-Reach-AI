@@ -97,6 +97,137 @@ export function getEffectiveAccountDailyLimit(account: {
   return Math.min(calculated, max, account.daily_limit || 150);
 }
 
+/**
+ * Validates whether an email account has operational reply detection.
+ * Required for follow-up sequence execution and stop-on-reply guarantee.
+ */
+export function accountHasWorkingReplyDetection(account: {
+  provider: string;
+  imap_host?: string | null;
+  imap_password_enc?: string | null;
+  has_imap_password?: boolean;
+  oauth_scopes?: string[] | null;
+  reply_inbox_account_id?: string | null;
+  reply_inbox?: any;
+  status?: string | null;
+}): { capable: boolean; reason?: string } {
+  // If account credentials or connection have actively failed (e.g., status is needs_attention or inactive)
+  if (account.status && account.status !== "active") {
+    return {
+      capable: false,
+      reason: `Account status is '${account.status}'. Reply polling is paused until credentials are fixed.`,
+    };
+  }
+
+  // If account delegates replies to a designated reply inbox
+  if (account.reply_inbox_account_id || account.reply_inbox) {
+    return { capable: true };
+  }
+
+  // If account has direct IMAP configured with host & password
+  const hasPass = Boolean(account.imap_password_enc || account.has_imap_password);
+  if (account.imap_host && (hasPass || account.provider === "smtp")) {
+    return { capable: true };
+  }
+
+  // Note: reply-poller currently polls IMAP only (no Gmail API polling path yet),
+  // so gmail.readonly OAuth accounts without IMAP or a linked reply inbox must return false.
+  return {
+    capable: false,
+    reason: "For follow-ups and stop-on-reply, connect with App Password + IMAP",
+  };
+}
+
+/**
+ * Nightly maintenance task: Increments warmup_day by 1 for accounts with warmup_enabled = true.
+ * - Idempotent: Skips accounts already incremented on the same calendar day (UTC).
+ * - Capped: Capped at the day where calculated limit reaches warmup_max_limit.
+ */
+export async function incrementWarmupDayForActiveAccounts(now: Date = new Date()): Promise<{
+  checked: number;
+  incremented: number;
+  capped: number;
+  skippedAlreadyIncremented: number;
+}> {
+  const activeWarmupAccounts = await db.email_accounts.findMany({
+    where: {
+      status: "active",
+      warmup_enabled: true,
+    },
+    select: {
+      id: true,
+      from_email: true,
+      warmup_day: true,
+      warmup_start_limit: true,
+      warmup_daily_increment: true,
+      warmup_max_limit: true,
+      warmup_last_incremented_at: true,
+    },
+  });
+
+  let incremented = 0;
+  let capped = 0;
+  let skippedAlreadyIncremented = 0;
+  const todayDateStr = now.toISOString().slice(0, 10);
+
+  for (const account of activeWarmupAccounts) {
+    const lastIncStr = account.warmup_last_incremented_at
+      ? new Date(account.warmup_last_incremented_at).toISOString().slice(0, 10)
+      : null;
+
+    if (lastIncStr === todayDateStr) {
+      skippedAlreadyIncremented++;
+      continue;
+    }
+
+    const currentDay = Math.max(1, account.warmup_day || 1);
+    const start = Math.max(1, account.warmup_start_limit || 10);
+    const inc = Math.max(1, account.warmup_daily_increment || 5);
+    const max = Math.max(start, account.warmup_max_limit || 50);
+
+    // Calculate maximum days needed to reach max limit
+    const maxDays = Math.max(1, Math.ceil((max - start) / inc) + 1);
+
+    if (currentDay >= maxDays) {
+      capped++;
+      await db.email_accounts.update({
+        where: { id: account.id },
+        data: {
+          warmup_last_incremented_at: now,
+        },
+      });
+      continue;
+    }
+
+    const nextDay = currentDay + 1;
+    await db.email_accounts.update({
+      where: { id: account.id },
+      data: {
+        warmup_day: nextDay,
+        warmup_last_incremented_at: now,
+      },
+    });
+    incremented++;
+  }
+
+  logger.info(
+    {
+      checked: activeWarmupAccounts.length,
+      incremented,
+      capped,
+      skippedAlreadyIncremented,
+    },
+    "Nightly warmup day increment task completed"
+  );
+
+  return {
+    checked: activeWarmupAccounts.length,
+    incremented,
+    capped,
+    skippedAlreadyIncremented,
+  };
+}
+
 function formatSmtpError(err: any, host: string = ""): string {
   const msg = err?.message || String(err);
   const code = err?.code || "";
@@ -508,10 +639,13 @@ function sanitizeAccount(acc: any) {
     oauth_refresh_token_enc,
     ...rest
   } = acc;
+  const replyCheck = accountHasWorkingReplyDetection(acc);
   return {
     ...rest,
     has_smtp_password: Boolean(smtp_password_enc),
     has_imap_password: Boolean(imap_password_enc),
     has_oauth_token: Boolean(oauth_access_token_enc || oauth_refresh_token_enc),
+    has_reply_detection: replyCheck.capable,
+    reply_detection_reason: replyCheck.reason,
   };
 }

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import nodemailer from "nodemailer";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
@@ -10,6 +11,7 @@ import { generateOutreachEmail } from "@/server/ai/outreach-generator";
 import { assertLimit } from "@/server/billing/limits";
 import { trackUsageIncrement } from "@/server/billing/usage-tracker";
 import { queueEmailSend } from "@/server/queues";
+import { createSignedTrackingToken } from "@/server/email/tracking-token";
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
@@ -18,6 +20,97 @@ export interface SendingWindowOptions {
   startHour?: number | null;
   endHour?: number | null;
   daysOfWeek?: number[] | null;
+}
+
+/**
+ * Constructs strict multipart/alternative email bodies:
+ * - text: Pure plaintext without raw HTML tags or tracking pixels.
+ * - html: Semantic HTML carrying the open tracking pixel and a styled unsubscribe link.
+ */
+export function buildEmailMultipartBodies(opts: {
+  bodyText: string;
+  legalAddress: string;
+  unsubscribeUrl: string;
+  trackingOpen?: boolean;
+  trackingClick?: boolean;
+  unsubscribeToken: string;
+  baseUrl: string;
+}): { text: string; html: string } {
+  // 1. Clean plain-text body (strictly NO HTML tags or tracking pixels, raw URLs untouched)
+  const text = `${opts.bodyText}\n\n---\n${opts.legalAddress}\nTo unsubscribe: ${opts.unsubscribeUrl}`;
+
+  // Helper to escape HTML characters safely
+  const escapeHtml = (str: string) =>
+    str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+
+  // 2. Formatted HTML body with conditional click-tracking link wrapping
+  const formattedHtmlParagraphs = opts.bodyText
+    .split(/\r?\n\r?\n/)
+    .map((para) => {
+      const urlRegex = /(https?:\/\/[^\s<>"']+)/gi;
+      let lastIndex = 0;
+      let htmlPara = "";
+      let match: RegExpExecArray | null;
+
+      while ((match = urlRegex.exec(para)) !== null) {
+        const rawUrl = match[0];
+        const matchStart = match.index;
+        htmlPara += escapeHtml(para.slice(lastIndex, matchStart)).replace(/\r?\n/g, "<br />");
+        lastIndex = matchStart + rawUrl.length;
+
+        // Unsubscribe links are NEVER wrapped with click tracking
+        const isUnsubLink =
+          rawUrl === opts.unsubscribeUrl ||
+          rawUrl.includes("/api/v1/unsubscribe/") ||
+          rawUrl.includes("/unsubscribe/") ||
+          (opts.unsubscribeToken ? rawUrl.includes(`/u/${opts.unsubscribeToken}`) : false);
+
+        if (isUnsubLink || !opts.trackingClick) {
+          htmlPara += `<a href="${escapeHtml(rawUrl)}" style="color: #0284c7; text-decoration: underline;">${escapeHtml(rawUrl)}</a>`;
+        } else {
+          // Wrap destination securely via HMAC-signed token
+          const signedToken = createSignedTrackingToken(opts.unsubscribeToken, rawUrl);
+          const clickUrl = `${opts.baseUrl}/api/v1/track/click/${signedToken}`;
+          htmlPara += `<a href="${clickUrl}" style="color: #0284c7; text-decoration: underline;">${escapeHtml(rawUrl)}</a>`;
+        }
+      }
+
+      htmlPara += escapeHtml(para.slice(lastIndex)).replace(/\r?\n/g, "<br />");
+      return `<p style="margin: 0 0 16px 0; line-height: 1.6;">${htmlPara}</p>`;
+    })
+    .join("");
+
+  const escapedAddress = escapeHtml(opts.legalAddress).replace(/\r?\n/g, "<br />");
+
+  let html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; color: #1e293b; background-color: #ffffff;">
+  <div>
+    ${formattedHtmlParagraphs}
+  </div>
+  <div style="margin-top: 28px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">
+    <p style="margin: 0 0 8px 0;">${escapedAddress}</p>
+    <p style="margin: 0;"><a href="${opts.unsubscribeUrl}" style="color: #64748b; text-decoration: underline;">Unsubscribe</a></p>
+  </div>
+`;
+
+  if (opts.trackingOpen) {
+    html += `  <img src="${opts.baseUrl}/api/v1/track/open/${opts.unsubscribeToken}" width="1" height="1" style="display:none !important;" alt="" />\n`;
+  }
+
+  html += `</body>
+</html>`;
+
+  return { text, html };
 }
 
 /**
@@ -198,6 +291,129 @@ export async function selectAvailableAccountForCampaign(campaignId: string, user
   return { account: evaluatedAccounts[0].account, throttled: false };
 }
 
+export interface DispatchTransportInput {
+  account: {
+    id: string;
+    provider: string;
+    from_name?: string | null;
+    from_email: string;
+    reply_to?: string | null;
+    reply_inbox_account_id?: string | null;
+  };
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  explicitMessageId: string;
+  inReplyTo?: string | null;
+  references?: string | null;
+  headers?: Record<string, string>;
+}
+
+/**
+ * Shared email transport: routes through Gmail API or validated external SMTP.
+ * Enforces explicit RFC Message-ID and threading headers for both send paths.
+ */
+export async function dispatchEmailTransport(
+  input: DispatchTransportInput
+): Promise<{ messageId: string }> {
+  const {
+    account,
+    to,
+    subject,
+    text,
+    html,
+    explicitMessageId,
+    inReplyTo,
+    references,
+    headers = {},
+  } = input;
+
+  // Resolve effective Reply-To header: account.reply_to -> linked reply_inbox -> account.from_email
+  let effectiveReplyTo = account.reply_to?.trim() || "";
+  if (!effectiveReplyTo && account.reply_inbox_account_id) {
+    try {
+      const linkedInbox = await db.email_accounts.findUnique({
+        where: { id: account.reply_inbox_account_id },
+        select: { from_email: true },
+      });
+      if (linkedInbox?.from_email) {
+        effectiveReplyTo = linkedInbox.from_email.trim();
+      }
+    } catch {}
+  }
+  if (!effectiveReplyTo) {
+    effectiveReplyTo = account.from_email;
+  }
+
+  const mergedHeaders: Record<string, string> = {
+    ...headers,
+    "Message-ID": explicitMessageId,
+  };
+  if (inReplyTo) {
+    mergedHeaders["In-Reply-To"] = inReplyTo;
+    mergedHeaders["References"] = references || inReplyTo;
+  }
+
+  if (account.provider === "gmail_api") {
+    const accessToken = await ensureFreshGoogleAccessToken(account.id);
+    const fromAddr = account.from_name
+      ? `"${account.from_name}" <${account.from_email}>`
+      : account.from_email;
+
+    const result = await sendViaGmailApi(accessToken, {
+      from: fromAddr,
+      to,
+      replyTo: effectiveReplyTo,
+      subject,
+      text,
+      html,
+      messageId: explicitMessageId,
+      inReplyTo: inReplyTo || undefined,
+      references: (references || inReplyTo) || undefined,
+      headers: mergedHeaders,
+    });
+    return { messageId: result.messageId || explicitMessageId };
+  } else {
+    // SMTP transport
+    const creds = await getDecryptedAccountCredentials(account.id);
+    if (!creds || !creds.smtp_host) {
+      throw new Error("Invalid SMTP credentials for account");
+    }
+
+    const transport = nodemailer.createTransport({
+      host: creds.smtp_host,
+      port: creds.smtp_port || 587,
+      secure: creds.smtp_security === "ssl" || creds.smtp_port === 465,
+      auth: {
+        user: creds.smtp_username || account.from_email,
+        pass: creds.smtp_password,
+      },
+      connectionTimeout: 8000,
+      greetingTimeout: 6000,
+      socketTimeout: 10000,
+    });
+
+    try {
+      await transport.sendMail({
+        from: `"${account.from_name || account.from_email}" <${account.from_email}>`,
+        to,
+        replyTo: effectiveReplyTo,
+        subject,
+        text,
+        html,
+        messageId: explicitMessageId,
+        headers: mergedHeaders,
+      });
+      return { messageId: explicitMessageId };
+    } finally {
+      if (transport && typeof transport.close === "function") {
+        transport.close();
+      }
+    }
+  }
+}
+
 /**
  * Sends a single email to a recipient, observing rate limits, headers, suppressions,
  * dual dispatch (Gmail REST API vs SMTP), and threading.
@@ -207,8 +423,13 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     where: { id: recipientId },
   });
 
-  if (!recipient || recipient.status === "sent" || recipient.status === "unsubscribed") {
-    return { skipped: true, reason: "Already processed or invalid" };
+  if (!recipient || recipient.status !== "queued") {
+    return {
+      skipped: true,
+      reason: recipient
+        ? `Recipient status is '${recipient.status}' (only 'queued' can be dispatched)`
+        : "Recipient not found",
+    };
   }
 
   const campaign = await db.outreach_campaigns.findFirst({
@@ -219,9 +440,10 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     return { skipped: true, reason: "Campaign is not running" };
   }
 
-  // Check plan limits
+  // Check plan limits (monthly and daily outreach quotas)
   try {
     await assertLimit(recipient.user_id, "monthly_outreach_emails", 1);
+    await assertLimit(recipient.user_id, "daily_outreach_emails", 1);
   } catch (err: any) {
     logger.warn({ recipientId, userId: recipient.user_id, err: err.message }, "Outreach quota exceeded");
     return { skipped: true, reason: err.message };
@@ -301,11 +523,45 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     return { throttled: true, reason: `Account wait gap active (cooldown: ${cooldownSec}s remaining)` };
   }
 
-  // 3. Mark recipient as sending
-  await db.campaign_recipients.update({
-    where: { id: recipient.id },
+  const currentStep = recipient.current_step || 0;
+
+  // Never resend initial email if recipient already has sent metadata
+  if (currentStep === 0 && (recipient.sent_at || recipient.last_sent_at || recipient.thread_message_id)) {
+    await db.campaign_recipients.update({
+      where: { id: recipient.id },
+      data: { status: "sent" },
+    }).catch(() => null);
+    return { skipped: true, reason: "Initial email already sent" };
+  }
+
+  // Idempotency guard: check if this exact step was already recorded as sent
+  try {
+    const alreadySentStep = await db.email_messages.findFirst({
+      where: {
+        recipient_id: recipient.id,
+        direction: "out",
+        kind: currentStep === 0 ? "initial" : "followup",
+        step_no: currentStep,
+        status: "sent",
+      },
+    });
+    if (alreadySentStep) {
+      await db.campaign_recipients.update({
+        where: { id: recipient.id },
+        data: { status: "sent" },
+      }).catch(() => null);
+      return { skipped: true, reason: `Step ${currentStep} already sent` };
+    }
+  } catch {}
+
+  // 3. Atomically claim recipient ('queued' -> 'sending') so concurrent or retried workers cannot double-send
+  const claimed = await db.campaign_recipients.updateMany({
+    where: { id: recipient.id, status: "queued" },
     data: { status: "sending", sending_started_at: new Date() },
   });
+  if (!claimed || claimed.count === 0) {
+    return { skipped: true, reason: "Recipient already claimed or no longer queued" };
+  }
 
   const unsubscribeUrl = `${BASE_URL}/u/${recipient.unsubscribe_token}`;
   const legalAddress =
@@ -317,8 +573,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
   let finalBody = "";
   let isThreadedFollowup = false;
   let inReplyToId: string | undefined = undefined;
-
-  const currentStep = recipient.current_step || 0;
+  let transportAcceptedMessageId: string | null = null;
 
   try {
     // 4. Generate content for initial outreach or follow-up step
@@ -412,100 +667,40 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       }
     }
 
-    // Append compliant footer
-    let fullBodyText = `${finalBody}\n\n---\n${legalAddress}\nTo unsubscribe: ${unsubscribeUrl}`;
+    // Construct clean multipart/alternative bodies (pure plain-text + semantic HTML)
+    const { text: plainTextBody, html: htmlBody } = buildEmailMultipartBodies({
+      bodyText: finalBody,
+      legalAddress,
+      unsubscribeUrl,
+      trackingOpen: Boolean(campaign.tracking_open),
+      trackingClick: Boolean(campaign.tracking_click),
+      unsubscribeToken: recipient.unsubscribe_token,
+      baseUrl: BASE_URL,
+    });
 
-    // Optional open tracking pixel
-    if (campaign.tracking_open) {
-      const trackingPixel = `\n<img src="${BASE_URL}/api/v1/track/open/${recipient.unsubscribe_token}" width="1" height="1" style="display:none" alt="" />`;
-      fullBodyText += trackingPixel;
-    }
+    // Generate explicit RFC Message-ID
+    const senderDomain = account.from_email.split("@")[1] || "leadreach.ai";
+    const explicitMessageId = `<${crypto.randomUUID()}@${senderDomain}>`;
 
-    let messageId = "";
-
-    // Resolve effective Reply-To header: account.reply_to -> linked reply_inbox -> account.from_email
-    let effectiveReplyTo = account.reply_to?.trim() || "";
-    if (!effectiveReplyTo && account.reply_inbox_account_id) {
-      try {
-        const linkedInbox = await db.email_accounts.findUnique({
-          where: { id: account.reply_inbox_account_id },
-          select: { from_email: true },
-        });
-        if (linkedInbox?.from_email) {
-          effectiveReplyTo = linkedInbox.from_email.trim();
-        }
-      } catch {}
-    }
-    if (!effectiveReplyTo) {
-      effectiveReplyTo = account.from_email;
-    }
-
-    // 5. Dual Dispatch: Gmail API vs SMTP
-    if (account.provider === "gmail_api") {
-      const accessToken = await ensureFreshGoogleAccessToken(account.id);
-      const fromAddr = account.from_name
-        ? `"${account.from_name}" <${account.from_email}>`
-        : account.from_email;
-
-      const headers: Record<string, string> = {
+    const transportResult = await dispatchEmailTransport({
+      account,
+      to: recipient.email,
+      subject: finalSubject,
+      text: plainTextBody,
+      html: htmlBody,
+      explicitMessageId,
+      inReplyTo: inReplyToId,
+      references: inReplyToId,
+      headers: {
         "List-Unsubscribe": `<${unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         "X-LeadReachAI-Campaign-Id": campaign.id,
         "X-LeadReachAI-Recipient-Id": recipient.id,
-      };
+      },
+    });
 
-      const result = await sendViaGmailApi(accessToken, {
-        from: fromAddr,
-        to: recipient.email,
-        replyTo: effectiveReplyTo,
-        subject: finalSubject,
-        text: fullBodyText,
-        inReplyTo: inReplyToId,
-        references: inReplyToId,
-        headers,
-      });
-      messageId = result.messageId;
-    } else {
-      // SMTP transport
-      const creds = await getDecryptedAccountCredentials(account.id);
-      if (!creds || !creds.smtp_host) {
-        throw new Error("Invalid SMTP credentials for account");
-      }
-
-      const transport = nodemailer.createTransport({
-        host: creds.smtp_host,
-        port: creds.smtp_port || 587,
-        secure: creds.smtp_security === "ssl" || creds.smtp_port === 465,
-        auth: {
-          user: creds.smtp_username || account.from_email,
-          pass: creds.smtp_password,
-        },
-        connectionTimeout: 8000,
-        greetingTimeout: 6000,
-        socketTimeout: 10000,
-      });
-
-      const sendResult = await transport.sendMail({
-        from: `"${account.from_name || account.from_email}" <${account.from_email}>`,
-        to: recipient.email,
-        replyTo: effectiveReplyTo,
-        subject: finalSubject,
-        text: fullBodyText,
-        inReplyTo: inReplyToId,
-        references: inReplyToId,
-        headers: {
-          "List-Unsubscribe": `<${unsubscribeUrl}>`,
-          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-          "X-LeadReachAI-Campaign-Id": campaign.id,
-          "X-LeadReachAI-Recipient-Id": recipient.id,
-        },
-      });
-
-      if (transport && typeof transport.close === "function") {
-        transport.close();
-      }
-      messageId = sendResult?.messageId || `msg_${Date.now()}`;
-    }
+    const messageId = transportResult.messageId;
+    transportAcceptedMessageId = messageId;
 
     // 6. Record message in database
     await db.email_messages.create({
@@ -605,6 +800,22 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       logger.warn({ accountId: account.id, campaignId: campaign.id }, "Sender account requires attention, campaign paused");
     }
 
+    if (transportAcceptedMessageId) {
+      // Partial failure: mail server accepted the message, but DB persistence failed.
+      // Mark as needs_review (never failed/queued) so it is never auto-resent.
+      await db.campaign_recipients.update({
+        where: { id: recipient.id },
+        data: {
+          status: "needs_review",
+          thread_message_id: recipient.thread_message_id || transportAcceptedMessageId,
+          attempts: (recipient.attempts || 0) + 1,
+          error: `Email accepted by transport (${transportAcceptedMessageId}) but DB update failed: ${errorMsg}. Do not auto-resend without verifying Sent folder.`,
+        },
+      }).catch(() => null);
+
+      return { success: false, partialFailure: true, messageId: transportAcceptedMessageId, error: errorMsg };
+    }
+
     await db.campaign_recipients.update({
       where: { id: recipient.id },
       data: {
@@ -615,6 +826,48 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     });
 
     return { success: false, error: errorMsg };
+  }
+}
+
+/**
+ * Safely recovers recipients left in 'sending' state after a worker crash.
+ * Marks them 'needs_review' after STUCK_SENDING_MINUTES (default 15m) — never auto-resends.
+ */
+export async function recoverStuckSendingRecipients(
+  campaignId?: string,
+  now: Date = new Date()
+): Promise<number> {
+  const rawMinutes = Number(process.env.STUCK_SENDING_MINUTES);
+  const stuckMinutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : 15;
+  const stuckCutoff = new Date(now.getTime() - stuckMinutes * 60 * 1000);
+
+  try {
+    const whereClause: any = {
+      status: "sending",
+      sending_started_at: { lt: stuckCutoff },
+    };
+    if (campaignId) {
+      whereClause.campaign_id = campaignId;
+    }
+
+    const res = await db.campaign_recipients.updateMany({
+      where: whereClause,
+      data: {
+        status: "needs_review",
+        error: `Recipient stayed in 'sending' for over ${stuckMinutes}m (possible worker crash). Marked as needs_review; never auto-resend.`,
+      },
+    });
+
+    if (res.count > 0) {
+      logger.warn(
+        { campaignId, count: res.count, stuckMinutes, stuckCutoff: stuckCutoff.toISOString() },
+        "Stuck sending recovery: Marked crashed 'sending' recipients as needs_review"
+      );
+    }
+    return res.count;
+  } catch (err) {
+    logger.error({ err, campaignId }, "Failed to recover stuck 'sending' recipients");
+    return 0;
   }
 }
 
@@ -635,6 +888,9 @@ export async function dispatchRunningCampaigns(): Promise<{ dispatched: number; 
 
   for (const campaign of runningCampaigns) {
     try {
+      // 0. Recover any recipients stuck in 'sending' after a worker crash (marks needs_review, never auto-resends)
+      await recoverStuckSendingRecipients(campaign.id, now);
+
       // 1. Check Sending Window & Working Days
       const windowStart = (campaign.send_window as any)?.startHour ?? 9;
       const windowEnd = (campaign.send_window as any)?.endHour ?? 18;
@@ -653,9 +909,38 @@ export async function dispatchRunningCampaigns(): Promise<{ dispatched: number; 
         continue; // Outside active window, will resume on next cycle
       }
 
-      // 2. Fetch candidate queued recipients
+      // 2. Stale catch-up protection: Mark queued recipients older than stale threshold as needs_review
+      const staleHours = Number(process.env.STALE_THRESHOLD_HOURS) || 24;
+      const staleCutoff = new Date(now.getTime() - staleHours * 60 * 60 * 1000);
+      try {
+        const staleQueued = await db.campaign_recipients.updateMany({
+          where: {
+            campaign_id: campaign.id,
+            status: "queued",
+            created_at: { lt: staleCutoff },
+          },
+          data: {
+            status: "needs_review",
+            error: `Campaign queued email is older than stale threshold (${staleHours}h). Requires review before dispatch.`,
+          },
+        });
+        if (staleQueued.count > 0) {
+          logger.warn(
+            { campaignId: campaign.id, count: staleQueued.count },
+            "Catch-up protection: Marked overdue queued recipients as needs_review"
+          );
+        }
+      } catch (err) {
+        logger.error({ err, campaignId: campaign.id }, "Failed to apply catch-up protection to queued recipients");
+      }
+
+      // Fetch candidate queued recipients within safe threshold
       const queuedRecipients = await db.campaign_recipients.findMany({
-        where: { campaign_id: campaign.id, status: "queued" },
+        where: {
+          campaign_id: campaign.id,
+          status: "queued",
+          created_at: { gte: staleCutoff },
+        },
         take: 20,
       });
 

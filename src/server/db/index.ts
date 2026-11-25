@@ -1,7 +1,7 @@
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../generated/prisma/client";
-import { localDevStore } from "./local-store";
+import { localDevStore, ensureDevAdminUser } from "./local-store";
 import { validateEnv } from "@/server/env";
 
 const globalForPrisma = globalThis as unknown as { prisma?: any; pgPool?: pg.Pool };
@@ -10,6 +10,7 @@ const globalForPrisma = globalThis as unknown as { prisma?: any; pgPool?: pg.Poo
 class LocalDevMockDb {
   users = {
     findMany: async ({ where, take, skip, orderBy }: any = {}) => {
+      await ensureDevAdminUser();
       let items = localDevStore.getUsers((u) => {
         if (where?.role) {
           if (where.role.in && Array.isArray(where.role.in)) {
@@ -55,9 +56,11 @@ class LocalDevMockDb {
       return items;
     },
     findUnique: async ({ where }: any = {}) => {
+      await ensureDevAdminUser();
       return localDevStore.findUser((u) => (where?.id && u.id === where.id) || (where?.email && u.email?.toLowerCase() === where.email?.toLowerCase()));
     },
     findFirst: async ({ where }: any = {}) => {
+      await ensureDevAdminUser();
       return localDevStore.findUser((u) => (where?.id && u.id === where.id) || (where?.email && u.email?.toLowerCase() === where.email?.toLowerCase()));
     },
     create: async ({ data }: any) => localDevStore.saveUser(data),
@@ -72,6 +75,7 @@ class LocalDevMockDb {
       return { count: 0 };
     },
     count: async ({ where }: any = {}) => {
+      await ensureDevAdminUser();
       return localDevStore.getUsers((u) => {
         if (where?.role) {
           if (where.role.in && Array.isArray(where.role.in)) {
@@ -368,8 +372,10 @@ class LocalDevMockDb {
         (r) =>
           (!where?.user_id || r.user_id === where.user_id) &&
           (!where?.campaign_id || r.campaign_id === where.campaign_id) &&
+          (!where?.id || (where.id?.in ? where.id.in.includes(r.id) : r.id === where.id)) &&
           (!where?.status || (where.status?.in ? where.status.in.includes(r.status) : r.status === where.status)) &&
-          (!where?.assigned_account_id || r.assigned_account_id === where.assigned_account_id)
+          (!where?.assigned_account_id || r.assigned_account_id === where.assigned_account_id) &&
+          (!where?.sending_started_at?.lt || (r.sending_started_at && new Date(r.sending_started_at) < new Date(where.sending_started_at.lt)))
       );
       if (take && typeof take === "number") {
         items = items.slice(0, take);
@@ -402,6 +408,40 @@ class LocalDevMockDb {
     update: async ({ where, data }: any) => {
       const existing = localDevStore.findRecipient((r) => (!where?.id || r.id === where.id) && (!where?.unsubscribe_token || r.unsubscribe_token === where.unsubscribe_token));
       return localDevStore.saveRecipient({ ...existing, ...data });
+    },
+    updateMany: async ({ where, data }: any = {}) => {
+      const items = localDevStore.getRecipients((r) => {
+        if (where?.id) {
+          if (where.id?.in && Array.isArray(where.id.in)) {
+            if (!where.id.in.includes(r.id)) return false;
+          } else if (r.id !== where.id) {
+            return false;
+          }
+        }
+        if (where?.campaign_id && r.campaign_id !== where.campaign_id) return false;
+        if (where?.user_id && r.user_id !== where.user_id) return false;
+        if (where?.status) {
+          if (where.status?.in && Array.isArray(where.status.in)) {
+            if (!where.status.in.includes(r.status)) return false;
+          } else if (r.status !== where.status) {
+            return false;
+          }
+        }
+        if (where?.next_followup_at?.lt) {
+          if (!r.next_followup_at || new Date(r.next_followup_at) >= new Date(where.next_followup_at.lt)) return false;
+        }
+        if (where?.created_at?.lt) {
+          if (!r.created_at || new Date(r.created_at) >= new Date(where.created_at.lt)) return false;
+        }
+        if (where?.sending_started_at?.lt) {
+          if (!r.sending_started_at || new Date(r.sending_started_at) >= new Date(where.sending_started_at.lt)) return false;
+        }
+        return true;
+      });
+      for (const item of items) {
+        localDevStore.saveRecipient({ ...item, ...data });
+      }
+      return { count: items.length };
     },
     count: async ({ where }: any = {}) => {
       return localDevStore.getRecipients(
@@ -447,6 +487,8 @@ class LocalDevMockDb {
       let items = localDevStore.getEmailMessages((m) => {
         if (where?.user_id && m.user_id !== where.user_id) return false;
         if (where?.direction && m.direction !== where.direction) return false;
+        if (where?.kind && m.kind !== where.kind) return false;
+        if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
         if (where?.status && m.status !== where.status) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
         if (where?.recipient_id && m.recipient_id !== where.recipient_id) return false;
@@ -458,6 +500,18 @@ class LocalDevMockDb {
       if (skip && typeof skip === "number") items = items.slice(skip);
       if (take && typeof take === "number") items = items.slice(0, take);
       return items;
+    },
+    findFirst: async ({ where }: any = {}) => {
+      return localDevStore.getEmailMessages((m) => {
+        if (where?.user_id && m.user_id !== where.user_id) return false;
+        if (where?.direction && m.direction !== where.direction) return false;
+        if (where?.kind && m.kind !== where.kind) return false;
+        if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
+        if (where?.status && m.status !== where.status) return false;
+        if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
+        if (where?.recipient_id && m.recipient_id !== where.recipient_id) return false;
+        return true;
+      })[0] || null;
     },
     create: async ({ data }: any) => localDevStore.saveEmailMessage(data),
     count: async ({ where }: any = {}) => {
@@ -769,6 +823,9 @@ class LocalDevMockDb {
           } else if (p.status !== where.status) {
             return false;
           }
+        }
+        if (where?.scheduled_for?.lt && p.scheduled_for) {
+          if (new Date(p.scheduled_for) >= new Date(where.scheduled_for.lt)) return false;
         }
         return true;
       });
@@ -1184,7 +1241,33 @@ class LocalDevMockDb {
 function createClient() {
   validateEnv();
   const connString = process.env.DATABASE_URL;
-  // If we're in production or live DB is available, use standard client
+
+  // In production, DATABASE_URL is strictly required; fail loudly with no in-memory fallback
+  if (process.env.NODE_ENV === "production") {
+    const isBuildPhase =
+      process.env.NEXT_PHASE === "phase-production-build" ||
+      process.env.npm_lifecycle_event === "build";
+
+    if (!connString || connString.trim() === "") {
+      if (isBuildPhase) {
+        // Allow static compilation/tracing during build phase without live DB connection
+        return new LocalDevMockDb() as any;
+      }
+      throw new Error(
+        "FATAL: DATABASE_URL environment variable is missing in production. Refusing to start with in-memory fallback."
+      );
+    }
+    const pool = new pg.Pool({
+      connectionString: connString,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    });
+    const adapter = new PrismaPg(pool);
+    return new PrismaClient({ adapter });
+  }
+
+  // Development / test fallback
   try {
     const pool =
       globalForPrisma.pgPool ??
@@ -1194,7 +1277,7 @@ function createClient() {
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
       });
-    if (process.env.NODE_ENV !== "production") globalForPrisma.pgPool = pool;
+    globalForPrisma.pgPool = pool;
     const adapter = new PrismaPg(pool);
     return new PrismaClient({ adapter });
   } catch {

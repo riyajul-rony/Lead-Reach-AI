@@ -37,42 +37,31 @@ export class OnlinePaymentProvider implements PaymentProvider {
     }
   }
 
-  async createCheckout(options: CheckoutSessionOptions): Promise<CheckoutResult> {
-    const publicKey = await getConfig("ONLINE_PAYMENT_PUBLIC_KEY" as any);
-    const secretKey = await getConfig("ONLINE_PAYMENT_SECRET_KEY" as any);
-
-    // If keys are not configured yet, run in simulated sandbox mode so the app never crashes
-    if (!publicKey || !secretKey) {
-      const mockSessionId = `cs_sandbox_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      return {
-        sessionId: mockSessionId,
-        checkoutUrl: `${options.successUrl}?session_id=${mockSessionId}&sandbox=true`,
-        provider: "online",
-        invoiceNumber: `INV-${new Date().toISOString().slice(0, 7).replace("-", "")}-${Math.floor(1000 + Math.random() * 9000)}`,
-      };
-    }
-
-    // Real API dispatch skeleton (e.g. Stripe checkout session create)
-    const sessionId = `cs_live_${Date.now()}`;
-    return {
-      sessionId,
-      checkoutUrl: `https://checkout.provider.com/pay/${sessionId}`,
-      provider: "online",
-    };
+  async createCheckout(_options: CheckoutSessionOptions): Promise<CheckoutResult> {
+    throw new Error(
+      "Online automated checkout is currently disabled. Please use manual payment instructions or contact the administrator to activate your plan."
+    );
   }
 
   async handleWebhook(rawBody: string, headers: Record<string, string>): Promise<WebhookResult> {
     const webhookSecret = (await getConfig("ONLINE_PAYMENT_WEBHOOK_SECRET" as any)) || "";
     const signature = headers["stripe-signature"] || headers["x-webhook-signature"] || headers["x-signature"];
 
-    // In production with secret configured, enforce signature check
-    if (webhookSecret && signature) {
-      const isValid = this.verifySignature(rawBody, signature, webhookSecret);
-      if (!isValid) {
-        throw new Error("Invalid online webhook signature");
-      }
-    } else {
-      logger.info("Webhook received without signature verification (sandbox / secret not set)");
+    // Fail closed: Webhooks must be strictly authenticated with configured secret and valid signature
+    if (!webhookSecret) {
+      logger.warn("Online payment webhook rejected: ONLINE_PAYMENT_WEBHOOK_SECRET is not configured (fail-closed)");
+      throw new Error("Online payment webhook secret is not configured");
+    }
+
+    if (!signature) {
+      logger.warn("Online payment webhook rejected: Missing signature header (fail-closed)");
+      throw new Error("Missing required webhook signature header");
+    }
+
+    const isValid = this.verifySignature(rawBody, signature, webhookSecret);
+    if (!isValid) {
+      logger.warn("Online payment webhook rejected: Invalid cryptographic signature (fail-closed)");
+      throw new Error("Invalid online webhook signature");
     }
 
     let payload: any;
