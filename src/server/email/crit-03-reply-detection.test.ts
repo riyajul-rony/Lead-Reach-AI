@@ -23,7 +23,7 @@ describe("CRIT-03: Reply Detection & Threading Guarantees", () => {
       expect(result.reason).toContain("For follow-ups and stop-on-reply, connect with App Password + IMAP");
     });
 
-    it("accepts Gmail OAuth accounts if gmail.readonly is explicitly granted", () => {
+    it("rejects Gmail OAuth accounts even with gmail.readonly until Gmail API reply polling is implemented", () => {
       const account = {
         provider: "gmail_api",
         oauth_scopes: [
@@ -34,7 +34,8 @@ describe("CRIT-03: Reply Detection & Threading Guarantees", () => {
       };
 
       const result = accountHasWorkingReplyDetection(account);
-      expect(result.capable).toBe(true);
+      expect(result.capable).toBe(false);
+      expect(result.reason).toContain("For follow-ups and stop-on-reply, connect with App Password + IMAP");
     });
 
     it("accepts accounts configured with App Password + IMAP host & password", () => {

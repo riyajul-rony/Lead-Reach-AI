@@ -130,15 +130,8 @@ export function accountHasWorkingReplyDetection(account: {
     return { capable: true };
   }
 
-  // If account is Google OAuth with gmail.readonly granted
-  if (
-    account.provider === "gmail_api" &&
-    Array.isArray(account.oauth_scopes) &&
-    account.oauth_scopes.some((s) => s.includes("gmail.readonly") || s.includes("mail.google.com"))
-  ) {
-    return { capable: true };
-  }
-
+  // Note: reply-poller currently polls IMAP only (no Gmail API polling path yet),
+  // so gmail.readonly OAuth accounts without IMAP or a linked reply inbox must return false.
   return {
     capable: false,
     reason: "For follow-ups and stop-on-reply, connect with App Password + IMAP",
