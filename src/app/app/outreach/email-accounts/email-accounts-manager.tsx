@@ -425,6 +425,8 @@ export function EmailAccountsManager({
     setFormError(null);
 
     try {
+      const smtpSecurity = sslEnabled ? "ssl" : "tls";
+      const imapHost = deriveImapHostClient(trimmedHost);
       const res = await fetch("/api/v1/email-accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -432,14 +434,49 @@ export function EmailAccountsManager({
           from_email: trimmedEmail,
           smtp_host: trimmedHost,
           smtp_port: smtpPort,
-          smtp_security: sslEnabled ? "ssl" : "tls",
+          smtp_security: smtpSecurity,
           smtp_password: normalizedPassword,
           // Everything else: server applies Safe Preset defaults + auto-derives IMAP
         }),
       });
 
-      const json = await res.json();
-      if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        let targetId = json.existingAccountId as string | undefined;
+        if (!targetId) {
+          const found = accounts.find(
+            (a) => a.from_email?.toLowerCase().trim() === trimmedEmail.toLowerCase()
+          );
+          targetId = found?.id;
+        }
+        if (!targetId) {
+          throw new Error(json.error || "This email account is already connected.");
+        }
+
+        const patchRes = await fetch(`/api/v1/email-accounts/${targetId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider: "smtp",
+            smtp_host: trimmedHost,
+            smtp_port: smtpPort,
+            smtp_security: smtpSecurity,
+            smtp_username: trimmedEmail,
+            smtp_password: normalizedPassword,
+            imap_host: imapHost,
+            imap_port: 993,
+            imap_security: "ssl",
+            imap_username: trimmedEmail,
+            imap_password: normalizedPassword,
+            warmup_enabled: true,
+            status: "active",
+          }),
+        });
+        const patchJson = await patchRes.json().catch(() => ({}));
+        if (!patchRes.ok) {
+          throw new Error(patchJson.error || "Could not update existing email account.");
+        }
+      } else if (!res.ok) {
         throw new Error(json.error || "Failed to register inbox");
       }
 

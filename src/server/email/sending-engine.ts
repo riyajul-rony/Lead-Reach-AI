@@ -14,15 +14,25 @@ import { queueEmailSend } from "@/server/queues";
 import { createSignedTrackingToken } from "@/server/email/tracking-token";
 import { selectVariantForRecipient } from "@/server/email/variant-service";
 import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
+import {
+  getLocalTimeParts,
+  isValidIanaTimezone,
+  isWithinSendingWindow,
+  normalizeIanaTimezone,
+  resolveEffectiveSendingTimezone,
+  type SendingWindowOptions,
+} from "@/server/email/timezone";
+
+export {
+  getLocalTimeParts,
+  isValidIanaTimezone,
+  isWithinSendingWindow,
+  normalizeIanaTimezone,
+  resolveEffectiveSendingTimezone,
+};
+export type { SendingWindowOptions };
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
-
-export interface SendingWindowOptions {
-  timezone?: string | null;
-  startHour?: number | null;
-  endHour?: number | null;
-  daysOfWeek?: number[] | null;
-}
 
 /**
  * Constructs strict multipart/alternative email bodies:
@@ -113,72 +123,6 @@ export function buildEmailMultipartBodies(opts: {
 </html>`;
 
   return { text, html };
-}
-
-/**
- * Parses local date/time components (weekday, hour, minute) in an IANA timezone with UTC fallback.
- */
-export function getLocalTimeParts(
-  date: Date,
-  timezone = "UTC"
-): { weekdayNum: number; hour: number; minute: number } {
-  try {
-    const formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone || "UTC",
-      hour: "numeric",
-      minute: "numeric",
-      hour12: false,
-      weekday: "short",
-    });
-    const parts = formatter.formatToParts(date);
-    const weekdayStr = parts.find((p) => p.type === "weekday")?.value || "Mon";
-    const hourStr = parts.find((p) => p.type === "hour")?.value || "0";
-    const minuteStr = parts.find((p) => p.type === "minute")?.value || "0";
-
-    const dayMap: Record<string, number> = {
-      Mon: 1,
-      Tue: 2,
-      Wed: 3,
-      Thu: 4,
-      Fri: 5,
-      Sat: 6,
-      Sun: 7,
-    };
-    const weekdayNum = dayMap[weekdayStr] || 1;
-    const rawHour = parseInt(hourStr, 10);
-    const hour = rawHour === 24 ? 0 : rawHour;
-    const minute = parseInt(minuteStr, 10) || 0;
-
-    return { weekdayNum, hour, minute };
-  } catch {
-    const day = date.getUTCDay();
-    return {
-      weekdayNum: day === 0 ? 7 : day,
-      hour: date.getUTCHours(),
-      minute: date.getUTCMinutes(),
-    };
-  }
-}
-
-/**
- * Checks whether the current time falls inside the campaign's active days and working hours.
- */
-export function isWithinSendingWindow(date: Date, options: SendingWindowOptions): boolean {
-  const { weekdayNum, hour } = getLocalTimeParts(date, options.timezone || "UTC");
-
-  const activeDays =
-    options.daysOfWeek && options.daysOfWeek.length > 0 ? options.daysOfWeek : [1, 2, 3, 4, 5];
-
-  // Match 1..7 or 0 (0 and 7 both represent Sunday)
-  const isDayAllowed = activeDays.some((d) => d === weekdayNum || (weekdayNum === 7 && d === 0));
-  if (!isDayAllowed) {
-    return false;
-  }
-
-  const start = options.startHour !== undefined && options.startHour !== null ? options.startHour : 9;
-  const end = options.endHour !== undefined && options.endHour !== null ? options.endHour : 18;
-
-  return hour >= start && hour < end;
 }
 
 /**
@@ -898,7 +842,9 @@ export async function recoverStuckSendingRecipients(
  * Periodic dispatch loop: Finds running campaigns, validates sending window,
  * applies randomized jitter, and schedules emails through BullMQ.
  */
-export async function dispatchRunningCampaigns(): Promise<{ dispatched: number; throttled: number; scheduled: number }> {
+export async function dispatchRunningCampaigns(
+  now: Date = new Date()
+): Promise<{ dispatched: number; throttled: number; scheduled: number }> {
   const runningCampaigns = await db.outreach_campaigns.findMany({
     where: { status: "running" },
   });
@@ -907,32 +853,18 @@ export async function dispatchRunningCampaigns(): Promise<{ dispatched: number; 
   let totalThrottled = 0;
   let totalScheduled = 0;
 
-  const now = new Date();
-
   for (const campaign of runningCampaigns) {
     try {
       // 0. Recover any recipients stuck in 'sending' after a worker crash (marks needs_review, never auto-resends)
       await recoverStuckSendingRecipients(campaign.id, now);
 
-      // 1. Check Sending Window & Working Days
       const windowStart = (campaign.send_window as any)?.startHour ?? 9;
       const windowEnd = (campaign.send_window as any)?.endHour ?? 18;
       const daysOfWeek = campaign.days_of_week && campaign.days_of_week.length > 0
         ? campaign.days_of_week
         : [1, 2, 3, 4, 5];
 
-      const inWindow = isWithinSendingWindow(now, {
-        timezone: campaign.timezone || "UTC",
-        startHour: windowStart,
-        endHour: windowEnd,
-        daysOfWeek,
-      });
-
-      if (!inWindow) {
-        continue; // Outside active window, will resume on next cycle
-      }
-
-      // 2. Stale catch-up protection: Mark queued recipients older than stale threshold as needs_review
+      // 1. Stale catch-up protection: Mark queued recipients older than stale threshold as needs_review
       const staleHours = Number(process.env.STALE_THRESHOLD_HOURS) || 24;
       const staleCutoff = new Date(now.getTime() - staleHours * 60 * 60 * 1000);
       try {
@@ -990,27 +922,81 @@ export async function dispatchRunningCampaigns(): Promise<{ dispatched: number; 
         continue;
       }
 
-      // 3. Dispatch batch with randomized jitter and per-account wait gaps
+      // Batch-fetch lead timezones and assigned account metadata (avoids N+1 queries)
+      const leadIds = Array.from(
+        new Set(queuedRecipients.map((r: any) => r.lead_id).filter(Boolean))
+      ) as string[];
+      const leadTimezoneMap = new Map<string, string | null>();
+      if (leadIds.length > 0 && db.leads?.findMany) {
+        try {
+          const leadRows = await db.leads.findMany({
+            where: { id: { in: leadIds } },
+            select: { id: true, timezone: true },
+          });
+          for (const l of leadRows) {
+            leadTimezoneMap.set(l.id, l.timezone || null);
+          }
+        } catch {}
+      }
+
+      const accountIds = Array.from(
+        new Set(queuedRecipients.map((r: any) => r.assigned_account_id).filter(Boolean))
+      ) as string[];
+      const accountMap = new Map<string, any>();
+      if (accountIds.length > 0 && db.email_accounts?.findMany) {
+        try {
+          const accRows = await db.email_accounts.findMany({
+            where: { id: { in: accountIds } },
+            select: {
+              id: true,
+              timezone: true,
+              next_allowed_at: true,
+              min_gap_seconds: true,
+              max_gap_seconds: true,
+              gap_seconds: true,
+            },
+          });
+          for (const a of accRows) {
+            accountMap.set(a.id, a);
+          }
+        } catch {}
+      }
+
+      // 2. Dispatch eligible recipients inside their effective timezone sending window
       let cumulativeDelayMs = 0;
       for (const rec of queuedRecipients) {
+        const acc = rec.assigned_account_id ? accountMap.get(rec.assigned_account_id) : null;
+        const recipientTimezone =
+          normalizeIanaTimezone((rec.vars as any)?.timezone) ||
+          normalizeIanaTimezone(rec.lead_id ? leadTimezoneMap.get(rec.lead_id) : null);
+
+        const effectiveTimezone = resolveEffectiveSendingTimezone({
+          recipientTimezone,
+          campaignTimezone: campaign.timezone,
+          accountTimezone: acc?.timezone,
+        });
+
+        const inWindow = isWithinSendingWindow(now, {
+          timezone: effectiveTimezone,
+          startHour: windowStart,
+          endHour: windowEnd,
+          daysOfWeek,
+        });
+
+        if (!inWindow) {
+          continue; // Outside recipient/campaign local sending window; resume on next cycle
+        }
+
         let accountMinGap = campaign.jitter_min_sec || 60;
         let accountMaxGap = campaign.jitter_max_sec || 180;
         let accountCooldownMs = 0;
 
-        if (rec.assigned_account_id) {
-          try {
-            const acc = await db.email_accounts.findUnique({
-              where: { id: rec.assigned_account_id },
-              select: { next_allowed_at: true, min_gap_seconds: true, max_gap_seconds: true, gap_seconds: true },
-            });
-            if (acc) {
-              if (acc.min_gap_seconds) accountMinGap = acc.min_gap_seconds;
-              if (acc.max_gap_seconds) accountMaxGap = acc.max_gap_seconds;
-              if (acc.next_allowed_at && new Date(acc.next_allowed_at) > new Date()) {
-                accountCooldownMs = new Date(acc.next_allowed_at).getTime() - Date.now();
-              }
-            }
-          } catch {}
+        if (acc) {
+          if (acc.min_gap_seconds) accountMinGap = acc.min_gap_seconds;
+          if (acc.max_gap_seconds) accountMaxGap = acc.max_gap_seconds;
+          if (acc.next_allowed_at && new Date(acc.next_allowed_at) > now) {
+            accountCooldownMs = new Date(acc.next_allowed_at).getTime() - now.getTime();
+          }
         }
 
         const jitterSec = calculateRandomJitterSec(accountMinGap, accountMaxGap);

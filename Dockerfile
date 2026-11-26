@@ -17,6 +17,7 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npx prisma generate
 RUN npm run build
+RUN npm run build:worker
 
 # 3. Final Debian-based production runner
 FROM node:24-bookworm-slim AS runner
@@ -38,9 +39,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy built Next.js artifacts and dependencies
+# Copy built Next.js artifacts, compiled worker, and dependencies
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/prisma ./prisma

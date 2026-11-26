@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { normalizeIanaTimezone } from "@/server/email/timezone";
 
 export interface ColumnMapping {
   email: string;
@@ -9,6 +10,7 @@ export interface ColumnMapping {
   website?: string;
   job_title?: string;
   phone?: string;
+  timezone?: string;
 }
 
 export interface NormalizedRecipient {
@@ -118,6 +120,8 @@ export async function validateAndNormalizeRecipients(
     const jobTitle = mapping.job_title ? String(row[mapping.job_title] || "").trim() : "";
     const phone = mapping.phone ? String(row[mapping.phone] || "").trim() : "";
     const leadId = row.id || row.lead_id || undefined;
+    const rawTz = mapping.timezone ? row[mapping.timezone] : row.timezone;
+    const validTimezone = normalizeIanaTimezone(typeof rawTz === "string" ? rawTz : null);
 
     // Collect custom variable attributes (any other fields)
     const vars: Record<string, any> = {};
@@ -126,6 +130,11 @@ export async function validateAndNormalizeRecipients(
       if (!mappedValues.has(k) && typeof v === "string" && v.length < 200) {
         vars[k] = v;
       }
+    }
+    if (validTimezone) {
+      vars.timezone = validTimezone;
+    } else if ("timezone" in vars) {
+      delete vars.timezone;
     }
 
     const isValidSyntax = cleanEmail.length > 5 && EMAIL_REGEX.test(cleanEmail);

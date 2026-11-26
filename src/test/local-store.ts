@@ -197,6 +197,12 @@ export const localDevStore = {
       if ((store as any).leads) (store as any).leads = (store as any).leads.filter((l: any) => l.user_id !== uid);
       if ((store as any).lead_searches) (store as any).lead_searches = (store as any).lead_searches.filter((ls: any) => ls.user_id !== uid);
       if ((store as any).assets) (store as any).assets = (store as any).assets.filter((a: any) => a.user_id !== uid);
+      if (store.warmup_logs) store.warmup_logs = store.warmup_logs.filter((w: any) => w.user_id !== uid);
+      if (store.tracking_domains) store.tracking_domains = store.tracking_domains.filter((td: any) => td.user_id !== uid);
+      if (store.suppressions) store.suppressions = store.suppressions.filter((s: any) => s.user_id !== uid);
+      if (store.subscriptions) store.subscriptions = store.subscriptions.filter((s: any) => s.user_id !== uid);
+      if (store.payments) store.payments = store.payments.filter((p: any) => p.user_id !== uid);
+      if (store.usage_counters) store.usage_counters = store.usage_counters.filter((u: any) => u.user_id !== uid);
 
       saveStore();
       return deleted;
@@ -1442,5 +1448,13 @@ export const localDevStore = {
     return idx >= 0
       ? store.warmup_logs[idx]
       : store.warmup_logs[store.warmup_logs.length - 1];
+  },
+  deleteWhere: (table: keyof StoreSchema, filter: (item: any) => boolean) => {
+    const store = loadStore();
+    const arr = (store[table] as any[]) || [];
+    const before = arr.length;
+    (store as any)[table] = arr.filter((item) => !filter(item));
+    saveStore();
+    return { count: before - ((store[table] as any[]) || []).length };
   },
 };

@@ -65,6 +65,7 @@ services:
       CTD_TLS_ASK_SECRET: ${CTD_TLS_ASK_SECRET:-}
       SELF_WARMUP_INTERVAL_MINUTES: ${SELF_WARMUP_INTERVAL_MINUTES:-15}
       SELF_WARMUP_MAX_PER_TICK: ${SELF_WARMUP_MAX_PER_TICK:-5}
+      CSP_REPORT_ONLY: ${CSP_REPORT_ONLY:-false}
       TZ: UTC
     volumes:
       - appdata:/data
@@ -96,7 +97,7 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node_modules/.bin/tsx", "src/server/worker/runner.ts"]
+    command: ["node", "dist/worker.cjs"]
     environment:
       <<: *app_env
       SERVICE_ROLE: worker

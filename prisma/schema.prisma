@@ -692,6 +692,7 @@ model leads {
   postal_code   String?
   lat           Float?
   lng           Float?
+  timezone      String?
   business_type String?
   rating        Decimal?     @db.Decimal(2, 1)
   reviews_count Int?

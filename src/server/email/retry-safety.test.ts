@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { db } from "@/server/db";
-import { localDevStore } from "@/server/db/local-store";
+import { localDevStore } from "@/test/local-store";
 import { encrypt } from "@/server/crypto";
 import {
   saveCampaignSequence,

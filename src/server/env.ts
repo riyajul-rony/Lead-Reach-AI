@@ -43,6 +43,7 @@ const envSchema = z.object({
   CTD_TLS_ASK_SECRET: z.string().optional(),
   SELF_WARMUP_INTERVAL_MINUTES: z.coerce.number().min(1).max(1440).optional().default(15),
   SELF_WARMUP_MAX_PER_TICK: z.coerce.number().min(1).max(50).optional().default(5),
+  CSP_REPORT_ONLY: z.string().optional().default("false"),
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;

@@ -5,8 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:worker": "node scripts/build-worker.mjs",
     "start": "next start",
     "worker": "tsx src/server/worker/runner.ts",
+    "worker:prod": "node dist/worker.cjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint",

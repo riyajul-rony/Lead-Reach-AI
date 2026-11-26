@@ -9,6 +9,7 @@ import { searchB2BLeadsApify } from "@/server/providers/leads/apify/b2b-leads.ad
 import { parseGoogleMapsLines } from "@/server/providers/leads/apify/line-parser";
 import { filterDuplicateLeads } from "@/server/providers/leads/dedupe";
 import { scrapeFullCompanyProfile, formatSocialUrl } from "@/server/providers/leads/enrichment";
+import { normalizeIanaTimezone } from "@/server/email/timezone";
 import { trackUsageIncrement } from "@/server/billing/usage-tracker";
 import type { RawLead } from "@/server/providers/leads/types";
 
@@ -395,6 +396,7 @@ export async function executeLeadSearch(searchId: string): Promise<void> {
             address: raw.address || null,
             city: raw.city || location || null,
             country: raw.country || null,
+            timezone: normalizeIanaTimezone(raw.timezone || raw.extra?.timezone) || null,
             rating: raw.rating as any,
             reviews_count: raw.reviewsCount || null,
             business_type: raw.businessType || null,

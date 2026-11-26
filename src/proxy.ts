@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { getCspHeaderConfig } from "@/lib/csp";
+
+function applyCspHeader(res: NextResponse): NextResponse {
+  const csp = getCspHeaderConfig();
+  res.headers.set(csp.headerName, csp.value);
+  return res;
+}
 
 function normalizeHost(raw: string | null): string {
   if (!raw) return "";
@@ -87,16 +94,18 @@ export function proxy(request: NextRequest) {
       });
     }
     if (!isAllowedCustomDomainPath(pathname)) {
-      return new NextResponse("Not Found", {
-        status: 404,
-        headers: {
-          "X-Robots-Tag": "noindex, nofollow",
-        },
-      });
+      return applyCspHeader(
+        new NextResponse("Not Found", {
+          status: 404,
+          headers: {
+            "X-Robots-Tag": "noindex, nofollow",
+          },
+        })
+      );
     }
     const ctdRes = NextResponse.next();
     ctdRes.headers.set("X-Robots-Tag", "noindex, nofollow");
-    return ctdRes;
+    return applyCspHeader(ctdRes);
   }
 
   const sessionToken =
@@ -115,14 +124,14 @@ export function proxy(request: NextRequest) {
     if (noIndex) {
       redirectRes.headers.set("X-Robots-Tag", "noindex, nofollow");
     }
-    return redirectRes;
+    return applyCspHeader(redirectRes);
   }
 
   const response = NextResponse.next();
   if (noIndex) {
     response.headers.set("X-Robots-Tag", "noindex, nofollow");
   }
-  return response;
+  return applyCspHeader(response);
 }
 
 export const config = {
