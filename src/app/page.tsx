@@ -25,6 +25,8 @@ import { BrandLogo } from "@/components/brand/brand-logo";
 import { ProductPreview } from "@/components/landing/product-preview";
 import { PricingSection } from "@/components/landing/pricing-section";
 import { FAQSection } from "@/components/landing/faq-section";
+import { LandingJsonLd } from "@/components/seo/landing-jsonld";
+import { getSiteUrl } from "@/lib/site-url";
 import { getSiteBranding } from "@/server/branding";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -65,9 +67,11 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function HomePage() {
   const branding = await getSiteBranding();
+  const siteUrl = getSiteUrl();
 
   return (
     <div className="min-h-screen flex flex-col bg-bg text-fg selection:bg-primary selection:text-primaryText">
+      <LandingJsonLd siteUrl={siteUrl} branding={branding} />
       {/* Sticky Top Navigation */}
       <LandingHeader
         siteName={branding.site_name}

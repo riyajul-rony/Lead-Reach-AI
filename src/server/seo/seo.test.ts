@@ -21,6 +21,10 @@ import { generateMetadata as generateHomeMetadata } from "@/app/page";
 import { metadata as privacyMetadata } from "@/app/privacy/page";
 import { metadata as termsMetadata } from "@/app/terms/page";
 import { metadata as dataDeletionMetadata } from "@/app/data-deletion/page";
+import { GET as getLlmsTxt } from "@/app/llms.txt/route";
+import { LANDING_FAQS } from "@/lib/landing-faq";
+import { buildLandingJsonLd, serializeJsonLd } from "@/lib/landing-jsonld";
+import { DEFAULT_BRANDING } from "@/types/branding";
 
 describe("Phase 4 Step 1: site-url, robots, sitemap & CTD isolation", () => {
   const prevAppUrl = process.env.APP_URL;
@@ -267,5 +271,75 @@ describe("Phase 4 Step 3: metadataBase, canonical URLs, OpenGraph & Twitter card
     const response = OpenGraphImage();
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("image/png");
+  });
+});
+
+describe("Phase 4 Step 4: llms.txt, JSON-LD structured data & visible FAQ parity", () => {
+  const prevAppUrl = process.env.APP_URL;
+
+  afterEach(() => {
+    process.env.APP_URL = prevAppUrl;
+  });
+
+  it("serves structured llms.txt using runtime APP_URL and truthful capabilities", async () => {
+    process.env.APP_URL = "https://leadreachai.cerkitlabs.tech";
+    const res = await getLlmsTxt();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+
+    const text = await res.text();
+    expect(text).toContain("# Lead Reach AI");
+    expect(text).toContain("https://leadreachai.cerkitlabs.tech/");
+    expect(text).toContain("Private Self Warm-up Pool");
+    expect(text).toContain("Custom Tracking Domains");
+    expect(text).toContain("Spintax");
+    expect(text).toContain("A/B Testing");
+    expect(text).toContain("AI Reply Categorization");
+    expect(text).toContain("manual plan activation");
+    expect(text).not.toMatch(/stripe/i);
+  });
+
+  it("escapes <, >, and & in serializeJsonLd to prevent </script> XSS injection", () => {
+    const serialized = serializeJsonLd({
+      name: "</script><script>alert('xss')</script> & test",
+    });
+    expect(serialized).not.toContain("<");
+    expect(serialized).not.toContain(">");
+    expect(serialized).not.toContain("&");
+    expect(serialized).toContain("\\u003c/script\\u003e");
+  });
+
+  it("builds valid Organization, SoftwareApplication, and FAQPage JSON-LD matching LANDING_FAQS verbatim", () => {
+    expect(LANDING_FAQS.length).toBeGreaterThanOrEqual(6);
+    expect(LANDING_FAQS.length).toBeLessThanOrEqual(8);
+
+    const payload = buildLandingJsonLd("https://leadreachai.cerkitlabs.tech", DEFAULT_BRANDING);
+    const graph = payload["@graph"];
+    expect(graph).toHaveLength(3);
+
+    const org = graph[0] as Record<string, unknown>;
+    const app = graph[1] as Record<string, unknown>;
+    const faq = graph[2] as {
+      "@type": string;
+      mainEntity: Array<{
+        "@type": string;
+        name: string;
+        acceptedAnswer: { "@type": string; text: string };
+      }>;
+    };
+
+    expect(org["@type"]).toBe("Organization");
+    expect(app["@type"]).toBe("SoftwareApplication");
+    expect(app.aggregateRating).toBeUndefined();
+
+    expect(faq["@type"]).toBe("FAQPage");
+    expect(faq.mainEntity).toHaveLength(LANDING_FAQS.length);
+
+    faq.mainEntity.forEach((entry, idx) => {
+      expect(entry["@type"]).toBe("Question");
+      expect(entry.name).toBe(LANDING_FAQS[idx].question);
+      expect(entry.acceptedAnswer["@type"]).toBe("Answer");
+      expect(entry.acceptedAnswer.text).toBe(LANDING_FAQS[idx].answer);
+    });
   });
 });
