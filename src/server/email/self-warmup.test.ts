@@ -21,6 +21,7 @@ vi.mock("bullmq", () => {
 });
 
 import { db } from "@/server/db";
+import { stripAppPasswordSpaces } from "@/components/warmup/gmail-app-password-guide";
 import { localDevStore } from "@/server/db/local-store";
 import {
   WARMUP_HEADER,
@@ -262,5 +263,10 @@ describe("Phase 3 Step 5: Self Warm-up Pool", () => {
     const res = await registerRepeatableSchedulers();
     expect(res.registered).toBe(false);
     expect(mockRemoveJobScheduler).toHaveBeenCalledWith("leadreach:scheduler:warmup");
+  });
+
+  it("5. Strips whitespace from pasted Gmail App Passwords before testing/saving", () => {
+    expect(stripAppPasswordSpaces("abcd efgh ijkl mnop")).toBe("abcdefghijklmnop");
+    expect(stripAppPasswordSpaces(" abcd\tefgh\nijkl mnop ")).toBe("abcdefghijklmnop");
   });
 });

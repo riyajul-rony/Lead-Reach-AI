@@ -30,6 +30,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SendingSpeedCard } from "@/components/outreach/sending-speed-card";
 import { InfoTooltip } from "@/components/outreach/info-tooltip";
+import {
+  GmailAppPasswordGuide,
+  stripAppPasswordSpaces,
+} from "@/components/warmup/gmail-app-password-guide";
 
 export interface EmailAccount {
   id: string;
@@ -77,11 +81,11 @@ export interface EmailAccount {
 const PROVIDER_PRESETS = [
   {
     id: "gmail",
-    name: "Google / Gmail",
-    hint: "App Password required · 2-Step Verification must be ON",
+    name: "Gmail (App Password)",
+    hint: "Uses smtp.gmail.com:587 (TLS) + imap.gmail.com:993 (SSL) · Spaces removed from App Password automatically",
     smtp_host: "smtp.gmail.com",
-    smtp_port: 465,
-    ssl: true,
+    smtp_port: 587,
+    ssl: false,
   },
   {
     id: "outlook",
@@ -160,8 +164,8 @@ export function EmailAccountsManager({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [smtpHost, setSmtpHost] = useState("smtp.gmail.com");
-  const [smtpPort, setSmtpPort] = useState(465);
-  const [sslEnabled, setSslEnabled] = useState(true);
+  const [smtpPort, setSmtpPort] = useState(587);
+  const [sslEnabled, setSslEnabled] = useState(false);
 
   // Connection test state
   const [modalTesting, setModalTesting] = useState(false);
@@ -332,7 +336,9 @@ export function EmailAccountsManager({
   const handleModalTestConnection = async () => {
     const trimmedEmail = email.trim();
     const trimmedHost = smtpHost.trim();
-    if (!trimmedEmail || !password || !trimmedHost) return;
+    const normalizedPassword =
+      selectedPreset === "gmail" ? stripAppPasswordSpaces(password) : password;
+    if (!trimmedEmail || !normalizedPassword || !trimmedHost) return;
 
     setModalTesting(true);
     setTestResult(null);
@@ -348,14 +354,14 @@ export function EmailAccountsManager({
             port: smtpPort,
             security: sslEnabled ? "ssl" : "tls",
             username: trimmedEmail,
-            password: password,
+            password: normalizedPassword,
           },
           imap: {
             host: deriveImapHostClient(trimmedHost),
             port: 993,
             security: "ssl",
             username: trimmedEmail,
-            password: password,
+            password: normalizedPassword,
           },
         }),
       });
@@ -409,7 +415,9 @@ export function EmailAccountsManager({
     e.preventDefault();
     const trimmedEmail = email.trim();
     const trimmedHost = smtpHost.trim();
-    if (!trimmedEmail || !password || !trimmedHost) {
+    const normalizedPassword =
+      selectedPreset === "gmail" ? stripAppPasswordSpaces(password) : password;
+    if (!trimmedEmail || !normalizedPassword || !trimmedHost) {
       setFormError("Email, password, and SMTP host are required.");
       return;
     }
@@ -425,7 +433,7 @@ export function EmailAccountsManager({
           smtp_host: trimmedHost,
           smtp_port: smtpPort,
           smtp_security: sslEnabled ? "ssl" : "tls",
-          smtp_password: password,
+          smtp_password: normalizedPassword,
           // Everything else: server applies Safe Preset defaults + auto-derives IMAP
         }),
       });
@@ -666,9 +674,15 @@ export function EmailAccountsManager({
             </div>
           </div>
           {warmupSummary && (
-            <div className="flex items-center gap-3 text-[11px] text-muted shrink-0 font-mono">
+            <div className="flex items-center gap-3 text-[11px] text-muted shrink-0 font-mono flex-wrap">
               <span>Pool: {warmupSummary.poolCount} inboxes ({warmupSummary.imapCapableCount} IMAP)</span>
               <span>Today: {warmupSummary.sentToday} sent · {warmupSummary.repliedToday} replied</span>
+              <Link
+                href="/app/warmup"
+                className="font-sans text-primary hover:underline font-semibold"
+              >
+                Open Warm-up Dashboard &rarr;
+              </Link>
             </div>
           )}
         </div>
@@ -997,14 +1011,33 @@ export function EmailAccountsManager({
                   required
                   placeholder={
                     selectedPreset === "gmail"
-                      ? "xxxx xxxx xxxx xxxx"
+                      ? "abcd efgh ijkl mnop"
                       : "Enter password"
                   }
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) =>
+                    setPassword(
+                      selectedPreset === "gmail"
+                        ? stripAppPasswordSpaces(e.target.value)
+                        : e.target.value
+                    )
+                  }
+                  onPaste={(e) => {
+                    if (selectedPreset === "gmail") {
+                      const pasted = e.clipboardData.getData("text");
+                      if (pasted) {
+                        e.preventDefault();
+                        setPassword(stripAppPasswordSpaces(pasted));
+                      }
+                    }
+                  }}
                   className="input w-full text-xs font-mono h-9"
                 />
               </div>
+
+              {selectedPreset === "gmail" && (
+                <GmailAppPasswordGuide compact />
+              )}
 
               {/* Fields 3-5: Host, Port, SSL — always visible and editable */}
               <div className="grid grid-cols-6 gap-3">

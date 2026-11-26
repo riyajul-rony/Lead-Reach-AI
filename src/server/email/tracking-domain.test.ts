@@ -181,6 +181,7 @@ describe("Phase 3 Step 4: Custom Tracking Domain (CTD / CNAME)", () => {
       "/",
       "/login",
       "/app/outreach",
+      "/app/warmup",
       "/admin",
       "/api/v1/admin/users",
       "/api/internal/tls-ask",
