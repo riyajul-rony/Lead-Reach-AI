@@ -5,6 +5,7 @@ import { assertLimit } from "@/server/billing/limits";
 import { saveCampaignSequence } from "@/server/email/sequence-service";
 import { queueEmailDispatch } from "@/server/queues";
 import { accountHasWorkingReplyDetection } from "@/server/email/account-service";
+import { assertWorkspaceLegalAcknowledgement } from "@/server/legal/acknowledgement";
 import {
   VariantInput,
   validateVariantInputs,
@@ -189,6 +190,10 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
         ? `All ${suppressedCount} recipients were skipped due to suppressions / unsubscribes.`
         : "No valid recipient email addresses provided."
     );
+  }
+
+  if (input.launchNow) {
+    await assertWorkspaceLegalAcknowledgement(userId);
   }
 
   // Create campaign record
@@ -498,6 +503,10 @@ export async function updateCampaignStatus(
 
   if (!campaign) {
     throw new Error("Campaign not found");
+  }
+
+  if (status === "running" && campaign.status !== "running") {
+    await assertWorkspaceLegalAcknowledgement(userId);
   }
 
   const updated = await db.outreach_campaigns.update({

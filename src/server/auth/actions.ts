@@ -70,12 +70,19 @@ const signupSchema = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email"),
   password: z.string(),
   invite: z.string().optional(),
+  acceptTerms: z.string().optional(),
 });
 
 export async function signupAction(_: FormState, form: FormData): Promise<FormState> {
   const parsed = signupSchema.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: parsed.error.issues[0].message };
-  const { name, email, password, invite } = parsed.data;
+  const { name, email, password, invite, acceptTerms } = parsed.data;
+
+  if (acceptTerms !== "on" && acceptTerms !== "true") {
+    return {
+      error: "You must accept the Terms of Service and Acceptable Use Policy to create an account.",
+    };
+  }
 
   const pwErr = validatePasswordStrength(password);
   if (pwErr) return { error: pwErr };

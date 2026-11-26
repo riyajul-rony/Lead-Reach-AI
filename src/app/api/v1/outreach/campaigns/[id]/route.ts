@@ -5,6 +5,7 @@ import {
   updateCampaignStatus,
   deleteCampaign,
 } from "@/server/email/campaign-service";
+import { LegalAcknowledgementRequiredError } from "@/server/legal/acknowledgement";
 
 export async function GET(
   req: NextRequest,
@@ -40,6 +41,16 @@ export async function PATCH(
     const updated = await updateCampaignStatus(session.user.id, id, body.status);
     return NextResponse.json({ data: updated });
   } catch (err: unknown) {
+    if (err instanceof LegalAcknowledgementRequiredError) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          code: err.code,
+          termsVersion: err.termsVersion,
+        },
+        { status: 422 }
+      );
+    }
     const msg = err instanceof Error ? err.message : "Failed to update campaign";
     return NextResponse.json({ error: msg }, { status: 400 });
   }

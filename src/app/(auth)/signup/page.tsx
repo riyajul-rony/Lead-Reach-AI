@@ -105,6 +105,29 @@ export default async function SignupPage({
                 ? [{ name: "invite", label: "Invite Code", placeholder: "Paste your invitation token" }]
                 : []),
             ]}
+            consentNode={
+              <label className="flex items-start gap-2 text-xs text-text-muted cursor-pointer select-none pt-1">
+                <input
+                  id="signup-accept-terms"
+                  name="acceptTerms"
+                  type="checkbox"
+                  value="on"
+                  required
+                  className="checkbox checkbox-xs mt-0.5 shrink-0"
+                />
+                <span className="leading-relaxed">
+                  I agree to the{" "}
+                  <Link href="/terms" className="text-primary hover:underline font-medium">
+                    Terms of Service
+                  </Link>{" "}
+                  and{" "}
+                  <Link href="/acceptable-use" className="text-primary hover:underline font-medium">
+                    Acceptable Use Policy
+                  </Link>
+                  .
+                </span>
+              </label>
+            }
           />
         </>
       )}

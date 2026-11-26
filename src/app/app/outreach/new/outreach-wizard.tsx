@@ -182,6 +182,11 @@ export function OutreachWizard() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [acknowledgedNoReplyDetection, setAcknowledgedNoReplyDetection] = useState(false);
+  const [legalAccepted, setLegalAccepted] = useState(true);
+  const [legalTermsVersion, setLegalTermsVersion] = useState("2026-11-v1");
+  const [legalModalOpen, setLegalModalOpen] = useState(false);
+  const [legalModalChecked, setLegalModalChecked] = useState(false);
+  const [legalSubmitting, setLegalSubmitting] = useState(false);
 
   // 1. Restore draft on initial mount
   useEffect(() => {
@@ -297,6 +302,16 @@ export function OutreachWizard() {
       .then((res) => {
         if (res.data?.business_address) {
           setPhysicalAddress(res.data.business_address);
+        }
+      })
+      .catch(() => {});
+
+    fetch("/api/v1/workspace/legal-acknowledgement")
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.data) {
+          setLegalAccepted(Boolean(res.data.accepted));
+          if (res.data.termsVersion) setLegalTermsVersion(res.data.termsVersion);
         }
       })
       .catch(() => {});
@@ -709,7 +724,13 @@ export function OutreachWizard() {
   };
 
   // Launch campaign
-  const handleLaunch = async (launchNow: boolean) => {
+  const handleLaunch = async (launchNow: boolean, bypassLegalCheck = false) => {
+    if (launchNow && !bypassLegalCheck && !legalAccepted) {
+      setLegalModalChecked(false);
+      setLegalModalOpen(true);
+      return;
+    }
+
     setErrorMsg(null);
     setSubmitting(true);
 
@@ -782,6 +803,14 @@ export function OutreachWizard() {
 
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 422 && data.code === "LEGAL_ACKNOWLEDGEMENT_REQUIRED") {
+          setLegalAccepted(false);
+          if (data.termsVersion) setLegalTermsVersion(data.termsVersion);
+          setLegalModalChecked(false);
+          setLegalModalOpen(true);
+          setSubmitting(false);
+          return;
+        }
         throw new Error(data.error || "Failed to create campaign");
       }
 
@@ -2243,6 +2272,88 @@ export function OutreachWizard() {
             >
               Back to Email Content
             </Button>
+          </div>
+        </div>
+      )}
+
+      {legalModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="legal-ack-title"
+        >
+          <div className="bg-surface rounded-xl border border-border max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="space-y-1">
+              <h3 id="legal-ack-title" className="text-base font-bold text-fg">
+                Outreach Compliance Acknowledgement (v{legalTermsVersion})
+              </h3>
+              <p className="text-xs text-muted leading-relaxed">
+                Before launching your workspace&apos;s campaign, please confirm your compliance obligations under our{" "}
+                <Link href="/terms" target="_blank" className="text-primary hover:underline font-medium">
+                  Terms of Service
+                </Link>{" "}
+                and{" "}
+                <Link href="/acceptable-use" target="_blank" className="text-primary hover:underline font-medium">
+                  Acceptable Use Policy
+                </Link>
+                .
+              </p>
+            </div>
+
+            <label className="flex items-start gap-2.5 p-3.5 rounded-lg border border-border bg-bgSubtle text-xs text-fg cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={legalModalChecked}
+                onChange={(e) => setLegalModalChecked(e.target.checked)}
+                className="checkbox checkbox-xs mt-0.5 shrink-0"
+              />
+              <span className="leading-relaxed">
+                I confirm that I am solely responsible for including a valid postal address and a working opt-out method where applicable law requires, and that I have a lawful basis to contact all recipients in this workspace.
+              </span>
+            </label>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setLegalModalOpen(false)}
+                disabled={legalSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                disabled={!legalModalChecked || legalSubmitting}
+                onClick={async () => {
+                  setLegalSubmitting(true);
+                  try {
+                    const res = await fetch("/api/v1/workspace/legal-acknowledgement", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ accepted: true, termsVersion: legalTermsVersion }),
+                    });
+                    if (!res.ok) {
+                      const json = await res.json().catch(() => ({}));
+                      throw new Error(json.error || "Could not record acknowledgement");
+                    }
+                    setLegalAccepted(true);
+                    setLegalModalOpen(false);
+                    await handleLaunch(true, true);
+                  } catch (err: any) {
+                    setErrorMsg(err?.message || "Failed to save compliance acknowledgement");
+                    setLegalModalOpen(false);
+                  } finally {
+                    setLegalSubmitting(false);
+                  }
+                }}
+              >
+                {legalSubmitting ? "Confirming..." : "Accept & Launch Campaign"}
+              </Button>
+            </div>
           </div>
         </div>
       )}

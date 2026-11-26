@@ -103,6 +103,43 @@
 - Added `src/server/email/opt-out-detector.test.ts` (34 tests) verifying explicit opt-outs, quoted history filtering, multilingual non-matching safety, strict false-positive rejections (`"don't stop now"`, `"please don't unsubscribe me"`, etc.), suppression creation, and Stop-on-Reply + AI non-auto-suppression ordering.
 - **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (52 test files, 337 tests passed).
 
+---
+
+## Task 5 — Terms pages and legal acknowledgement
+
+**Status:** Completed
+
+### Outcome & Changes
+- Added `workspace_legal_acknowledgements` table (`prisma/schema.prisma`, additive migration `prisma/migrations/20261126080000_add_workspace_legal_acknowledgements/migration.sql`) with unique index `(workspace_id, terms_version)` and `ON DELETE CASCADE`, mock DB support (`src/test/local-store.ts`, `src/test/mock-db.ts`), and GDPR export & deletion cleanup (`src/server/account/gdpr-service.ts`).
+- Updated `src/app/terms/page.tsx` and created `src/app/acceptable-use/page.tsx` marked clearly as **DRAFT — REQUIRES LEGAL REVIEW**, covering CAN-SPAM / GDPR / PECR sole responsibility, valid postal address & opt-out method, lawful basis, truthful headers/subjects, zero harassment/illegal content, and suspension/termination rights.
+- Updated `src/app/sitemap.ts`, `src/app/robots.ts`, `src/app/llms.txt/route.ts`, `src/app/page.tsx` footer, and `src/server/seo/seo.test.ts` (added `/acceptable-use` to public indexable routes test).
+- Updated `src/components/auth/auth-form.tsx`, `src/app/(auth)/signup/page.tsx`, and `src/server/auth/actions.ts` (`signupAction`) to require accepting `/terms` and `/acceptable-use` on signup.
+- Implemented `src/server/legal/acknowledgement.ts` (optional env `LEGAL_TERMS_VERSION`, default `"2026-11-v1"`) and `src/app/api/v1/workspace/legal-acknowledgement/route.ts`, enforced HTTP **422** (`LEGAL_ACKNOWLEDGEMENT_REQUIRED`) across both `POST /api/v1/outreach/campaigns` (`launchNow: true`) and `PATCH /api/v1/outreach/campaigns/[id]` (`status: "running"`) until accepted, and wired the first-launch modal in `src/app/app/outreach/new/outreach-wizard.tsx`.
+- Added `src/server/legal/acknowledgement.test.ts` (4 tests) verifying gating, 422 API enforcement on create & PATCH, no repeat prompt, re-prompt & 422 enforcement on new `LEGAL_TERMS_VERSION`, `signupAction` consent enforcement, and GDPR export/deletion.
+- **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (53 test files, 341 tests passed).
+
+### Plan
+- **Data model changes (additive):**
+  - `prisma/schema.prisma`: add `model workspace_legal_acknowledgements` (`id`, `user_id`, `workspace_id`, `terms_version`, `accepted_at`, `@@unique([workspace_id, terms_version])`) + relation fields on `users` and `workspaces`.
+  - `prisma/migrations/20261126080000_add_workspace_legal_acknowledgements/migration.sql`: additive `CREATE TABLE IF NOT EXISTS "workspace_legal_acknowledgements" ...` + indexes + FKs (`ON DELETE CASCADE`).
+  - `src/test/local-store.ts` & `src/test/mock-db.ts`: add `workspace_legal_acknowledgements` CRUD + cascade cleanup on user/workspace deletion.
+  - `src/server/account/gdpr-service.ts`: include `workspace_legal_acknowledgements` in GDPR export (`exportUserAccountData`) and transactional cleanup (`deleteOwnAccount`).
+- **Public legal pages & SEO:**
+  - `src/app/terms/page.tsx`: update existing Terms page with clear DRAFT banner (requires legal review) and full outreach compliance obligations (CAN-SPAM, GDPR, PECR, valid postal address & opt-out where required, lawful basis, truthful identity/subjects, no harassment/illegal content, suspension rights).
+  - `src/app/acceptable-use/page.tsx`: new public indexable Acceptable Use Policy page marked DRAFT with full SEO metadata (`alternates.canonical`, OpenGraph, Twitter) consistent with Phase 4 SEO setup.
+  - `src/app/sitemap.ts`, `src/app/robots.ts`, `src/app/llms.txt/route.ts`, `src/app/page.tsx` footer: add `/acceptable-use`.
+  - `src/server/seo/seo.test.ts`: include `/acceptable-use` in sitemap/robots/public-metadata tests.
+- **Signup & Workspace Launch Enforcement:**
+  - `src/components/auth/auth-form.tsx`, `src/app/(auth)/signup/page.tsx`, `src/server/auth/actions.ts`: require accepting `/terms` and `/acceptable-use` via checkbox on signup (validated server-side in `signupAction`).
+  - `src/server/legal/acknowledgement.ts`: `getCurrentLegalTermsVersion()` (env `LEGAL_TERMS_VERSION` optional, default `"2026-11-v1"`), `LegalAcknowledgementRequiredError` (422), `hasWorkspaceLegalAcknowledgement`, `recordWorkspaceLegalAcknowledgement`, `assertWorkspaceLegalAcknowledgement`.
+  - `src/app/api/v1/workspace/legal-acknowledgement/route.ts`: `GET` status + `POST` acceptance endpoint.
+  - `src/server/email/campaign-service.ts`, `src/app/api/v1/outreach/campaigns/route.ts`, `src/app/api/v1/outreach/campaigns/[id]/route.ts`: enforce acknowledgement on launch (`launchNow: true` and `PATCH status: "running"`), returning HTTP 422 until accepted. Draft saving (`launchNow: false`) remains allowed.
+  - `src/app/app/outreach/new/outreach-wizard.tsx`: show first-launch Legal Acknowledgement modal with required checkbox; never re-show once accepted unless `termsVersion` changes; handle 422 cleanly.
+  - `src/server/legal/acknowledgement.test.ts`: tests for legal gating, 422 API enforcement (create + PATCH launch), no repeat once accepted, re-prompt on new `LEGAL_TERMS_VERSION`, `signupAction` checkbox enforcement, and GDPR export/delete inclusion.
+- **Edge cases & risks:**
+  - Concurrency / double-click launch: unique index `(workspace_id, terms_version)` handles idempotent acceptances cleanly.
+  - Existing unit tests creating draft campaigns (`launchNow: false`) remain unaffected; reply-detection guard runs before legal check on `createOutreachCampaign` so existing `crit-03` guard test stays green.
+
 ### Plan
 - **Behavior & ordering:**
   1. Execute Stop-on-Reply immediately (`next_followup_at = null`, status updated).

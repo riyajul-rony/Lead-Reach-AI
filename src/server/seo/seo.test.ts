@@ -20,6 +20,7 @@ import { metadata as devUiMetadata } from "@/app/dev/ui/layout";
 import { generateMetadata as generateHomeMetadata } from "@/app/page";
 import { metadata as privacyMetadata } from "@/app/privacy/page";
 import { metadata as termsMetadata } from "@/app/terms/page";
+import { metadata as acceptableUseMetadata } from "@/app/acceptable-use/page";
 import { metadata as dataDeletionMetadata } from "@/app/data-deletion/page";
 import { GET as getLlmsTxt } from "@/app/llms.txt/route";
 import { LANDING_FAQS } from "@/lib/landing-faq";
@@ -70,7 +71,7 @@ describe("Phase 4 Step 1: site-url, robots, sitemap & CTD isolation", () => {
       ])
     );
     expect(rules?.allow).toEqual(
-      expect.arrayContaining(["/", "/privacy", "/terms", "/data-deletion"])
+      expect.arrayContaining(["/", "/privacy", "/terms", "/acceptable-use", "/data-deletion"])
     );
   });
 
@@ -83,6 +84,7 @@ describe("Phase 4 Step 1: site-url, robots, sitemap & CTD isolation", () => {
       "https://leadreachai.cerkitlabs.tech/",
       "https://leadreachai.cerkitlabs.tech/privacy",
       "https://leadreachai.cerkitlabs.tech/terms",
+      "https://leadreachai.cerkitlabs.tech/acceptable-use",
       "https://leadreachai.cerkitlabs.tech/data-deletion",
     ]);
 
@@ -162,7 +164,7 @@ describe("Phase 4 Step 2: strict noindex, nofollow on private/auth/api routes", 
     process.env.APP_URL = "https://leadreachai.cerkitlabs.tech";
     process.env.APP_DOMAIN = "leadreachai.cerkitlabs.tech";
 
-    for (const p of ["/", "/privacy", "/terms", "/data-deletion"]) {
+    for (const p of ["/", "/privacy", "/terms", "/acceptable-use", "/data-deletion"]) {
       const res = proxy(
         new NextRequest(`https://leadreachai.cerkitlabs.tech${p}`, {
           headers: { host: "leadreachai.cerkitlabs.tech" },
@@ -253,6 +255,7 @@ describe("Phase 4 Step 3: metadataBase, canonical URLs, OpenGraph & Twitter card
     const publicPages = [
       { meta: privacyMetadata, path: "/privacy" },
       { meta: termsMetadata, path: "/terms" },
+      { meta: acceptableUseMetadata, path: "/acceptable-use" },
       { meta: dataDeletionMetadata, path: "/data-deletion" },
     ];
 

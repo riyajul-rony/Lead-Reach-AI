@@ -32,6 +32,7 @@ Lead Reach AI combines lead extraction, cold email sequencing, reply management,
 - [Home](${siteUrl}/): Platform overview, features, pricing tiers, and FAQ
 - [Privacy Policy](${siteUrl}/privacy): Data handling, Google API Limited Use, Meta data usage, and email compliance
 - [Terms of Service](${siteUrl}/terms): Platform terms and anti-spam policy
+- [Acceptable Use Policy](${siteUrl}/acceptable-use): Outbound messaging compliance and anti-abuse rules
 - [User Data Deletion](${siteUrl}/data-deletion): Account and connected social token removal instructions
 - [Sitemap](${siteUrl}/sitemap.xml): XML sitemap of public indexable pages
 

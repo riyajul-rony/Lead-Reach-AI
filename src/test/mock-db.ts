@@ -2,6 +2,63 @@ import { localDevStore, ensureDevAdminUser } from "./local-store";
 
 // In-memory demo store for when PostgreSQL is not running locally
 class LocalDevMockDb {
+  workspace_legal_acknowledgements = {
+    findMany: async ({ where, take, skip, orderBy }: any = {}) => {
+      let items = localDevStore.getLegalAcknowledgements((a) => {
+        if (where?.user_id && a.user_id !== where.user_id) return false;
+        if (where?.workspace_id && a.workspace_id !== where.workspace_id) return false;
+        if (where?.terms_version && a.terms_version !== where.terms_version) return false;
+        return true;
+      });
+      if (orderBy?.accepted_at === "desc") {
+        items = [...items].sort(
+          (a, b) => new Date(b.accepted_at || 0).getTime() - new Date(a.accepted_at || 0).getTime()
+        );
+      }
+      if (skip && typeof skip === "number") items = items.slice(skip);
+      if (take && typeof take === "number") items = items.slice(0, take);
+      return items;
+    },
+    findFirst: async ({ where }: any = {}) =>
+      localDevStore.findLegalAcknowledgement((a) => {
+        if (where?.id && a.id !== where.id) return false;
+        if (where?.user_id && a.user_id !== where.user_id) return false;
+        if (where?.workspace_id && a.workspace_id !== where.workspace_id) return false;
+        if (where?.terms_version && a.terms_version !== where.terms_version) return false;
+        return true;
+      }),
+    findUnique: async ({ where }: any = {}) =>
+      localDevStore.findLegalAcknowledgement((a) => {
+        if (where?.id && a.id !== where.id) return false;
+        if (where?.workspace_id_terms_version) {
+          return (
+            a.workspace_id === where.workspace_id_terms_version.workspace_id &&
+            a.terms_version === where.workspace_id_terms_version.terms_version
+          );
+        }
+        return false;
+      }),
+    create: async ({ data }: any) => localDevStore.saveLegalAcknowledgement(data),
+    upsert: async ({ where, create, update }: any) => {
+      const existing = localDevStore.findLegalAcknowledgement(
+        (a) =>
+          where?.workspace_id_terms_version &&
+          a.workspace_id === where.workspace_id_terms_version.workspace_id &&
+          a.terms_version === where.workspace_id_terms_version.terms_version
+      );
+      if (existing) {
+        return localDevStore.saveLegalAcknowledgement({ ...existing, ...update });
+      }
+      return localDevStore.saveLegalAcknowledgement(create);
+    },
+    deleteMany: async ({ where }: any = {}) =>
+      localDevStore.deleteWhere("workspace_legal_acknowledgements", (a) => {
+        if (where?.user_id && a.user_id !== where.user_id) return false;
+        if (where?.workspace_id && a.workspace_id !== where.workspace_id) return false;
+        return true;
+      }),
+  };
+
   workspaces = {
     findMany: async ({ where, take, skip, orderBy }: any = {}) => {
       let items = localDevStore.getWorkspaces((w) => {

@@ -27,6 +27,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.4,
     },
     {
+      url: `${siteUrl}/acceptable-use`,
+      lastModified: legalUpdated,
+      changeFrequency: "yearly",
+      priority: 0.4,
+    },
+    {
       url: `${siteUrl}/data-deletion`,
       lastModified: legalUpdated,
       changeFrequency: "yearly",

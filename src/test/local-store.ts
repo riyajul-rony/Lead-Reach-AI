@@ -45,6 +45,7 @@ export async function ensureDevAdminUser(): Promise<void> {
 interface StoreSchema {
   users: any[];
   workspaces: any[];
+  workspace_legal_acknowledgements: any[];
   sessions: any[];
   api_keys: any[];
   social_accounts: any[];
@@ -82,6 +83,7 @@ function getInitialStore(): StoreSchema {
   return {
     users: [],
     workspaces: [],
+    workspace_legal_acknowledgements: [],
     sessions: [],
     verification_tokens: [],
     api_keys: [],
@@ -208,6 +210,11 @@ export const localDevStore = {
 
       // Cascade in-memory cleanup across tables
       if (store.sessions) store.sessions = store.sessions.filter((s) => s.user_id !== uid);
+      if (store.workspace_legal_acknowledgements) {
+        store.workspace_legal_acknowledgements = store.workspace_legal_acknowledgements.filter(
+          (a) => a.user_id !== uid
+        );
+      }
       if (store.workspaces) store.workspaces = store.workspaces.filter((w) => w.user_id !== uid);
       if (store.verification_tokens && uemail) store.verification_tokens = store.verification_tokens.filter((t) => t.identifier?.toLowerCase() !== uemail);
       if (store.api_keys) store.api_keys = store.api_keys.filter((k) => k.user_id !== uid);
@@ -1520,6 +1527,45 @@ export const localDevStore = {
       return store.workspaces[idx];
     }
     return null;
+  },
+
+  // --- Workspace Legal Acknowledgements ---
+  getLegalAcknowledgements: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.workspace_legal_acknowledgements) store.workspace_legal_acknowledgements = [];
+    return filter
+      ? store.workspace_legal_acknowledgements.filter(filter)
+      : store.workspace_legal_acknowledgements;
+  },
+  findLegalAcknowledgement: (filter: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.workspace_legal_acknowledgements) store.workspace_legal_acknowledgements = [];
+    return store.workspace_legal_acknowledgements.find(filter) || null;
+  },
+  saveLegalAcknowledgement: (item: any) => {
+    const store = loadStore();
+    if (!store.workspace_legal_acknowledgements) store.workspace_legal_acknowledgements = [];
+    const idx = store.workspace_legal_acknowledgements.findIndex(
+      (a) =>
+        a.id === item.id ||
+        (a.workspace_id === item.workspace_id && a.terms_version === item.terms_version)
+    );
+    if (idx >= 0) {
+      store.workspace_legal_acknowledgements[idx] = {
+        ...store.workspace_legal_acknowledgements[idx],
+        ...item,
+      };
+    } else {
+      store.workspace_legal_acknowledgements.push({
+        id: item.id || `wla-${Math.random().toString(36).slice(2, 10)}`,
+        accepted_at: item.accepted_at || new Date().toISOString(),
+        ...item,
+      });
+    }
+    saveStore();
+    return idx >= 0
+      ? store.workspace_legal_acknowledgements[idx]
+      : store.workspace_legal_acknowledgements[store.workspace_legal_acknowledgements.length - 1];
   },
 
   deleteWhere: (table: keyof StoreSchema, filter: (item: any) => boolean) => {

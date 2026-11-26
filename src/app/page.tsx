@@ -540,6 +540,7 @@ export default async function HomePage() {
               <ul className="space-y-2">
                 <li><Link href="/privacy" className="hover:text-fg transition-colors">Privacy Policy</Link></li>
                 <li><Link href="/terms" className="hover:text-fg transition-colors">Terms of Service</Link></li>
+                <li><Link href="/acceptable-use" className="hover:text-fg transition-colors">Acceptable Use Policy</Link></li>
                 <li><Link href="/login" className="hover:text-fg transition-colors">Sign In</Link></li>
                 <li><Link href="/signup" className="hover:text-fg transition-colors">Create Account</Link></li>
               </ul>

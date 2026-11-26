@@ -19,12 +19,14 @@ export function AuthForm({
   fields,
   submitLabel,
   hidden,
+  consentNode,
   id,
 }: {
   action: (state: FormState, form: FormData) => Promise<FormState>;
   fields: FieldDef[];
   submitLabel: string;
   hidden?: Record<string, string>;
+  consentNode?: React.ReactNode;
   id: string;
 }) {
   const [state, formAction, pending] = useActionState(action, undefined);
@@ -49,6 +51,8 @@ export function AuthForm({
           defaultValue={f.defaultValue}
         />
       ))}
+
+      {consentNode}
 
       {state?.error ? (
         <div

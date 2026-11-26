@@ -390,6 +390,21 @@ export async function exportUserAccountData(userId: string) {
   ]);
 
   const campaignIds = outreachCampaigns.map((c: any) => c.id);
+  const workspaceLegalAcknowledgements = db.workspace_legal_acknowledgements?.findMany
+    ? await fetchPaginated((skip, take) =>
+        db.workspace_legal_acknowledgements.findMany({
+          where: { user_id: userId },
+          select: {
+            id: true,
+            workspace_id: true,
+            terms_version: true,
+            accepted_at: true,
+          },
+          skip,
+          take,
+        })
+      )
+    : [];
   const campaignSteps =
     campaignIds.length > 0 && db.campaign_steps?.findMany
       ? await fetchPaginated((skip, take) =>
@@ -416,6 +431,7 @@ export async function exportUserAccountData(userId: string) {
     schema_version: "1.0",
     profile,
     workspaces,
+    workspace_legal_acknowledgements: workspaceLegalAcknowledgements,
     oauth_accounts: oauthAccounts,
     email_accounts: emailAccounts,
     social_accounts: socialAccounts,
@@ -594,6 +610,7 @@ export async function deleteOwnAccount(
     await tx.sessions.deleteMany({ where: { user_id: userId } });
     await tx.oauth_accounts.deleteMany({ where: { user_id: userId } });
     await tx.user_settings.deleteMany({ where: { user_id: userId } });
+    await tx.workspace_legal_acknowledgements.deleteMany({ where: { user_id: userId } });
     await tx.workspaces.deleteMany({ where: { user_id: userId } });
 
     if (user.email) {
