@@ -296,11 +296,16 @@ model workspaces {
   name                   String                           @default("Default")
   is_default             Boolean                          @default(true)
   business_address       String?
+  sending_status         String                           @default("active")
+  pause_reason           String?
+  paused_at              DateTime?                        @db.Timestamptz
+  paused_by              String?                          @db.Uuid
   created_at             DateTime                         @default(now()) @db.Timestamptz
   user                   users                            @relation(fields: [user_id], references: [id], onDelete: Cascade)
   legal_acknowledgements workspace_legal_acknowledgements[]
 
   @@index([user_id])
+  @@index([sending_status])
 }
 
 model workspace_legal_acknowledgements {

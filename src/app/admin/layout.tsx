@@ -27,6 +27,7 @@ interface NavConfigItem {
 const adminNavConfig: NavConfigItem[] = [
   { href: "/admin", label: "Overview & Controls", icon: "Shield" },
   { href: "/admin/users", label: "Users & Tenants", icon: "UserCheck", permission: "users.read" },
+  { href: "/admin/workspaces", label: "Workspaces & Sending", icon: "Database", permission: "users.read" },
   { href: "/admin/plans", label: "Plans & Limits", icon: "Layers", permission: "plans.manage" },
   { href: "/admin/usage", label: "Usage Analytics", icon: "BarChart3", permission: "plans.manage" },
   { href: "/admin/billing", label: "Billing & Revenue", icon: "CreditCard", permission: "billing.manage" },

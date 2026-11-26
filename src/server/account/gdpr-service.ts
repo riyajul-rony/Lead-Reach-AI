@@ -118,7 +118,16 @@ export async function exportUserAccountData(userId: string) {
     fetchPaginated((skip, take) =>
       db.workspaces.findMany({
         where: { user_id: userId },
-        select: { id: true, name: true, is_default: true, business_address: true, created_at: true },
+        select: {
+          id: true,
+          name: true,
+          is_default: true,
+          business_address: true,
+          sending_status: true,
+          pause_reason: true,
+          paused_at: true,
+          created_at: true,
+        },
         skip,
         take,
       })

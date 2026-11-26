@@ -6,6 +6,7 @@ import {
   deleteCampaign,
 } from "@/server/email/campaign-service";
 import { LegalAcknowledgementRequiredError } from "@/server/legal/acknowledgement";
+import { WorkspaceSendingPausedError } from "@/server/workspace/sending-control";
 
 export async function GET(
   req: NextRequest,
@@ -41,6 +42,16 @@ export async function PATCH(
     const updated = await updateCampaignStatus(session.user.id, id, body.status);
     return NextResponse.json({ data: updated });
   } catch (err: unknown) {
+    if (err instanceof WorkspaceSendingPausedError) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          code: err.code,
+          reason: err.reason,
+        },
+        { status: 423 }
+      );
+    }
     if (err instanceof LegalAcknowledgementRequiredError) {
       return NextResponse.json(
         {

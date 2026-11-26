@@ -164,7 +164,37 @@
 - Added `src/server/email/deliverability-pause.test.ts` (4 tests) verifying `>= 30` sample guard & `> 2%` boundary, 3 consecutive auth failures & counter reset, account isolation, synchronous `550 5.1.1` bounce suppression vs `550 5.4.5` ignore, and manual resume with Task 6 limits preserved.
 - **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (56 test files, 358 tests passed).
 
+---
+
+## Task 9 — Admin workspace pause control
+
+**Status:** Completed
+
+### Outcome & Changes
+- Added `sending_status`, `pause_reason`, `paused_at`, and `paused_by` columns + `workspaces_sending_status_idx` index on `workspaces` (`prisma/schema.prisma`, additive migration `prisma/migrations/20261126110000_add_workspace_sending_pause/migration.sql`), added `mock-db.ts` query/search/include support, and exported pause fields in `src/server/account/gdpr-service.ts`.
+- Created `src/server/workspace/sending-control.ts` (`WorkspaceSendingPausedError` HTTP 423, `isUserWorkspaceSendingPaused`, `getPausedUserIdsSet`, `assertUserWorkspaceSendingActive`, `pauseWorkspaceSending`, `resumeWorkspaceSending`) logging `workspace_sending_pause` and `workspace_sending_resume` entries into `admin_actions`.
+- Enforced workspace pause without deleting queued jobs across `src/server/email/campaign-service.ts`, `src/app/api/v1/outreach/campaigns/route.ts`, `src/app/api/v1/outreach/campaigns/[id]/route.ts`, `src/server/email/sending-engine.ts`, `src/server/email/sequence-service.ts` (checked before stale-cutoff expiry so follow-ups hold cleanly), and `src/server/email/warmup-pool-service.ts`.
+- Added admin endpoints (`GET /api/v1/admin/workspaces`, `POST /api/v1/admin/workspaces/[id]/pause`, `POST /api/v1/admin/workspaces/[id]/resume`) with `users.read`/`users.manage` RBAC + mandatory reason validation, wired `/admin/workspaces` (`src/app/admin/workspaces/*`, `src/app/admin/layout.tsx`) with search/filter/pagination & `admin_actions` audit log viewer, and added the user-facing `"Workspace Sending Paused"` alert banner in `src/app/app/layout.tsx`.
+- Added `src/server/workspace/sending-control.test.ts` (2 tests) verifying RBAC (`401`/`403`/`400`), campaign launch/resume HTTP `423`, worker initial/followup/warmup pause enforcement, job preservation across pause & clean recovery after resume, cross-tenant isolation, `admin_actions` audit entries, and GDPR export.
+- **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (57 test files, 360 tests passed).
+
 ### Plan
+- **Data model & GDPR (additive):**
+  - `prisma/schema.prisma`: add `sending_status String @default("active")`, `pause_reason String?`, `paused_at DateTime? @db.Timestamptz`, and `paused_by String? @db.Uuid` on `workspaces` (`@@index([sending_status])`).
+  - `prisma/migrations/20261126110000_add_workspace_sending_pause/migration.sql`: additive `ALTER TABLE "workspaces" ADD COLUMN IF NOT EXISTS ...` + index.
+  - `src/server/account/gdpr-service.ts`: export `sending_status`, `pause_reason`, and `paused_at` in `workspaces` GDPR export.
+  - `src/test/mock-db.ts`: ensure `workspaces` supports filtering by `sending_status`, `findUnique`, `findFirst`, pagination (`skip`, `take`), `include.user`, and `count`.
+- **Files to add/modify:**
+  - `src/server/workspace/sending-control.ts`: `WorkspaceSendingPausedError` (`423`), `isUserWorkspaceSendingPaused`, `assertUserWorkspaceSendingActive`, `pauseWorkspaceSending`, `resumeWorkspaceSending` (creating `admin_actions` audit entries).
+  - `src/server/email/campaign-service.ts` + `src/app/api/v1/outreach/campaigns/route.ts` + `src/app/api/v1/outreach/campaigns/[id]/route.ts`: return HTTP `423` on campaign launch/resume when workspace is paused.
+  - `src/server/email/sending-engine.ts`, `src/server/email/sequence-service.ts`, `src/server/email/warmup-pool-service.ts`: enforce workspace pause cleanly without deleting queued jobs.
+  - `src/app/api/v1/admin/workspaces/route.ts`, `src/app/api/v1/admin/workspaces/[id]/pause/route.ts`, `src/app/api/v1/admin/workspaces/[id]/resume/route.ts`: server-side RBAC (`users.read` / `users.manage`), paginated listing, mandatory pause reason, and `admin_actions` audit log.
+  - `src/app/admin/layout.tsx`, `src/app/admin/workspaces/page.tsx`, `src/app/admin/workspaces/workspaces-manager.tsx`, `src/app/app/layout.tsx`: Admin Workspaces UI + Audit Log viewer + user-facing Workspace Sending Paused banner.
+  - `src/server/workspace/sending-control.test.ts`: comprehensive tests.
+- **Concurrency & risks:**
+  - Worker checks `isUserWorkspaceSendingPaused` prior to capacity reservation and transport dispatch; queued jobs wait cleanly without marking leads failed and automatically resume once admin unpauses.
+
+### Plan (Task 8 Archive)
 - **Data model & GDPR (additive):**
   - `prisma/schema.prisma`: add `paused_deliverability` to `enum EmailAccountStatus`; add `consecutive_smtp_auth_failures Int @default(0)`, `deliverability_pause_reason String?`, and `deliverability_paused_at DateTime?` to `email_accounts`.
   - `prisma/migrations/20261126100000_add_deliverability_auto_pause/migration.sql`: additive `ALTER TYPE "EmailAccountStatus" ADD VALUE IF NOT EXISTS 'paused_deliverability';` and `ALTER TABLE "email_accounts" ADD COLUMN IF NOT EXISTS ...`.

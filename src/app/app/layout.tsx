@@ -19,6 +19,7 @@ import {
 import { getSessionUser } from "@/server/auth/session";
 import { isAdminRole } from "@/server/auth/permissions";
 import { getSiteBranding } from "@/server/branding";
+import { isUserWorkspaceSendingPaused } from "@/server/workspace/sending-control";
 import { SidebarProvider, Sidebar, Topbar, NavSection } from "@/components/ui";
 import { UserMenu } from "@/components/layout/user-menu";
 import { BrandLogo } from "@/components/brand/brand-logo";
@@ -36,6 +37,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     getSiteBranding(),
   ]);
   const isAdmin = isAdminRole(session?.user?.role);
+  const wsPause = session?.user?.id
+    ? await isUserWorkspaceSendingPaused(session.user.id).catch(() => ({ paused: false, reason: null }))
+    : { paused: false, reason: null };
 
   const sections: NavSection[] = [
     {
@@ -128,6 +132,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             }
           />
           <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1200px] w-full mx-auto">
+            {wsPause.paused && (
+              <div
+                role="alert"
+                className="mb-6 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300"
+              >
+                <div className="font-semibold">Workspace Sending Paused</div>
+                <p className="text-xs mt-1">
+                  All campaign, follow-up, and warm-up sending for your workspace has been temporarily paused by an administrator.
+                  {wsPause.reason ? ` Reason: ${wsPause.reason}` : ""}
+                </p>
+              </div>
+            )}
             {children}
           </main>
         </div>

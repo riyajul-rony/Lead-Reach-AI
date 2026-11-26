@@ -6,6 +6,7 @@ import { saveCampaignSequence } from "@/server/email/sequence-service";
 import { queueEmailDispatch } from "@/server/queues";
 import { accountHasWorkingReplyDetection } from "@/server/email/account-service";
 import { assertWorkspaceLegalAcknowledgement } from "@/server/legal/acknowledgement";
+import { assertUserWorkspaceSendingActive } from "@/server/workspace/sending-control";
 import {
   VariantInput,
   validateVariantInputs,
@@ -193,6 +194,7 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
   }
 
   if (input.launchNow) {
+    await assertUserWorkspaceSendingActive(userId);
     await assertWorkspaceLegalAcknowledgement(userId);
   }
 
@@ -506,6 +508,7 @@ export async function updateCampaignStatus(
   }
 
   if (status === "running" && campaign.status !== "running") {
+    await assertUserWorkspaceSendingActive(userId);
     await assertWorkspaceLegalAcknowledgement(userId);
   }
 

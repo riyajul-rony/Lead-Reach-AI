@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/server/auth/session";
 import { createOutreachCampaign, listCampaigns } from "@/server/email/campaign-service";
 import { LegalAcknowledgementRequiredError } from "@/server/legal/acknowledgement";
+import { WorkspaceSendingPausedError } from "@/server/workspace/sending-control";
 import { logger } from "@/server/logger";
 
 export async function GET() {
@@ -25,6 +26,17 @@ export async function POST(req: NextRequest) {
     const result = await createOutreachCampaign(session.user.id, body);
     return NextResponse.json({ data: result }, { status: 201 });
   } catch (err: any) {
+    if (err instanceof WorkspaceSendingPausedError || err?.code === "WORKSPACE_SENDING_PAUSED") {
+      return NextResponse.json(
+        {
+          error: err.message,
+          code: "WORKSPACE_SENDING_PAUSED",
+          reason: err.reason || null,
+        },
+        { status: 423 }
+      );
+    }
+
     if (err instanceof LegalAcknowledgementRequiredError || err?.code === "LEGAL_ACKNOWLEDGEMENT_REQUIRED") {
       return NextResponse.json(
         {

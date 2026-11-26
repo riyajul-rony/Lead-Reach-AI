@@ -19,6 +19,10 @@ import { createSignedTrackingToken } from "@/server/email/tracking-token";
 import { selectVariantForRecipient } from "@/server/email/variant-service";
 import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
+import {
+  getPausedUserIdsSet,
+  isUserWorkspaceSendingPaused,
+} from "@/server/workspace/sending-control";
 import { formatFromHeader, resolveSenderFirstName } from "@/server/email/sender-identity";
 import {
   commitAccountDailyCapacity,
@@ -398,6 +402,15 @@ export async function sendSingleRecipientEmail(recipientId: string) {
 
   if (!campaign || campaign.status !== "running") {
     return { skipped: true, reason: "Campaign is not running" };
+  }
+
+  const wsPause = await isUserWorkspaceSendingPaused(recipient.user_id);
+  if (wsPause.paused) {
+    return {
+      throttled: true,
+      workspacePaused: true,
+      reason: wsPause.reason || "Workspace sending is paused by an administrator",
+    };
   }
 
   // Check plan limits (monthly and daily outreach quotas)
@@ -925,6 +938,7 @@ export async function dispatchRunningCampaigns(
   const runningCampaigns = await db.outreach_campaigns.findMany({
     where: { status: "running" },
   });
+  const pausedUsers = await getPausedUserIdsSet();
 
   let totalDispatched = 0;
   let totalThrottled = 0;
@@ -932,6 +946,9 @@ export async function dispatchRunningCampaigns(
 
   for (const campaign of runningCampaigns) {
     try {
+      if (pausedUsers.has(campaign.user_id)) {
+        continue; // Admin-paused workspace: preserve queued leads without expiring or dispatching
+      }
       // 0. Recover any recipients stuck in 'sending' after a worker crash (marks needs_review, never auto-resends)
       await recoverStuckSendingRecipients(campaign.id, now);
 

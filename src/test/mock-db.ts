@@ -135,12 +135,22 @@ class LocalDevMockDb {
   };
 
   workspaces = {
-    findMany: async ({ where, take, skip, orderBy }: any = {}) => {
+    findMany: async ({ where, take, skip, orderBy, include }: any = {}) => {
       let items = localDevStore.getWorkspaces((w) => {
         if (where?.id && w.id !== where.id) return false;
         if (where?.user_id && w.user_id !== where.user_id) return false;
         if (where?.is_default !== undefined && w.is_default !== where.is_default) return false;
-        if (where?.sending_status && w.sending_status !== where.sending_status) return false;
+        if (where?.sending_status && (w.sending_status || "active") !== where.sending_status) return false;
+        if (Array.isArray(where?.OR)) {
+          const usr = localDevStore.findUser((u) => u.id === w.user_id);
+          const matches = where.OR.some((clause: any) => {
+            if (clause.name?.contains && String(w.name || "").toLowerCase().includes(String(clause.name.contains).toLowerCase())) return true;
+            if (clause.user?.email?.contains && String(usr?.email || "").toLowerCase().includes(String(clause.user.email.contains).toLowerCase())) return true;
+            if (clause.user?.name?.contains && String(usr?.name || "").toLowerCase().includes(String(clause.user.name.contains).toLowerCase())) return true;
+            return false;
+          });
+          if (!matches) return false;
+        }
         return true;
       });
       if (orderBy) {
@@ -156,18 +166,37 @@ class LocalDevMockDb {
       }
       if (skip && typeof skip === "number") items = items.slice(skip);
       if (take && typeof take === "number") items = items.slice(0, take);
+      if (include?.user) {
+        items = items.map((w) => ({
+          ...w,
+          sending_status: w.sending_status || "active",
+          user: localDevStore.findUser((u) => u.id === w.user_id) || null,
+        }));
+      }
       return items;
     },
-    findUnique: async ({ where }: any = {}) =>
-      localDevStore.findWorkspace((w) => !where?.id || w.id === where.id),
+    findUnique: async ({ where, include }: any = {}) => {
+      const ws = localDevStore.findWorkspace((w) => !where?.id || w.id === where.id);
+      if (!ws) return null;
+      if (include?.user) {
+        return {
+          ...ws,
+          sending_status: ws.sending_status || "active",
+          user: localDevStore.findUser((u) => u.id === ws.user_id) || null,
+        };
+      }
+      return ws;
+    },
     findFirst: async ({ where }: any = {}) =>
       localDevStore.findWorkspace((w) => {
         if (where?.id && w.id !== where.id) return false;
         if (where?.user_id && w.user_id !== where.user_id) return false;
         if (where?.is_default !== undefined && w.is_default !== where.is_default) return false;
+        if (where?.sending_status && (w.sending_status || "active") !== where.sending_status) return false;
         return true;
       }),
-    create: async ({ data }: any) => localDevStore.saveWorkspace(data),
+    create: async ({ data }: any) =>
+      localDevStore.saveWorkspace({ sending_status: "active", ...data }),
     update: async ({ where, data }: any) => localDevStore.updateWorkspace(where?.id, data),
     updateMany: async ({ where, data }: any = {}) => {
       const items = localDevStore.getWorkspaces((w) => {

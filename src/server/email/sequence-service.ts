@@ -12,6 +12,10 @@ import { buildEmailMultipartBodies, calculateRandomJitterSec, dispatchEmailTrans
 import { selectVariantForRecipient } from "@/server/email/variant-service";
 import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
+import {
+  getPausedUserIdsSet,
+  isUserWorkspaceSendingPaused,
+} from "@/server/workspace/sending-control";
 import { resolveSenderFirstName } from "@/server/email/sender-identity";
 import { resolveAccountJitterBounds } from "@/server/email/send-jitter";
 import {
@@ -153,6 +157,15 @@ export async function sendSingleRecipientFollowup(
 
   if (!campaign || campaign.status !== "running") {
     return { skipped: true, reason: "Campaign is not running" };
+  }
+
+  const wsPause = await isUserWorkspaceSendingPaused(recipient.user_id);
+  if (wsPause.paused) {
+    return {
+      throttled: true,
+      workspacePaused: true,
+      reason: wsPause.reason || "Workspace sending is paused by an administrator",
+    };
   }
 
   // Find active sequence
@@ -581,6 +594,7 @@ export async function dispatchDueFollowups(
   const runningCampaigns = await db.outreach_campaigns.findMany({
     where: { status: "running" },
   });
+  const pausedUsers = await getPausedUserIdsSet();
 
   let totalDispatched = 0;
   let totalThrottled = 0;
@@ -588,6 +602,9 @@ export async function dispatchDueFollowups(
 
   for (const campaign of runningCampaigns) {
     try {
+      if (pausedUsers.has(campaign.user_id)) {
+        continue; // Admin-paused workspace: hold due followups cleanly without stale expiry
+      }
       const startHour = campaign.send_window?.startHour ?? 0;
       const endHour = campaign.send_window?.endHour ?? 24;
       const daysOfWeek =
