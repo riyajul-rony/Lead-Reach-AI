@@ -51,6 +51,15 @@ export function proxy(request: NextRequest) {
   const primaryHosts = getPrimaryHosts();
 
   if (requestHost && !primaryHosts.has(requestHost)) {
+    if (pathname === "/robots.txt") {
+      return new NextResponse("User-agent: *\nDisallow: /\n", {
+        status: 200,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-Robots-Tag": "noindex, nofollow",
+        },
+      });
+    }
     if (!isAllowedCustomDomainPath(pathname)) {
       return new NextResponse("Not Found", { status: 404 });
     }
