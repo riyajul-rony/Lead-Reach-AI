@@ -5,7 +5,7 @@ import { getGlobalPlatformSettings } from "@/server/config";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export const metadata: Metadata = {
-  title: "Under Maintenance — Lead Reach AI",
+  title: "Under Maintenance",
   description: "Platform is currently undergoing scheduled maintenance.",
   robots: {
     index: false,

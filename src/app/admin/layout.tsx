@@ -9,7 +9,7 @@ import { AdminSidebar, AdminNavItem } from "@/components/admin/admin-sidebar";
 import { Button } from "@/components/ui/button";
 
 export const metadata: Metadata = {
-  title: "Admin Panel — Lead Reach AI",
+  title: "Admin Panel",
   description: "Global control center for Lead Reach AI automation platform.",
   robots: {
     index: false,

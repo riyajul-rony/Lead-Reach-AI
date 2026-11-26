@@ -1,10 +1,15 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+
+vi.mock("@/app/globals.css", () => ({}));
+
 import { getMetadataBase, getSiteUrl } from "@/lib/site-url";
 import robots from "@/app/robots";
 import sitemap from "@/app/sitemap";
 import { proxy } from "@/proxy";
 import nextConfig from "../../../next.config";
+import { generateMetadata as generateRootMetadata } from "@/app/layout";
+import OpenGraphImage, { size as ogSize, contentType as ogContentType } from "@/app/opengraph-image";
 import { metadata as authMetadata } from "@/app/(auth)/layout";
 import { metadata as appMetadata } from "@/app/app/layout";
 import { metadata as adminMetadata } from "@/app/admin/layout";
@@ -13,6 +18,9 @@ import { metadata as unsubscribeMetadata } from "@/app/u/[token]/page";
 import { metadata as maintenanceMetadata } from "@/app/maintenance/page";
 import { metadata as devUiMetadata } from "@/app/dev/ui/layout";
 import { generateMetadata as generateHomeMetadata } from "@/app/page";
+import { metadata as privacyMetadata } from "@/app/privacy/page";
+import { metadata as termsMetadata } from "@/app/terms/page";
+import { metadata as dataDeletionMetadata } from "@/app/data-deletion/page";
 
 describe("Phase 4 Step 1: site-url, robots, sitemap & CTD isolation", () => {
   const prevAppUrl = process.env.APP_URL;
@@ -202,5 +210,62 @@ describe("Phase 4 Step 2: strict noindex, nofollow on private/auth/api routes", 
 
     const homeMeta = await generateHomeMetadata();
     expect((homeMeta as { robots?: unknown }).robots).toBeUndefined();
+  });
+});
+
+describe("Phase 4 Step 3: metadataBase, canonical URLs, OpenGraph & Twitter cards", () => {
+  const prevAppUrl = process.env.APP_URL;
+
+  afterEach(() => {
+    process.env.APP_URL = prevAppUrl;
+  });
+
+  it("configures metadataBase, title template, OpenGraph, and Twitter card without overriding opengraph-image when og_image is unset", async () => {
+    process.env.APP_URL = "";
+    const meta = await generateRootMetadata();
+
+    expect(meta.metadataBase?.toString()).toBe("https://leadreachai.cerkitlabs.tech/");
+    expect(meta.title).toEqual({
+      default: expect.stringContaining("Lead Reach AI"),
+      template: "%s | Lead Reach AI",
+    });
+    expect(meta.openGraph).toMatchObject({
+      type: "website",
+      siteName: "Lead Reach AI",
+    });
+    expect((meta.openGraph as { images?: unknown }).images).toBeUndefined();
+    expect(meta.twitter).toMatchObject({
+      card: "summary_large_image",
+    });
+    expect((meta.twitter as { images?: unknown }).images).toBeUndefined();
+  });
+
+  it("defines per-page canonical URLs and social cards on all public routes", async () => {
+    const homeMeta = await generateHomeMetadata();
+    expect(homeMeta.alternates?.canonical).toBe("/");
+    expect(homeMeta.openGraph).toMatchObject({ type: "website", url: "/" });
+    expect(homeMeta.twitter).toMatchObject({ card: "summary_large_image" });
+
+    const publicPages = [
+      { meta: privacyMetadata, path: "/privacy" },
+      { meta: termsMetadata, path: "/terms" },
+      { meta: dataDeletionMetadata, path: "/data-deletion" },
+    ];
+
+    for (const { meta, path } of publicPages) {
+      expect(meta.alternates?.canonical).toBe(path);
+      expect(meta.openGraph).toMatchObject({ type: "website", url: path });
+      expect(meta.twitter).toMatchObject({ card: "summary_large_image" });
+      expect(typeof meta.title).toBe("string");
+      expect(typeof meta.description).toBe("string");
+    }
+  });
+
+  it("generates a 1200x630 PNG opengraph-image without external network calls", async () => {
+    expect(ogSize).toEqual({ width: 1200, height: 630 });
+    expect(ogContentType).toBe("image/png");
+    const response = OpenGraphImage();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("image/png");
   });
 });

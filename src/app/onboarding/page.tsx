@@ -5,7 +5,7 @@ import { OnboardingWizard } from "@/components/onboarding/wizard";
 import { redirect } from "next/navigation";
 
 export const metadata: Metadata = {
-  title: "Onboarding — Lead Reach AI",
+  title: "Onboarding",
   description: "Set up your Lead Reach AI profile and workspace.",
   robots: {
     index: false,

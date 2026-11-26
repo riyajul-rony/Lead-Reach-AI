@@ -3,7 +3,7 @@ import { CheckCircle2, ShieldCheck, AlertCircle } from "lucide-react";
 import { db } from "@/server/db";
 
 export const metadata: Metadata = {
-  title: "Unsubscribe Confirmation — Lead Reach AI",
+  title: "Unsubscribe Confirmation",
   description: "You have been successfully removed from future outreach emails.",
   robots: {
     index: false,

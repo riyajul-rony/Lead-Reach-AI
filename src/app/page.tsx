@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import {
   Zap,
@@ -26,11 +27,39 @@ import { PricingSection } from "@/components/landing/pricing-section";
 import { FAQSection } from "@/components/landing/faq-section";
 import { getSiteBranding } from "@/server/branding";
 
-export async function generateMetadata() {
+export async function generateMetadata(): Promise<Metadata> {
   const branding = await getSiteBranding();
+  const siteName = branding.site_name || "Lead Reach AI";
+  const title = branding.seo_title || `${siteName} — ${branding.tagline}`;
+  const description = branding.seo_description || branding.hero_subtitle || branding.tagline;
+  const customOgImage = branding.og_image?.trim();
+
   return {
-    title: branding.seo_title || `${branding.site_name} — ${branding.tagline}`,
-    description: branding.seo_description,
+    title: {
+      absolute: title,
+    },
+    description,
+    alternates: {
+      canonical: "/",
+    },
+    openGraph: {
+      type: "website",
+      url: "/",
+      siteName,
+      title,
+      description,
+      ...(customOgImage
+        ? {
+            images: [{ url: customOgImage, width: 1200, height: 630, alt: siteName }],
+          }
+        : {}),
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      ...(customOgImage ? { images: [customOgImage] } : {}),
+    },
   };
 }
 

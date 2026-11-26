@@ -1,10 +1,28 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { FileText, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export const metadata = {
-  title: "Terms of Service — Lead Reach AI",
-  description: "Terms and conditions governing the use of Lead Reach AI automation tools.",
+const TERMS_DESCRIPTION =
+  "Terms of Service, anti-spam policy, social publishing responsibility, and account security rules for Lead Reach AI.";
+
+export const metadata: Metadata = {
+  title: "Terms of Service",
+  description: TERMS_DESCRIPTION,
+  alternates: {
+    canonical: "/terms",
+  },
+  openGraph: {
+    type: "website",
+    url: "/terms",
+    title: "Terms of Service | Lead Reach AI",
+    description: TERMS_DESCRIPTION,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Terms of Service | Lead Reach AI",
+    description: TERMS_DESCRIPTION,
+  },
 };
 
 export default function TermsOfServicePage() {
