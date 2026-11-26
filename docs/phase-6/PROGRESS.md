@@ -91,6 +91,32 @@
 - Added `src/server/email/sender-identity.test.ts` (4 tests) covering header formatting, injection sanitization, `PATCH /api/v1/email-accounts/[id]` updates, `{{sender_first_name}}` rendering across initial/follow-up/Gmail API/test-send, and default name fallback.
 - **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (51 test files, 303 tests passed).
 
+---
+
+## Task 4 — Opt-out reply detection
+
+**Status:** Completed
+
+### Outcome & Changes
+- Created `src/server/email/opt-out-detector.ts` (`extractFirstNonQuotedLine`, `detectDeterministicOptOut`) inspecting strictly the first non-empty, non-quoted line against a conservative allowlist (`"stop"`, `"unsubscribe"`, `"remove me"`, `"please remove me"`, `"not interested, stop"`, etc.) with zero substring/fuzzy matching.
+- Updated `recordHumanReplyAndClassify` in `src/server/worker/reply-poller.ts`: executes Stop-on-Reply (`next_followup_at = null`) first; on deterministic opt-out match, marks recipient `unsubscribed`, records inbound reply with `reply_category: "unsubscribe"` and `reply_category_source: "rule_opt_out"`, and idempotently adds `email` to `db.suppressions`; on non-match, proceeds to safe AI classification which never auto-suppresses.
+- Added `src/server/email/opt-out-detector.test.ts` (34 tests) verifying explicit opt-outs, quoted history filtering, multilingual non-matching safety, strict false-positive rejections (`"don't stop now"`, `"please don't unsubscribe me"`, etc.), suppression creation, and Stop-on-Reply + AI non-auto-suppression ordering.
+- **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (52 test files, 337 tests passed).
+
+### Plan
+- **Behavior & ordering:**
+  1. Execute Stop-on-Reply immediately (`next_followup_at = null`, status updated).
+  2. Run conservative deterministic opt-out detection on the first non-quoted line ONLY (`src/server/email/opt-out-detector.ts`). On an exact match (`"stop"`, `"unsubscribe"`, `"remove me"`, `"please remove me"`, `"not interested, stop"`, etc.), mark recipient `status: "unsubscribed"`, `reply_category: "unsubscribe"`, record inbound reply `email_messages` with `reply_category: "unsubscribe"`, `reply_category_source: "rule_opt_out"`, and insert into `db.suppressions` (idempotent check first). Also sync matching `leads.status` if `lead_id` is linked (optional best-effort).
+  3. On non-match, preserve existing Stop-on-Reply + safe `classifyReplyIntent()` flow where AI classification NEVER adds rows to `suppressions`.
+- **Files to add/modify:**
+  - `src/server/email/opt-out-detector.ts`: pure deterministic parser `extractFirstNonQuotedLine(bodyText)` and `detectDeterministicOptOut(bodyText)`
+  - `src/server/worker/reply-poller.ts`: wire `detectDeterministicOptOut` into `recordHumanReplyAndClassify` (and poll log); make `recipient.email` optional with DB lookup fallback
+  - `src/server/email/opt-out-detector.test.ts`: comprehensive unit & integration tests (explicit matches, quoted-text isolation, multilingual non-matching safe handling, false-positive exclusions such as `"don't stop now"` / `"please don't unsubscribe me"` / conversational sentences, suppression insertion, Stop-on-Reply + AI non-auto-suppression verification)
+- **Edge cases & risks:**
+  - Quoted reply blocks (`>`, `On ... wrote:`, `-----Original Message-----`, `From: ...`) containing `"Stop"` in quoted history must NOT trigger opt-out if the first non-quoted line is normal conversation.
+  - Strict whole-line exact matching after whitespace/trailing-punctuation normalization prevents false positives across English & multilingual text.
+  - Duplicate inbound polls or BullMQ retries stay idempotent (`suppressions.findFirst` check before `create`; skip if recipient is already `"replied"` or `"unsubscribed"`).
+
 ### Plan
 - **Data model strategy:** `email_accounts` already stores `from_name String?` (included in GDPR export/deletion). We expose and accept `senderName` cleanly across `account-service`, API routes (`/api/v1/email-accounts`, `/api/v1/email-accounts/[id]`), and UI backed by `from_name`, defaulting to the existing account `from_name` (or user profile name / email prefix on new creation) so existing accounts keep their names seamlessly with zero risk of column drift.
 - **Files to add/modify:**

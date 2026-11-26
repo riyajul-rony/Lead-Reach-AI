@@ -4,6 +4,7 @@ import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { getDecryptedAccountCredentials } from "@/server/email/account-service";
 import { classifyReplyIntent } from "@/server/ai/reply-classifier";
+import { detectDeterministicOptOut } from "@/server/email/opt-out-detector";
 import { handleIncomingWarmupEmail, isWarmupMessageHeaders } from "@/server/email/warmup-pool-service";
 
 export interface PollResult {
@@ -59,26 +60,29 @@ export function isBounceMessage(fromAddress = "", subject = ""): boolean {
  * and NEVER auto-adds leads to global suppressions based on an AI guess.
  */
 export async function recordHumanReplyAndClassify(input: {
-  recipient: { id: string; user_id: string; campaign_id: string; status: string };
+  recipient: { id: string; user_id: string; campaign_id: string; status: string; email?: string | null };
   accountId: string;
   messageId: string;
   inReplyTo?: string | null;
   subject: string;
   bodyText: string;
   sentAt?: Date | string;
-}): Promise<{ recorded: boolean; category: string }> {
-  if (input.recipient.status === "replied") {
-    return { recorded: false, category: "uncategorized" };
+}): Promise<{ recorded: boolean; category: string; optedOut?: boolean }> {
+  if (input.recipient.status === "replied" || input.recipient.status === "unsubscribed") {
+    return { recorded: false, category: "uncategorized", optedOut: false };
   }
 
-  // 1. CRITICAL: Execute Stop-on-Reply BEFORE any AI call
+  const optOutCheck = detectDeterministicOptOut(input.bodyText);
+  const now = new Date();
+
+  // 1. CRITICAL: Execute Stop-on-Reply BEFORE any AI or secondary call
   await db.campaign_recipients.update({
     where: { id: input.recipient.id },
     data: {
-      status: "replied",
-      replied_at: new Date(),
+      status: optOutCheck.isOptOut ? "unsubscribed" : "replied",
+      replied_at: now,
       next_followup_at: null, // Permanently stops followup sequence
-      reply_category: "uncategorized",
+      reply_category: optOutCheck.isOptOut ? "unsubscribe" : "uncategorized",
     },
   });
 
@@ -94,13 +98,44 @@ export async function recordHumanReplyAndClassify(input: {
       subject: input.subject,
       snippet: input.bodyText.slice(0, 150),
       status: "received",
-      reply_category: "uncategorized",
-      reply_category_source: "fallback",
-      sent_at: input.sentAt ? new Date(input.sentAt) : new Date(),
+      reply_category: optOutCheck.isOptOut ? "unsubscribe" : "uncategorized",
+      reply_category_confidence: optOutCheck.isOptOut ? 1 : null,
+      reply_category_source: optOutCheck.isOptOut ? "rule_opt_out" : "fallback",
+      sent_at: input.sentAt ? new Date(input.sentAt) : now,
     },
   });
 
-  // 2. Non-blocking safe AI classification after stop-on-reply is persisted
+  // 2. Conservative deterministic opt-out suppression (AI never auto-suppresses)
+  if (optOutCheck.isOptOut) {
+    let targetEmail = input.recipient.email?.toLowerCase().trim() || "";
+    if (!targetEmail) {
+      const recRow = await db.campaign_recipients.findUnique({
+        where: { id: input.recipient.id },
+        select: { email: true },
+      }).catch(() => null);
+      targetEmail = recRow?.email?.toLowerCase().trim() || "";
+    }
+
+    if (targetEmail) {
+      const existingSup = await db.suppressions.findFirst({
+        where: { user_id: input.recipient.user_id, email: targetEmail },
+      }).catch(() => null);
+      if (!existingSup) {
+        await db.suppressions.create({
+          data: {
+            user_id: input.recipient.user_id,
+            email: targetEmail,
+            reason: "unsubscribed",
+            source_campaign_id: input.recipient.campaign_id,
+          },
+        }).catch(() => null);
+      }
+    }
+
+    return { recorded: true, category: "unsubscribe", optedOut: true };
+  }
+
+  // 3. Non-blocking safe AI classification after stop-on-reply is persisted (never auto-suppresses)
   let finalCategory = "uncategorized";
   try {
     const classification = await classifyReplyIntent({
@@ -133,7 +168,7 @@ export async function recordHumanReplyAndClassify(input: {
     );
   }
 
-  return { recorded: true, category: finalCategory };
+  return { recorded: true, category: finalCategory, optedOut: false };
 }
 
 /**
