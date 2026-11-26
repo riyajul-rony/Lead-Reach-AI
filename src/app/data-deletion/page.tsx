@@ -1,10 +1,28 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Trash2, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export const metadata = {
-  title: "User Data Deletion — Lead Reach AI",
-  description: "Instructions and request form for deleting your data from Lead Reach AI.",
+const DATA_DELETION_DESCRIPTION =
+  "Step-by-step instructions to remove connected social accounts and request full workspace and credential deletion from Lead Reach AI.";
+
+export const metadata: Metadata = {
+  title: "User Data Deletion",
+  description: DATA_DELETION_DESCRIPTION,
+  alternates: {
+    canonical: "/data-deletion",
+  },
+  openGraph: {
+    type: "website",
+    url: "/data-deletion",
+    title: "User Data Deletion | Lead Reach AI",
+    description: DATA_DELETION_DESCRIPTION,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "User Data Deletion | Lead Reach AI",
+    description: DATA_DELETION_DESCRIPTION,
+  },
 };
 
 export default function DataDeletionPage() {

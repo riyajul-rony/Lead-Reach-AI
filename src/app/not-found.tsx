@@ -1,10 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { FileQuestion, ArrowLeft, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export const metadata = {
-  title: "404 - Page Not Found — Lead Reach AI",
+export const metadata: Metadata = {
+  title: "404 - Page Not Found",
   description: "The page you are looking for does not exist.",
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 export default function NotFound() {

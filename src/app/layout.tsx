@@ -1,36 +1,49 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { getSiteBranding } from "@/server/branding";
+import { getMetadataBase } from "@/lib/site-url";
 import "./globals.css";
 
 export async function generateMetadata(): Promise<Metadata> {
   const branding = await getSiteBranding();
-  const title = branding.seo_title || `${branding.site_name} — ${branding.tagline}`;
+  const siteName = branding.site_name || "Lead Reach AI";
+  const title = branding.seo_title || `${siteName} — ${branding.tagline}`;
   const description = branding.seo_description || branding.hero_subtitle || branding.tagline;
+  const customOgImage = branding.og_image?.trim();
 
-  const icons: any = [];
-  if (branding.favicon_url) {
-    icons.push({ url: branding.favicon_url, rel: "icon" });
-  } else {
-    icons.push({ url: "/favicon.ico", rel: "icon" });
-  }
+  const icons: Metadata["icons"] = branding.favicon_url
+    ? [{ url: branding.favicon_url, rel: "icon" }]
+    : [{ url: "/favicon.ico", rel: "icon" }];
 
-  const openGraph: any = {
+  const openGraph: Metadata["openGraph"] = {
+    type: "website",
     title,
     description,
-    siteName: branding.site_name,
+    siteName,
+    ...(customOgImage
+      ? {
+          images: [{ url: customOgImage, width: 1200, height: 630, alt: siteName }],
+        }
+      : {}),
   };
-  if (branding.og_image) {
-    openGraph.images = [
-      { url: branding.og_image, width: 1200, height: 630, alt: branding.site_name },
-    ];
-  }
+
+  const twitter: Metadata["twitter"] = {
+    card: "summary_large_image",
+    title,
+    description,
+    ...(customOgImage ? { images: [customOgImage] } : {}),
+  };
 
   return {
-    title,
+    metadataBase: getMetadataBase(),
+    title: {
+      default: title,
+      template: `%s | ${siteName}`,
+    },
     description,
     icons,
     openGraph,
+    twitter,
   };
 }
 

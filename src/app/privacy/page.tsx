@@ -1,10 +1,28 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Shield, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export const metadata = {
-  title: "Privacy Policy — Lead Reach AI",
-  description: "Privacy Policy and data protection terms for Lead Reach AI automation platform.",
+const PRIVACY_DESCRIPTION =
+  "Privacy Policy, Google API Limited Use compliance, Meta platform data handling, and email outreach suppression practices for Lead Reach AI.";
+
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  description: PRIVACY_DESCRIPTION,
+  alternates: {
+    canonical: "/privacy",
+  },
+  openGraph: {
+    type: "website",
+    url: "/privacy",
+    title: "Privacy Policy | Lead Reach AI",
+    description: PRIVACY_DESCRIPTION,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Privacy Policy | Lead Reach AI",
+    description: PRIVACY_DESCRIPTION,
+  },
 };
 
 export default function PrivacyPolicyPage() {

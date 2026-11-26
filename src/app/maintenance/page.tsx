@@ -1,11 +1,16 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Wrench, Mail, ShieldAlert, ArrowRight } from "lucide-react";
 import { getGlobalPlatformSettings } from "@/server/config";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
-export const metadata = {
-  title: "Under Maintenance — Lead Reach AI",
+export const metadata: Metadata = {
+  title: "Under Maintenance",
   description: "Platform is currently undergoing scheduled maintenance.",
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 export default async function MaintenancePage() {

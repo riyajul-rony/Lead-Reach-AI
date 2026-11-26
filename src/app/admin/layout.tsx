@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Shield } from "lucide-react";
 import { requireAdmin } from "@/server/auth/guards";
@@ -7,9 +8,13 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { AdminSidebar, AdminNavItem } from "@/components/admin/admin-sidebar";
 import { Button } from "@/components/ui/button";
 
-export const metadata = {
-  title: "Admin Panel — Lead Reach AI",
+export const metadata: Metadata = {
+  title: "Admin Panel",
   description: "Global control center for Lead Reach AI automation platform.",
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 interface NavConfigItem {

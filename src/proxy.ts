@@ -39,8 +39,34 @@ function isAllowedCustomDomainPath(pathname: string): boolean {
   );
 }
 
+function isNoIndexPath(pathname: string): boolean {
+  const prefixes = [
+    "/app",
+    "/admin",
+    "/api",
+    "/u",
+    "/media",
+    "/onboarding",
+    "/dev",
+  ];
+  if (prefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
+    return true;
+  }
+
+  const exactPaths = new Set([
+    "/login",
+    "/signup",
+    "/forgot-password",
+    "/reset-password",
+    "/verify-email",
+    "/maintenance",
+  ]);
+  return exactPaths.has(pathname);
+}
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const noIndex = isNoIndexPath(pathname);
 
   // Enforce strict path allowlist for custom tracking domains (CNAME traffic)
   const requestHost = normalizeHost(
@@ -51,10 +77,26 @@ export function proxy(request: NextRequest) {
   const primaryHosts = getPrimaryHosts();
 
   if (requestHost && !primaryHosts.has(requestHost)) {
-    if (!isAllowedCustomDomainPath(pathname)) {
-      return new NextResponse("Not Found", { status: 404 });
+    if (pathname === "/robots.txt") {
+      return new NextResponse("User-agent: *\nDisallow: /\n", {
+        status: 200,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-Robots-Tag": "noindex, nofollow",
+        },
+      });
     }
-    return NextResponse.next();
+    if (!isAllowedCustomDomainPath(pathname)) {
+      return new NextResponse("Not Found", {
+        status: 404,
+        headers: {
+          "X-Robots-Tag": "noindex, nofollow",
+        },
+      });
+    }
+    const ctdRes = NextResponse.next();
+    ctdRes.headers.set("X-Robots-Tag", "noindex, nofollow");
+    return ctdRes;
   }
 
   const sessionToken =
@@ -69,10 +111,18 @@ export function proxy(request: NextRequest) {
   if (isProtected && !sessionToken) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(loginUrl);
+    const redirectRes = NextResponse.redirect(loginUrl);
+    if (noIndex) {
+      redirectRes.headers.set("X-Robots-Tag", "noindex, nofollow");
+    }
+    return redirectRes;
   }
 
-  return NextResponse.next();
+  const response = NextResponse.next();
+  if (noIndex) {
+    response.headers.set("X-Robots-Tag", "noindex, nofollow");
+  }
+  return response;
 }
 
 export const config = {

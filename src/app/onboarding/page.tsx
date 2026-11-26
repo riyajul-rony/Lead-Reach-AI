@@ -1,11 +1,16 @@
+import type { Metadata } from "next";
 import { requireUser } from "@/server/auth/guards";
 import { getSiteBranding } from "@/server/branding";
 import { OnboardingWizard } from "@/components/onboarding/wizard";
 import { redirect } from "next/navigation";
 
-export const metadata = {
-  title: "Onboarding — Lead Reach AI",
+export const metadata: Metadata = {
+  title: "Onboarding",
   description: "Set up your Lead Reach AI profile and workspace.",
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 export default async function OnboardingPage() {
