@@ -46,7 +46,8 @@ export interface ImapConfig {
 
 export interface CreateEmailAccountInput {
   label: string;
-  from_name: string;
+  from_name?: string;
+  senderName?: string;
   from_email: string;
   reply_to?: string;
   reply_inbox_account_id?: string;
@@ -444,7 +445,7 @@ export async function createEmailAccount(userId: string, input: CreateEmailAccou
     data: {
       user_id: userId,
       label: input.label.trim(),
-      from_name: input.from_name?.trim() || null,
+      from_name: (input.senderName ?? input.from_name)?.trim() || null,
       from_email: input.from_email.toLowerCase().trim(),
       reply_to: input.reply_to?.toLowerCase().trim() || null,
       reply_inbox_account_id: input.reply_inbox_account_id?.trim() || null,
@@ -498,7 +499,11 @@ export async function updateEmailAccount(
 
   const dataPayload: any = {};
   if (updates.label !== undefined) dataPayload.label = updates.label.trim();
-  if (updates.from_name !== undefined) dataPayload.from_name = updates.from_name.trim();
+  const nextSenderName =
+    updates.senderName !== undefined ? updates.senderName : updates.from_name;
+  if (nextSenderName !== undefined) {
+    dataPayload.from_name = nextSenderName ? nextSenderName.trim() : null;
+  }
   if (updates.reply_to !== undefined) dataPayload.reply_to = updates.reply_to ? updates.reply_to.toLowerCase().trim() : null;
   if (updates.reply_inbox_account_id !== undefined) {
     dataPayload.reply_inbox_account_id = updates.reply_inbox_account_id ? updates.reply_inbox_account_id.trim() : null;
@@ -655,6 +660,7 @@ function sanitizeAccount(acc: any) {
   const replyCheck = accountHasWorkingReplyDetection(acc);
   return {
     ...rest,
+    senderName: rest.from_name ?? null,
     has_smtp_password: Boolean(smtp_password_enc),
     has_imap_password: Boolean(imap_password_enc),
     has_oauth_token: Boolean(oauth_access_token_enc || oauth_refresh_token_enc),

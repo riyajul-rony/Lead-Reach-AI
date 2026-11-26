@@ -38,6 +38,7 @@ export default async function EmailAccountsPage() {
     id: a.id,
     label: a.label,
     from_name: a.from_name,
+    senderName: a.from_name ?? null,
     from_email: a.from_email,
     reply_to: a.reply_to,
     smtp_host: a.smtp_host,

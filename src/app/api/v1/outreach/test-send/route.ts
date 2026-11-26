@@ -4,6 +4,7 @@ import { getDecryptedAccountCredentials } from "@/server/email/account-service";
 import { ensureFreshGoogleAccessToken, sendViaGmailApi } from "@/server/email/google-oauth";
 import { renderEmailTemplate } from "@/server/email/template-renderer";
 import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
+import { formatFromHeader, resolveSenderFirstName } from "@/server/email/sender-identity";
 import { logger } from "@/server/logger";
 import nodemailer from "nodemailer";
 import { z } from "zod";
@@ -70,6 +71,7 @@ export async function POST(req: NextRequest) {
     website,
     business_address:
       sampleData.business_address !== undefined ? sampleData.business_address : workspaceAddress,
+    sender_first_name: resolveSenderFirstName(creds),
   };
 
   const renderedSubject = renderEmailTemplate(subject, renderVars, sampleUnsubscribeUrl);
@@ -90,7 +92,7 @@ export async function POST(req: NextRequest) {
       }
 
       const accessToken = await ensureFreshGoogleAccessToken(accountId);
-      const fromAddr = creds.from_name ? `"${creds.from_name}" <${creds.from_email}>` : creds.from_email;
+      const fromAddr = formatFromHeader(creds);
       const result = await sendViaGmailApi(accessToken, {
         from: fromAddr,
         to: toEmail,
@@ -150,7 +152,7 @@ export async function POST(req: NextRequest) {
     });
 
     const info = await transporter.sendMail({
-      from: creds.from_name ? `"${creds.from_name}" <${creds.from_email}>` : creds.from_email,
+      from: formatFromHeader(creds),
       to: toEmail,
       subject: renderedSubject,
       text: renderedBody,

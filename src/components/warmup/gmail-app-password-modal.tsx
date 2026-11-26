@@ -39,6 +39,7 @@ export function GmailAppPasswordModal({
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [label, setLabel] = useState("");
+  const [senderName, setSenderName] = useState("");
   const [smtpHost, setSmtpHost] = useState("smtp.gmail.com");
   const [smtpPort, setSmtpPort] = useState(587);
   const [smtpSecurity, setSmtpSecurity] = useState<"starttls" | "ssl" | "tls">("starttls");
@@ -63,6 +64,7 @@ export function GmailAppPasswordModal({
       setShowPassword(false);
       setShowAdvanced(false);
       setLabel("");
+      setSenderName("");
       setSmtpHost("smtp.gmail.com");
       setSmtpPort(587);
       setSmtpSecurity("starttls");
@@ -152,6 +154,7 @@ export function GmailAppPasswordModal({
         body: JSON.stringify({
           provider: "smtp",
           ...(label.trim() ? { label: label.trim() } : {}),
+          ...(senderName.trim() ? { senderName: senderName.trim(), from_name: senderName.trim() } : {}),
           smtp_host: smtpHost.trim(),
           smtp_port: smtpPort,
           smtp_security: smtpSecurity,
@@ -182,6 +185,8 @@ export function GmailAppPasswordModal({
           body: JSON.stringify({
             from_email: cleanEmail,
             label: label.trim() || undefined,
+            senderName: senderName.trim() || undefined,
+            from_name: senderName.trim() || undefined,
             smtp_host: smtpHost.trim(),
             smtp_port: smtpPort,
             smtp_security: smtpSecurity,
@@ -271,6 +276,22 @@ export function GmailAppPasswordModal({
                 This email is already connected — saving will upgrade it with App Password + IMAP credentials and enable Warm-up.
               </p>
             )}
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-fg block mb-1">
+              Sender Name (Optional)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Alex Carter"
+              value={senderName}
+              onChange={(e) => setSenderName(e.target.value)}
+              className="input w-full text-xs h-9"
+            />
+            <p className="text-[10px] text-muted mt-1">
+              Use a real human name that matches the signature, not a product name.
+            </p>
           </div>
 
           <div>

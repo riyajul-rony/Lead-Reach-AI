@@ -12,6 +12,7 @@ import { buildEmailMultipartBodies, calculateRandomJitterSec, dispatchEmailTrans
 import { selectVariantForRecipient } from "@/server/email/variant-service";
 import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
+import { resolveSenderFirstName } from "@/server/email/sender-identity";
 import {
   isWithinSendingWindow,
   normalizeIanaTimezone,
@@ -300,6 +301,7 @@ export async function sendSingleRecipientFollowup(
   const templateVars = {
     ...(recipient.vars || {}),
     business_address: businessAddress,
+    sender_first_name: resolveSenderFirstName(account),
   };
 
   let finalSubject = "";

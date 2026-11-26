@@ -15,6 +15,7 @@ import { createSignedTrackingToken } from "@/server/email/tracking-token";
 import { selectVariantForRecipient } from "@/server/email/variant-service";
 import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
+import { formatFromHeader, resolveSenderFirstName } from "@/server/email/sender-identity";
 import {
   getLocalTimeParts,
   isValidIanaTimezone,
@@ -244,6 +245,7 @@ export interface DispatchTransportInput {
     id: string;
     provider: string;
     from_name?: string | null;
+    senderName?: string | null;
     from_email: string;
     reply_to?: string | null;
     reply_inbox_account_id?: string | null;
@@ -305,9 +307,7 @@ export async function dispatchEmailTransport(
 
   if (account.provider === "gmail_api") {
     const accessToken = await ensureFreshGoogleAccessToken(account.id);
-    const fromAddr = account.from_name
-      ? `"${account.from_name}" <${account.from_email}>`
-      : account.from_email;
+    const fromAddr = formatFromHeader(account);
 
     const result = await sendViaGmailApi(accessToken, {
       from: fromAddr,
@@ -344,7 +344,7 @@ export async function dispatchEmailTransport(
 
     try {
       await transport.sendMail({
-        from: `"${account.from_name || account.from_email}" <${account.from_email}>`,
+        from: formatFromHeader(account),
         to,
         replyTo: effectiveReplyTo,
         subject,
@@ -520,6 +520,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
   const templateVars = {
     ...((recipient.vars as any) || {}),
     business_address: businessAddress,
+    sender_first_name: resolveSenderFirstName(account),
   };
 
   let finalSubject = "";

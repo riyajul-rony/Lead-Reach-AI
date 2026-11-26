@@ -26,6 +26,7 @@ const createAccountSchema = z.object({
   // Optional identity (populated after save in Account Settings drawer)
   label: z.string().optional(),
   from_name: z.string().optional(),
+  senderName: z.string().optional(),
   reply_to: z.string().email("Valid reply-to email").optional().or(z.literal("")),
   reply_inbox_account_id: z.string().uuid("Valid UUID required").optional().or(z.literal("")),
   signature: z.string().optional(),
@@ -110,7 +111,11 @@ export async function POST(req: NextRequest) {
   const smtpUsername = (input.smtp_username || normalizedEmail).trim();
   const emailPrefix = normalizedEmail.split("@")[0] || "Inbox";
   const accountLabel = input.label?.trim() || `${emailPrefix} Inbox`;
-  const senderName = input.from_name?.trim() || emailPrefix;
+  const senderName =
+    input.senderName?.trim() ||
+    input.from_name?.trim() ||
+    session.user.name?.trim() ||
+    emailPrefix;
 
   // Auto-derive IMAP from SMTP host if not explicitly provided
   const derived = deriveImapFromSmtp(input.smtp_host);

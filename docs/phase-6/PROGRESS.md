@@ -77,6 +77,34 @@
 - Added `src/server/email/tracking-defaults.test.ts` (4 tests) verifying defaults, `text/plain` when off, open-pixel isolation, click-link isolation, and per-step follow-up overrides.
 - **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (50 test files, 299 tests passed).
 
+---
+
+## Task 3 — From name per email account
+
+**Status:** Completed
+
+### Outcome & Changes
+- Created `src/server/email/sender-identity.ts` (`sanitizeSenderName`, `resolveAccountSenderName`, `resolveSenderFirstName`, `formatFromHeader`) to safely format `"First Last" <email>` RFC-2822 headers without CRLF/quote hazards or product-brand fallback, and extract `sender_first_name`.
+- Updated `src/server/email/account-service.ts`, `src/app/api/v1/email-accounts/route.ts`, and `src/app/api/v1/email-accounts/[id]/route.ts` to expose & accept `senderName` synced with `from_name`, defaulting newly created accounts to `input.senderName || input.from_name || session.user.name || emailPrefix`.
+- Wired `formatFromHeader(account)` and `sender_first_name: resolveSenderFirstName(account)` into `src/server/email/sending-engine.ts` (Gmail API & SMTP), `src/server/email/sequence-service.ts`, and `src/app/api/v1/outreach/test-send/route.ts`.
+- Added editable `Sender Name (From Header)` input + hint `"Use a real human name that matches the signature, not a product name."` in `src/app/app/outreach/email-accounts/email-accounts-manager.tsx`, `src/app/app/outreach/email-accounts/page.tsx`, and `src/components/warmup/gmail-app-password-modal.tsx`, plus `+ {{sender_first_name}}` chip & live preview support in `src/app/app/outreach/new/outreach-wizard.tsx`.
+- Added `src/server/email/sender-identity.test.ts` (4 tests) covering header formatting, injection sanitization, `PATCH /api/v1/email-accounts/[id]` updates, `{{sender_first_name}}` rendering across initial/follow-up/Gmail API/test-send, and default name fallback.
+- **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (51 test files, 303 tests passed).
+
+### Plan
+- **Data model strategy:** `email_accounts` already stores `from_name String?` (included in GDPR export/deletion). We expose and accept `senderName` cleanly across `account-service`, API routes (`/api/v1/email-accounts`, `/api/v1/email-accounts/[id]`), and UI backed by `from_name`, defaulting to the existing account `from_name` (or user profile name / email prefix on new creation) so existing accounts keep their names seamlessly with zero risk of column drift.
+- **Files to add/modify:**
+  - `src/server/email/sender-identity.ts`: pure helpers `resolveAccountSenderName`, `formatFromHeader`, `resolveSenderFirstName`
+  - `src/server/email/account-service.ts`: accept `senderName` alongside `from_name` on create & update, return `senderName` from `sanitizeAccount`
+  - `src/app/api/v1/email-accounts/route.ts` & `src/app/api/v1/email-accounts/[id]/route.ts`: accept `senderName` alias in Zod/PATCH, return `senderName` in GET/PATCH responses, default new account `from_name` using `input.senderName || input.from_name || session.user.name || emailPrefix`
+  - `src/server/email/sending-engine.ts`, `src/server/email/sequence-service.ts`, `src/app/api/v1/outreach/test-send/route.ts`: use `formatFromHeader(account)` for Gmail API & SMTP `From` headers and inject `sender_first_name: resolveSenderFirstName(account)` into `templateVars` for initial, follow-up, AI fallback, and test-send renders
+  - `src/app/app/outreach/email-accounts/page.tsx` & `email-accounts-manager.tsx` & `src/components/warmup/gmail-app-password-modal.tsx`: display & edit `senderName` (`from_name`) with explicit hint `"Use a real human name that matches the signature, not a product name."`
+  - `src/app/app/outreach/new/outreach-wizard.tsx`: add `+ {{sender_first_name}}` variable chip, resolve `sender_first_name` in `previewVars`, and compose `From:` in `previewRawMessage` using `formatFromHeader`
+  - `src/server/email/sender-identity.test.ts`: tests for header composition, CRLF sanitization, defaulting, API `PATCH` update, `{{sender_first_name}}` rendering across initial/follow-up/test-send
+- **Edge cases & risks:**
+  - Account with null/empty `from_name` must fall back to raw email address in `From` header (never `"null" <...>` or brand name like `"Lead Reach AI"`).
+  - Double quotes/newlines inside `senderName` must be sanitized before header formatting to prevent header injection.
+
 ### Plan
 - **Existing campaigns policy:** `outreach_campaigns.tracking_open` and `outreach_campaigns.tracking_click` are already `@default(false)` in `prisma/schema.prisma`, and existing campaigns are left untouched (we do NOT overwrite existing campaign or step rows). New `campaign_steps.tracking_open` and `campaign_steps.tracking_click` columns are nullable (`Boolean?`) so existing legacy steps inherit `campaign.tracking_open` / `campaign.tracking_click` while all new steps explicitly default to `false` (`tracking_open: false`, `tracking_click: false`).
 - **Files to add/modify:**

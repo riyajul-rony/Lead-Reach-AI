@@ -44,12 +44,14 @@ import { AiPreviewApprover, GeneratedPreview } from "@/components/outreach/ai-pr
 import { SpamCheckResult } from "@/server/email/spam-checker";
 import { InfoTooltip } from "@/components/outreach/info-tooltip";
 import { renderEmailTemplate } from "@/server/email/template-renderer";
+import { formatFromHeader, resolveSenderFirstName } from "@/server/email/sender-identity";
 
 interface EmailAccountItem {
   id: string;
   label: string;
   from_email: string;
   from_name: string;
+  senderName?: string | null;
   hourly_limit: number;
   daily_limit?: number;
   effective_daily_limit?: number;
@@ -405,6 +407,10 @@ export function OutreachWizard() {
     );
   }, [recipients]);
 
+  const primaryPreviewAccount = useMemo(() => {
+    return accounts.find((a) => selectedAccountIds.includes(a.id)) || accounts[0] || null;
+  }, [accounts, selectedAccountIds]);
+
   const previewVars = useMemo(
     () => ({
       first_name: sampleRecipient.name ? String(sampleRecipient.name).split(" ")[0] : "there",
@@ -412,8 +418,9 @@ export function OutreachWizard() {
       website: sampleRecipient.website || "your website",
       city: (sampleRecipient as any).city || "",
       business_address: physicalAddress.trim(),
+      sender_first_name: resolveSenderFirstName(primaryPreviewAccount),
     }),
-    [sampleRecipient, physicalAddress]
+    [sampleRecipient, physicalAddress, primaryPreviewAccount]
   );
 
   const sampleUnsubscribeUrl = useMemo(() => {
@@ -443,15 +450,9 @@ export function OutreachWizard() {
     return renderEmailTemplate(bodyTemplate, previewVars, sampleUnsubscribeUrl, makePreviewRng(73));
   }, [bodyTemplate, previewVars, sampleUnsubscribeUrl, spinSeed]);
 
-  const primaryPreviewAccount = useMemo(() => {
-    return accounts.find((a) => selectedAccountIds.includes(a.id)) || accounts[0] || null;
-  }, [accounts, selectedAccountIds]);
-
   const previewRawMessage = useMemo(() => {
     const fromHeader = primaryPreviewAccount
-      ? primaryPreviewAccount.from_name
-        ? `"${primaryPreviewAccount.from_name}" <${primaryPreviewAccount.from_email}>`
-        : primaryPreviewAccount.from_email
+      ? formatFromHeader(primaryPreviewAccount)
       : "you@example.com";
     const looksLikeHtml = /<(?:html|body|p|div|br|table|a|span)\b/i.test(previewBody);
     const contentType =
@@ -1706,7 +1707,7 @@ export function OutreachWizard() {
                     content="Click to insert personalized prospect data. You can set fallback values like {{first_name|there}} which will print 'there' if the lead has no first name."
                   />
                 </div>
-                {["first_name", "company_name", "website", "city"].map((v) => (
+                {["first_name", "company_name", "website", "city", "sender_first_name"].map((v) => (
                   <button
                     key={v}
                     type="button"

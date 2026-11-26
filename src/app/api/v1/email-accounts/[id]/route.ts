@@ -32,6 +32,7 @@ export async function GET(
   return NextResponse.json({
     data: {
       ...safe,
+      senderName: safe.from_name ?? null,
       has_smtp_password: Boolean(smtp_password_enc),
       has_imap_password: Boolean(imap_password_enc),
       has_oauth_token: Boolean(oauth_refresh_token_enc || oauth_access_token_enc),

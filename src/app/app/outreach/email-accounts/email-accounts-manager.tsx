@@ -40,6 +40,7 @@ export interface EmailAccount {
   label: string;
   provider: "smtp" | "gmail_api";
   from_name?: string | null;
+  senderName?: string | null;
   from_email: string;
   reply_to?: string | null;
   reply_inbox_account_id?: string | null;
@@ -501,7 +502,8 @@ export function EmailAccountsManager({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           label: editingAccount.label,
-          from_name: editingAccount.from_name,
+          from_name: editingAccount.senderName ?? editingAccount.from_name ?? "",
+          senderName: editingAccount.senderName ?? editingAccount.from_name ?? "",
           reply_to: editingAccount.reply_to || null,
           reply_inbox_account_id: editingAccount.reply_inbox_account_id || null,
           signature: editingAccount.signature || undefined,
@@ -1277,15 +1279,26 @@ export function EmailAccountsManager({
               </div>
 
               <div>
-                <label className="text-xs font-medium text-fg block mb-1">Sender Name</label>
+                <label className="text-xs font-medium text-fg block mb-1">
+                  Sender Name (From Header)
+                </label>
                 <input
                   type="text"
-                  value={editingAccount.from_name || ""}
+                  placeholder="e.g. Alex Carter"
+                  value={editingAccount.senderName ?? editingAccount.from_name ?? ""}
                   onChange={(e) =>
-                    setEditingAccount({ ...editingAccount, from_name: e.target.value })
+                    setEditingAccount({
+                      ...editingAccount,
+                      from_name: e.target.value,
+                      senderName: e.target.value,
+                    })
                   }
                   className="input w-full text-xs h-9"
                 />
+                <p className="text-[10px] text-muted mt-1">
+                  Use a real human name that matches the signature, not a product name. Available via{" "}
+                  <code className="font-mono">{"{{sender_first_name}}"}</code>.
+                </p>
               </div>
 
               {/* Reply-To Address and Reply Inbox */}
