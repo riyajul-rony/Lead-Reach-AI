@@ -16,6 +16,13 @@ const nextConfig: NextConfig = {
     cpus: 1,
   },
   async headers() {
+    const noIndexHeader = [
+      {
+        key: "X-Robots-Tag",
+        value: "noindex, nofollow",
+      },
+    ];
+
     return [
       {
         source: "/:path*",
@@ -43,6 +50,19 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      { source: "/app/:path*", headers: noIndexHeader },
+      { source: "/admin/:path*", headers: noIndexHeader },
+      { source: "/api/:path*", headers: noIndexHeader },
+      { source: "/u/:path*", headers: noIndexHeader },
+      { source: "/media/:path*", headers: noIndexHeader },
+      { source: "/onboarding/:path*", headers: noIndexHeader },
+      { source: "/login", headers: noIndexHeader },
+      { source: "/signup", headers: noIndexHeader },
+      { source: "/forgot-password", headers: noIndexHeader },
+      { source: "/reset-password", headers: noIndexHeader },
+      { source: "/verify-email", headers: noIndexHeader },
+      { source: "/maintenance", headers: noIndexHeader },
+      { source: "/dev/:path*", headers: noIndexHeader },
     ];
   },
 };

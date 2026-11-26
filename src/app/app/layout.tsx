@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import React from "react";
 import Link from "next/link";
 import {
@@ -21,6 +22,13 @@ import { getSiteBranding } from "@/server/branding";
 import { SidebarProvider, Sidebar, Topbar, NavSection } from "@/components/ui";
 import { UserMenu } from "@/components/layout/user-menu";
 import { BrandLogo } from "@/components/brand/brand-logo";
+
+export const metadata: Metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const [session, branding] = await Promise.all([
