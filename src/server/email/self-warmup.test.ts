@@ -22,7 +22,7 @@ vi.mock("bullmq", () => {
 
 import { db } from "@/server/db";
 import { stripAppPasswordSpaces } from "@/components/warmup/gmail-app-password-guide";
-import { localDevStore } from "@/server/db/local-store";
+import { localDevStore } from "@/test/local-store";
 import {
   WARMUP_HEADER,
   WARMUP_ID_HEADER,
