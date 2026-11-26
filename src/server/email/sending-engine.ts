@@ -524,6 +524,8 @@ export async function sendSingleRecipientEmail(recipientId: string) {
 
   let finalSubject = "";
   let finalBody = "";
+  let stepTrackingOpen = Boolean(campaign.tracking_open);
+  let stepTrackingClick = Boolean(campaign.tracking_click);
   let isThreadedFollowup = false;
   let inReplyToId: string | undefined = undefined;
   let transportAcceptedMessageId: string | null = null;
@@ -608,6 +610,13 @@ export async function sendSingleRecipientEmail(recipientId: string) {
         }
       } catch {}
 
+      if (typeof stepRecord?.tracking_open === "boolean") {
+        stepTrackingOpen = stepRecord.tracking_open;
+      }
+      if (typeof stepRecord?.tracking_click === "boolean") {
+        stepTrackingClick = stepRecord.tracking_click;
+      }
+
       const previousSubject = recipient.generated_subject || campaign.subject_template || "Our conversation";
       const subjectTpl =
         selectedVariant?.subject_template ||
@@ -641,8 +650,8 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     const { text: plainTextBody, html: htmlBody } = buildEmailMultipartBodies({
       bodyText: finalBody,
       unsubscribeUrl,
-      trackingOpen: Boolean(campaign.tracking_open),
-      trackingClick: Boolean(campaign.tracking_click),
+      trackingOpen: stepTrackingOpen,
+      trackingClick: stepTrackingClick,
       unsubscribeToken: recipient.unsubscribe_token,
       baseUrl: trackingBaseUrl,
     });

@@ -113,8 +113,18 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized destination URL" }, { status: 404 });
     }
 
-    // 3. Record tracking metrics if enabled
-    if (recipient.campaign.tracking_click) {
+    const stepWithClickTracking =
+      !recipient.campaign.tracking_click && db.campaign_steps?.findFirst
+        ? await db.campaign_steps
+            .findFirst({
+              where: { campaign_id: recipient.campaign_id, tracking_click: true },
+              select: { id: true },
+            })
+            .catch(() => null)
+        : null;
+
+    // 3. Record tracking metrics if enabled at campaign or step level
+    if (recipient.campaign.tracking_click || stepWithClickTracking) {
       const ip =
         req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
         req.headers.get("x-real-ip") ||

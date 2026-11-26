@@ -9,6 +9,8 @@ export interface FollowupStepData {
   subject: string;
   body: string;
   same_thread: boolean;
+  tracking_open?: boolean;
+  tracking_click?: boolean;
 }
 
 interface FollowupStepBuilderProps {
@@ -68,6 +70,8 @@ export function FollowupStepBuilder({ steps, onChange, originalSubject = "" }: F
       body:
         preset?.body ||
         "Hi {{first_name|there}},\n\nJust following up on my previous message. Would you have 5 minutes for a quick chat this week?\n\nBest,\nAlex",
+      tracking_open: false,
+      tracking_click: false,
     };
     onChange([...steps, newStep]);
   };
@@ -227,6 +231,36 @@ export function FollowupStepBuilder({ steps, onChange, originalSubject = "" }: F
                   className="input w-full font-mono text-xs"
                   placeholder="Hi {{first_name}}, following up on my previous note..."
                 />
+              </div>
+
+              <div className="pt-1 border-t border-border/60 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-1.5 text-muted cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(step.tracking_open)}
+                      onChange={(e) =>
+                        handleUpdateStep(idx, { tracking_open: e.target.checked })
+                      }
+                      className="checkbox checkbox-xs"
+                    />
+                    <span>Open tracking</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 text-muted cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(step.tracking_click)}
+                      onChange={(e) =>
+                        handleUpdateStep(idx, { tracking_click: e.target.checked })
+                      }
+                      className="checkbox checkbox-xs"
+                    />
+                    <span>Click tracking</span>
+                  </label>
+                </div>
+                <span className="text-[10px] text-muted">
+                  Click tracking rewrites links, open tracking adds a hidden image; both can hurt inbox placement.
+                </span>
               </div>
             </div>
           ))}

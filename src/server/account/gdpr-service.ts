@@ -389,6 +389,28 @@ export async function exportUserAccountData(userId: string) {
     ),
   ]);
 
+  const campaignIds = outreachCampaigns.map((c: any) => c.id);
+  const campaignSteps =
+    campaignIds.length > 0 && db.campaign_steps?.findMany
+      ? await fetchPaginated((skip, take) =>
+          db.campaign_steps.findMany({
+            where: { campaign_id: { in: campaignIds } },
+            select: {
+              id: true,
+              campaign_id: true,
+              step_no: true,
+              delay_days: true,
+              mode: true,
+              tracking_open: true,
+              tracking_click: true,
+              created_at: true,
+            },
+            skip,
+            take,
+          })
+        )
+      : [];
+
   const rawExport = {
     exported_at: new Date().toISOString(),
     schema_version: "1.0",
@@ -402,6 +424,7 @@ export async function exportUserAccountData(userId: string) {
     leads,
     lead_searches: leadSearches,
     outreach_campaigns: outreachCampaigns,
+    campaign_steps: campaignSteps,
     campaign_recipients: campaignRecipients,
     email_messages: emailMessages,
     suppressions,

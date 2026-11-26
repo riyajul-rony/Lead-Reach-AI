@@ -27,6 +27,8 @@ export interface FollowupStep {
   subject_template?: string;
   body_template?: string;
   ai_instruction?: string;
+  tracking_open?: boolean;
+  tracking_click?: boolean;
 }
 
 export async function getCampaignSequence(campaignId: string) {
@@ -50,6 +52,8 @@ export async function getCampaignSequence(campaignId: string) {
         subject_template: "Re: {{previous_subject}}",
         body_template:
           "Hi {{first_name|there}},\n\nJust floating this to the top of your inbox in case you missed my earlier email regarding {{company_name|your business}}.\n\nDo you have 5 minutes for a quick chat this week?\n\nBest regards,\nAlex",
+        tracking_open: false,
+        tracking_click: false,
       },
       {
         step_no: 2,
@@ -58,6 +62,8 @@ export async function getCampaignSequence(campaignId: string) {
         subject_template: "Re: {{previous_subject}}",
         body_template:
           "Hi {{first_name|there}},\n\nI understand you might be busy, so this will be my final follow-up. If this isn't relevant for {{company_name|your team}} right now, no worries at all!\n\nWishing you all the best,\nAlex",
+        tracking_open: false,
+        tracking_click: false,
       },
     ],
   };
@@ -81,6 +87,8 @@ export async function saveCampaignSequence(
     subject_template: s.subject_template || "Re: {{previous_subject}}",
     body_template: s.body_template || "Hi {{first_name|there}},\n\nJust following up on my previous note.",
     ai_instruction: s.ai_instruction || null,
+    tracking_open: Boolean(s.tracking_open),
+    tracking_click: Boolean(s.tracking_click),
   }));
 
   const saved = await db.followup_sequences.create({
@@ -376,12 +384,35 @@ export async function sendSingleRecipientFollowup(
       );
     }
 
+    let stepRecord: any = null;
+    try {
+      if (db.campaign_steps?.findFirst) {
+        stepRecord = await db.campaign_steps.findFirst({
+          where: { campaign_id: campaign.id, step_no: step.step_no },
+          select: { tracking_open: true, tracking_click: true },
+        });
+      }
+    } catch {}
+
+    const stepTrackingOpen =
+      typeof step.tracking_open === "boolean"
+        ? step.tracking_open
+        : typeof stepRecord?.tracking_open === "boolean"
+          ? stepRecord.tracking_open
+          : Boolean(campaign.tracking_open);
+    const stepTrackingClick =
+      typeof step.tracking_click === "boolean"
+        ? step.tracking_click
+        : typeof stepRecord?.tracking_click === "boolean"
+          ? stepRecord.tracking_click
+          : Boolean(campaign.tracking_click);
+
     // 4. Construct Pure Message body (text/plain only unless tracking/HTML is active)
     const { text: plainTextBody, html: htmlBody } = buildEmailMultipartBodies({
       bodyText: finalBody,
       unsubscribeUrl,
-      trackingOpen: Boolean(campaign.tracking_open),
-      trackingClick: Boolean(campaign.tracking_click),
+      trackingOpen: stepTrackingOpen,
+      trackingClick: stepTrackingClick,
       unsubscribeToken: recipient.unsubscribe_token,
       baseUrl: trackingBaseUrl,
     });

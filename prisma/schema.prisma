@@ -988,6 +988,8 @@ model campaign_steps {
   subject_template String?
   body_template    String?
   ai_instruction   String?
+  tracking_open    Boolean?
+  tracking_click   Boolean?
   created_at       DateTime           @default(now()) @db.Timestamptz
 
   campaign         outreach_campaigns @relation(fields: [campaign_id], references: [id], onDelete: Cascade)

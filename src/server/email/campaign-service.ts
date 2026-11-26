@@ -34,6 +34,10 @@ export interface CreateCampaignStepInput {
   subject?: string;
   body: string;
   same_thread?: boolean;
+  trackingOpen?: boolean;
+  trackingClick?: boolean;
+  tracking_open?: boolean;
+  tracking_click?: boolean;
 }
 
 export interface CreateCampaignInput {
@@ -244,6 +248,8 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
           mode: input.mode,
           subject_template: s.same_thread ? "Re: {{previous_subject}}" : (s.subject || "Re: {{previous_subject}}"),
           body_template: s.body,
+          tracking_open: Boolean(s.trackingOpen ?? s.tracking_open),
+          tracking_click: Boolean(s.trackingClick ?? s.tracking_click),
         }))
       );
     } catch (seqErr) {
@@ -260,6 +266,8 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
             mode: input.mode,
             subject_template: s.same_thread ? "Re: {{previous_subject}}" : (s.subject || "Re: {{previous_subject}}"),
             body_template: s.body,
+            tracking_open: Boolean(s.trackingOpen ?? s.tracking_open),
+            tracking_click: Boolean(s.trackingClick ?? s.tracking_click),
           })),
         });
       }

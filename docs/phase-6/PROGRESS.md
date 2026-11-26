@@ -63,6 +63,37 @@
 - **Decisions & Test Updates:** Updated `src/server/email/sending-engine.test.ts`, `src/server/email/tracking-token.test.ts`, and `src/server/email/outreach-followup.test.ts` assertions that previously expected auto-injected footers/`To unsubscribe:` or HTML wrappers on plain-text sends, because auto-footer injection was deleted per Task 1. (Note: `src/server/billing/providers/manual-provider.ts` still contains `Cerkit Labs / Lead Reach AI` as a manual bank transfer payee label unrelated to outreach emails.)
 - **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (49 test files, 295 tests passed).
 
+---
+
+## Task 2 — Tracking default off, toggles remain
+
+**Status:** Completed
+
+### Outcome & Changes
+- Added nullable per-step tracking columns `tracking_open Boolean?` and `tracking_click Boolean?` on `campaign_steps` (`prisma/schema.prisma`, additive migration `prisma/migrations/20261126070000_add_step_tracking_flags/migration.sql`) and updated `src/test/mock-db.ts` + `src/server/account/gdpr-service.ts` (`campaign_steps` export).
+- Kept existing campaigns/steps unchanged (`null` falls back to `campaign.tracking_open` / `campaign.tracking_click`), while all newly created campaigns, campaign steps, and follow-up sequence blueprints default `tracking_open: false` and `tracking_click: false`.
+- Updated `src/server/email/campaign-service.ts`, `src/server/email/sequence-service.ts`, `src/server/email/sending-engine.ts`, `src/app/api/v1/track/open/[token]/route.ts`, and `src/app/api/v1/track/click/[token]/route.ts` so pixels and link rewriting fire strictly when enabled on the active step/campaign while `/u/*`, `List-Unsubscribe`, and `List-Unsubscribe-Post` remain untouched.
+- Rendered per-campaign tracking toggles in `src/app/app/outreach/new/outreach-wizard.tsx` and per-step toggles in `src/components/outreach/followup-step-builder.tsx` (both OFF by default) with the deliverability notice.
+- Added `src/server/email/tracking-defaults.test.ts` (4 tests) verifying defaults, `text/plain` when off, open-pixel isolation, click-link isolation, and per-step follow-up overrides.
+- **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (50 test files, 299 tests passed).
+
+### Plan
+- **Existing campaigns policy:** `outreach_campaigns.tracking_open` and `outreach_campaigns.tracking_click` are already `@default(false)` in `prisma/schema.prisma`, and existing campaigns are left untouched (we do NOT overwrite existing campaign or step rows). New `campaign_steps.tracking_open` and `campaign_steps.tracking_click` columns are nullable (`Boolean?`) so existing legacy steps inherit `campaign.tracking_open` / `campaign.tracking_click` while all new steps explicitly default to `false` (`tracking_open: false`, `tracking_click: false`).
+- **Files to add/modify:**
+  - `prisma/schema.prisma`: add `tracking_open Boolean?` and `tracking_click Boolean?` to `campaign_steps`
+  - `prisma/migrations/20261126070000_add_step_tracking_flags/migration.sql`: additive `ALTER TABLE "campaign_steps" ADD COLUMN IF NOT EXISTS "tracking_open" BOOLEAN, ADD COLUMN IF NOT EXISTS "tracking_click" BOOLEAN;`
+  - `src/test/local-store.ts`: default `tracking_open`/`tracking_click` appropriately in `saveCampaignStep`
+  - `src/server/account/gdpr-service.ts`: include `campaign_steps` (with `tracking_open`, `tracking_click`) in `outreachCampaigns` GDPR export (`outreach_campaigns` cascade already deletes `campaign_steps`)
+  - `src/server/email/campaign-service.ts`: default `trackingOpen` / `trackingClick` to `false` and persist `tracking_open: Boolean(s.tracking_open)`, `tracking_click: Boolean(s.tracking_click)` on `campaign_steps` and `followup_sequences`
+  - `src/server/email/sequence-service.ts`: support `tracking_open?: boolean` and `tracking_click?: boolean` (default `false`) in `FollowupStep`, `getCampaignSequence`, `saveCampaignSequence`, and use per-step resolved flags (`step.tracking_open ?? campaign.tracking_open`, `step.tracking_click ?? campaign.tracking_click`) in `sendSingleRecipientFollowup`
+  - `src/server/email/sending-engine.ts`: resolve per-step `trackingOpen` / `trackingClick` (`stepRecord?.tracking_open ?? campaign.tracking_open`) for follow-up steps cleanly while Step 0 uses `campaign.tracking_open` / `campaign.tracking_click`
+  - `src/app/api/v1/track/open/[token]/route.ts` and `src/app/api/v1/track/click/[token]/route.ts`: allow recording events when either `campaign.tracking_open`/`tracking_click` OR any step of the campaign enabled it
+  - `src/app/app/outreach/new/outreach-wizard.tsx` & `src/components/outreach/followup-step-builder.tsx`: keep per-campaign and per-step Open Tracking & Click Tracking toggles (both OFF by default) with clear deliverability note: `"Click tracking rewrites links, open tracking adds a hidden image; both can hurt inbox placement."`
+  - `src/server/email/tracking-defaults.test.ts`: Vitest tests verifying defaults (`tracking_open=false`, `tracking_click=false` on new campaign & new follow-up steps), no pixel & no link rewriting when off (and `text/plain` only), pixel added only when `trackingOpen` is on, links rewritten only when `trackingClick` is on, per-step override independently of Step 0, and `List-Unsubscribe` / `/u/*` preserved untouched.
+- **Edge cases & risks:**
+  - Step with `trackingOpen=false` and `trackingClick=true` wraps links in HTML without adding an open-tracking `<img>` pixel; `trackingOpen=true` and `trackingClick=false` adds the `<img>` pixel without rewriting links; both `false` emits `text/plain` only.
+  - Concurrency / retries only read immutable campaign & step tracking booleans.
+
 ### Plan
 - **Files to add/modify:**
   - `prisma/schema.prisma`: add `business_address String?` on `workspaces`

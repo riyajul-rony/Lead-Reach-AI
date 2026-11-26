@@ -23,7 +23,17 @@ export async function GET(
         where: { id: recipient.campaign_id },
       });
 
-      if (campaign?.tracking_open) {
+      const stepWithOpenTracking =
+        !campaign?.tracking_open && db.campaign_steps?.findFirst
+          ? await db.campaign_steps
+              .findFirst({
+                where: { campaign_id: recipient.campaign_id, tracking_open: true },
+                select: { id: true },
+              })
+              .catch(() => null)
+          : null;
+
+      if (campaign?.tracking_open || stepWithOpenTracking) {
         const ip =
           req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
           req.headers.get("x-real-ip") ||

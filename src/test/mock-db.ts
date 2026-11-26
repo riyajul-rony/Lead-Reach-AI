@@ -656,13 +656,21 @@ class LocalDevMockDb {
   };
 
   campaign_steps = {
-    findMany: async ({ where, orderBy }: any = {}) => {
+    findMany: async ({ where, orderBy, skip, take }: any = {}) => {
       let items = localDevStore.getCampaignSteps((s: any) => {
-        if (where?.campaign_id && s.campaign_id !== where.campaign_id) return false;
-        if (where?.step_no && s.step_no !== where.step_no) return false;
+        if (where?.campaign_id) {
+          if (where.campaign_id.in && Array.isArray(where.campaign_id.in)) {
+            if (!where.campaign_id.in.includes(s.campaign_id)) return false;
+          } else if (s.campaign_id !== where.campaign_id) {
+            return false;
+          }
+        }
+        if (where?.step_no !== undefined && s.step_no !== where.step_no) return false;
         return true;
       });
       if (orderBy?.step_no === "asc") items = [...items].sort((a, b) => a.step_no - b.step_no);
+      if (skip && typeof skip === "number") items = items.slice(skip);
+      if (take && typeof take === "number") items = items.slice(0, take);
       return items;
     },
     findFirst: async ({ where }: any = {}) => {

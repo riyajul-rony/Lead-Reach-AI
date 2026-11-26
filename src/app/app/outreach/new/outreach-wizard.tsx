@@ -1074,6 +1074,37 @@ export function OutreachWizard() {
                     />
                   </div>
 
+                  <div className="rounded-lg border border-border bg-surface p-3 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-fg">
+                        Tracking (Off by default for deliverability)
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-5 text-xs">
+                      <label className="flex items-center gap-2 cursor-pointer select-none text-fg">
+                        <input
+                          type="checkbox"
+                          checked={trackingOpen}
+                          onChange={(e) => setTrackingOpen(e.target.checked)}
+                          className="checkbox checkbox-xs"
+                        />
+                        <span>Open tracking (hidden 1x1 pixel)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer select-none text-fg">
+                        <input
+                          type="checkbox"
+                          checked={trackingClick}
+                          onChange={(e) => setTrackingClick(e.target.checked)}
+                          className="checkbox checkbox-xs"
+                        />
+                        <span>Click tracking (rewrites links)</span>
+                      </label>
+                    </div>
+                    <p className="text-[11px] text-muted">
+                      Click tracking rewrites links, open tracking adds a hidden image; both can hurt inbox placement.
+                    </p>
+                  </div>
+
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-xs font-medium text-fg">
