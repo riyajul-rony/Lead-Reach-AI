@@ -2,7 +2,7 @@ import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
-import { getDecryptedAccountCredentials } from "@/server/email/account-service";
+import { getDecryptedAccountCredentials, isImapErrorMessage } from "@/server/email/account-service";
 import { classifyReplyIntent } from "@/server/ai/reply-classifier";
 import { detectDeterministicOptOut } from "@/server/email/opt-out-detector";
 import { handleIncomingWarmupEmail, isWarmupMessageHeaders } from "@/server/email/warmup-pool-service";
@@ -451,7 +451,10 @@ export async function pollInboxesForReplies(): Promise<PollResult> {
 
       await db.email_accounts.update({
         where: { id: account.id },
-        data: { last_polled_at: new Date() },
+        data: {
+          last_polled_at: new Date(),
+          ...(isImapErrorMessage(account.last_error) ? { last_error: null } : {}),
+        },
       });
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);

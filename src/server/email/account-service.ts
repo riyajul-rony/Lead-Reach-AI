@@ -108,6 +108,12 @@ export function getEffectiveAccountDailyLimit(account: {
   return computeEffectiveAdaptiveLimit(account).effectiveLimit;
 }
 
+const IMAP_ERROR_PATTERN = /^imap\b|imap.*(failed|authorization|authentication|error)/i;
+
+export function isImapErrorMessage(error?: string | null): boolean {
+  return Boolean(error && IMAP_ERROR_PATTERN.test(error));
+}
+
 /**
  * Validates whether an email account has operational reply detection.
  * Required for follow-up sequence execution and stop-on-reply guarantee.
@@ -121,12 +127,21 @@ export function accountHasWorkingReplyDetection(account: {
   reply_inbox_account_id?: string | null;
   reply_inbox?: any;
   status?: string | null;
+  last_error?: string | null;
 }): { capable: boolean; reason?: string } {
   // If account credentials or connection have actively failed (e.g., status is needs_attention or inactive)
   if (account.status && account.status !== "active") {
     return {
       capable: false,
       reason: `Account status is '${account.status}'. Reply polling is paused until credentials are fixed.`,
+    };
+  }
+
+  // If account has a recent IMAP authorization/polling error even before status transitioned
+  if (isImapErrorMessage(account.last_error)) {
+    return {
+      capable: false,
+      reason: account.last_error || "IMAP connection error detected. Reply polling is paused until credentials are fixed.",
     };
   }
 
@@ -748,7 +763,7 @@ export async function getDecryptedAccountCredentials(accountId: string) {
   };
 }
 
-function sanitizeAccount(acc: any) {
+export function sanitizeAccount(acc: any) {
   const {
     smtp_password_enc,
     imap_password_enc,

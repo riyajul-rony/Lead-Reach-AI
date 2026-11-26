@@ -138,11 +138,8 @@ export function WarmupDashboardClient({
   }, [refreshAccounts, refreshLogs, logsData.page]);
 
   const isAccountImapReady = (acc: WarmupAccountItem) =>
-    Boolean(
-      acc.has_reply_detection ||
-        (acc.imap_host && acc.has_imap_password) ||
-        acc.reply_inbox_account_id
-    );
+    acc.has_reply_detection ??
+    Boolean((acc.imap_host && acc.has_imap_password) || acc.reply_inbox_account_id);
 
   const activeWarmupAccounts = accounts.filter(
     (a) => a.status === "active" && Boolean(a.warmup_enabled)

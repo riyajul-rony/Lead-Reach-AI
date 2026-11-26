@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 import { requireUser } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { listCampaigns } from "@/server/email/campaign-service";
+import { listEmailAccounts } from "@/server/email/account-service";
 import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { OutreachDashboard, CampaignSummary } from "./outreach-dashboard";
@@ -33,43 +34,7 @@ export default async function OutreachOverviewPage() {
 
   const [rawCampaigns, accountsRaw, repliesRaw, totalRepliesCount] = await Promise.all([
     listCampaigns(user.id),
-    db.email_accounts.findMany({
-      where: { user_id: user.id },
-      select: {
-        id: true,
-        label: true,
-        provider: true,
-        from_name: true,
-        from_email: true,
-        reply_to: true,
-        signature: true,
-        smtp_host: true,
-        smtp_port: true,
-        smtp_security: true,
-        smtp_username: true,
-        imap_host: true,
-        imap_port: true,
-        imap_security: true,
-        hourly_limit: true,
-        daily_limit: true,
-        gap_seconds: true,
-        min_gap_seconds: true,
-        max_gap_seconds: true,
-        timezone: true,
-        warmup_enabled: true,
-        warmup_day: true,
-        warmup_start_limit: true,
-        warmup_daily_increment: true,
-        warmup_max_limit: true,
-        dns_spf_status: true,
-        dns_dkim_status: true,
-        dns_dmarc_status: true,
-        status: true,
-        last_error: true,
-        created_at: true,
-      },
-      orderBy: { created_at: "desc" },
-    }),
+    listEmailAccounts(user.id),
     db.email_messages.findMany({
       where: {
         user_id: user.id,
@@ -126,20 +91,8 @@ export default async function OutreachOverviewPage() {
   }));
 
   const initialAccounts: EmailAccount[] = accountsRaw.map((a: any) => ({
-    id: a.id,
-    label: a.label,
+    ...a,
     provider: a.provider || "smtp",
-    from_name: a.from_name,
-    from_email: a.from_email,
-    reply_to: a.reply_to,
-    signature: a.signature,
-    smtp_host: a.smtp_host,
-    smtp_port: a.smtp_port,
-    smtp_security: a.smtp_security,
-    smtp_username: a.smtp_username,
-    imap_host: a.imap_host,
-    imap_port: a.imap_port,
-    imap_security: a.imap_security,
     hourly_limit: a.hourly_limit || 25,
     daily_limit: a.daily_limit || 150,
     gap_seconds: a.gap_seconds || 180,
@@ -151,11 +104,7 @@ export default async function OutreachOverviewPage() {
     warmup_start_limit: a.warmup_start_limit || 10,
     warmup_daily_increment: a.warmup_daily_increment || 5,
     warmup_max_limit: a.warmup_max_limit || 50,
-    dns_spf_status: a.dns_spf_status,
-    dns_dkim_status: a.dns_dkim_status,
-    dns_dmarc_status: a.dns_dmarc_status,
     status: a.status || "active",
-    last_error: a.last_error,
     created_at: a.created_at ? new Date(a.created_at).toISOString() : undefined,
   }));
 

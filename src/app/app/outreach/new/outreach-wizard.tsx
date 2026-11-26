@@ -63,6 +63,8 @@ interface EmailAccountItem {
   provider?: string;
   imap_host?: string | null;
   has_imap_password?: boolean;
+  has_reply_detection?: boolean;
+  reply_detection_reason?: string;
   reply_inbox_account_id?: string | null;
   reply_inbox?: { id: string; label: string; from_email: string } | null;
   has_oauth_token?: boolean;
@@ -90,6 +92,15 @@ const STEP_LABELS = [
 ];
 
 const DRAFT_STORAGE_KEY = "leadreach_outreach_wizard_draft_v2";
+
+function isAccountMissingReplyDetection(a: EmailAccountItem): boolean {
+  if (typeof a.has_reply_detection === "boolean") {
+    return !a.has_reply_detection;
+  }
+  const hasDirect = Boolean(a.imap_host && (a.has_imap_password || a.has_imap_password === undefined));
+  const hasLinked = Boolean(a.reply_inbox_account_id || a.reply_inbox);
+  return !hasDirect && !hasLinked;
+}
 
 export function OutreachWizard() {
   const router = useRouter();
@@ -2236,12 +2247,9 @@ export function OutreachWizard() {
               {/* Reply Detection & Follow-up Warnings */}
               {(() => {
                 const selectedAccountsList = accounts.filter((a) => selectedAccountIds.includes(a.id));
-                const accountsWithoutReplyDetection = selectedAccountsList.filter((a) => {
-                  const hasDirect = Boolean(a.imap_host && (a.has_imap_password || a.has_imap_password === undefined));
-                  const hasLinked = Boolean(a.reply_inbox_account_id || a.reply_inbox);
-                  const hasFlag = (a as any).has_reply_detection === true;
-                  return !hasFlag && !hasDirect && !hasLinked;
-                });
+                const accountsWithoutReplyDetection = selectedAccountsList.filter(
+                  isAccountMissingReplyDetection
+                );
                 const hasNoReplyDetection = accountsWithoutReplyDetection.length > 0;
                 const hasFollowups = followupSteps.length > 0;
 
@@ -2342,12 +2350,9 @@ export function OutreachWizard() {
               {/* Big Launch Buttons */}
               {(() => {
                 const selectedAccountsList = accounts.filter((a) => selectedAccountIds.includes(a.id));
-                const accountsWithoutReplyDetection = selectedAccountsList.filter((a) => {
-                  const hasDirect = Boolean(a.imap_host && (a.has_imap_password || a.has_imap_password === undefined));
-                  const hasLinked = Boolean(a.reply_inbox_account_id || a.reply_inbox);
-                  const hasFlag = (a as any).has_reply_detection === true;
-                  return !hasFlag && !hasDirect && !hasLinked;
-                });
+                const accountsWithoutReplyDetection = selectedAccountsList.filter(
+                  isAccountMissingReplyDetection
+                );
                 const hasNoReplyDetection = accountsWithoutReplyDetection.length > 0;
                 const hasFollowups = followupSteps.length > 0;
                 const deliverabilityCheck = analyzeDeliverability({

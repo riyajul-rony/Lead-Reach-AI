@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import {
   deleteEmailAccount,
   getDecryptedAccountCredentials,
+  sanitizeAccount,
   updateEmailAccount,
   testSmtpConnection,
   testImapConnection,
@@ -28,15 +29,8 @@ export async function GET(
     return NextResponse.json({ error: "Account not found" }, { status: 404 });
   }
 
-  const { smtp_password_enc, imap_password_enc, oauth_access_token_enc, oauth_refresh_token_enc, ...safe } = account;
   return NextResponse.json({
-    data: {
-      ...safe,
-      senderName: safe.from_name ?? null,
-      has_smtp_password: Boolean(smtp_password_enc),
-      has_imap_password: Boolean(imap_password_enc),
-      has_oauth_token: Boolean(oauth_refresh_token_enc || oauth_access_token_enc),
-    },
+    data: sanitizeAccount(account),
   });
 }
 

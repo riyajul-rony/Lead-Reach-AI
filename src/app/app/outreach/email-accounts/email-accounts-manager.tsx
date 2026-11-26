@@ -110,6 +110,8 @@ export interface EmailAccount {
   has_smtp_password?: boolean;
   has_imap_password?: boolean;
   has_oauth_token?: boolean;
+  has_reply_detection?: boolean;
+  reply_detection_reason?: string;
 }
 
 /* ──── Provider presets: only prefill Host/Port/SSL ──── */
@@ -934,7 +936,7 @@ export function EmailAccountsManager({
             const maxGap = account.max_gap_seconds || 420;
             const hasDirectImap = Boolean(account.imap_host && account.has_imap_password);
             const hasReplyInbox = Boolean(account.reply_inbox_account_id || account.reply_inbox);
-            const hasWorkingReply = (account as any).has_reply_detection ?? (hasDirectImap || hasReplyInbox);
+            const hasWorkingReply = account.has_reply_detection ?? (hasDirectImap || hasReplyInbox);
 
             return (
               <div
@@ -976,7 +978,11 @@ export function EmailAccountsManager({
                               ? "Paused (Deliverability)"
                               : account.status}
                         </Badge>
-                        {!hasWorkingReply && (
+                        {hasWorkingReply ? (
+                          <Badge variant="success" size="sm">
+                            Reply detection: Active
+                          </Badge>
+                        ) : (
                           <Badge variant="warning" size="sm">
                             Reply detection: Off
                           </Badge>
@@ -1195,7 +1201,10 @@ export function EmailAccountsManager({
                 {!hasWorkingReply && (
                   <div className="mt-2.5 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2">
                     <AlertTriangle size={14} className="shrink-0 text-amber-600 dark:text-amber-400" />
-                    <span>For follow-ups and stop-on-reply, connect with App Password + IMAP</span>
+                    <span>
+                      {account.reply_detection_reason ||
+                        "For follow-ups and stop-on-reply, connect with App Password + IMAP"}
+                    </span>
                   </div>
                 )}
               </div>
