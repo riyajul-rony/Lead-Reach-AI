@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
+import { logger } from "@/server/logger";
 import { runAccountProfileDetection } from "@/server/email/account-profile-detector";
 import { getAccountAdaptiveLimitSummary } from "@/server/email/adaptive-limit-service";
 import { getUtcDayStart } from "@/server/email/daily-capacity";
@@ -78,8 +79,9 @@ export async function POST(
       },
     });
   } catch (err: any) {
+    logger.error({ err: err?.message, accountId: id }, "Failed to re-check account profile");
     return NextResponse.json(
-      { error: err?.message || "Failed to re-check account profile" },
+      { error: "Failed to re-check account profile" },
       { status: 500 }
     );
   }

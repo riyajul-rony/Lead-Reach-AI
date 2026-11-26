@@ -75,7 +75,10 @@ export async function evaluateAccountBouncePause(
   bounceRate: number;
   reason?: string;
 }> {
-  const account = await db.email_accounts.findUnique({ where: { id: accountId } });
+  const account = await db.email_accounts.findUnique({
+    where: { id: accountId },
+    select: { id: true, status: true },
+  });
   if (!account) {
     return { paused: false, bounceCount: 0, totalSends: 0, bounceRate: 0 };
   }
@@ -102,6 +105,8 @@ export async function evaluateAccountBouncePause(
           status: "bounced",
         },
         select: { id: true, last_sent_at: true, sent_at: true, updated_at: true, created_at: true },
+        orderBy: { created_at: "desc" },
+        take: 500,
       })
     : [];
 
@@ -207,7 +212,10 @@ export async function recordAccountAuthFailure(
   now: Date = new Date()
 ): Promise<{ paused: boolean; consecutiveFailures: number; reason?: string }> {
   return withAccountAuthLock(accountId, async () => {
-    const account = await db.email_accounts.findUnique({ where: { id: accountId } });
+    const account = await db.email_accounts.findUnique({
+      where: { id: accountId },
+      select: { id: true, status: true, consecutive_smtp_auth_failures: true },
+    });
     if (!account) {
       return { paused: false, consecutiveFailures: 0 };
     }

@@ -36,6 +36,8 @@ export async function getHealthyWarmupDaysCount(accountId: string): Promise<numb
         status: { in: ["sent", "replied"] },
       },
       select: { sent_at: true },
+      orderBy: { sent_at: "desc" },
+      take: 500,
     });
     const days = new Set<string>();
     for (const log of logs || []) {
@@ -332,6 +334,8 @@ export async function evaluateAccountSevenDayWindow(
       status: "bounced",
     },
     select: { last_sent_at: true, sent_at: true, created_at: true },
+    orderBy: { created_at: "desc" },
+    take: 500,
   });
   const windowBounces = (bouncedRecipients || []).filter((r: any) => {
     const ts = new Date(r.last_sent_at || r.sent_at || r.created_at || 0).getTime();
@@ -454,33 +458,81 @@ export async function evaluateDailyAccountHealth(now: Date = new Date()): Promis
   checked: number;
   evaluated: number;
 }> {
-  const accounts = await db.email_accounts.findMany({
-    where: { status: { in: ["active", "paused_deliverability"] } },
-  });
-
+  const BATCH_SIZE = 100;
+  let skip = 0;
   let checked = 0;
   let evaluated = 0;
-  for (const acc of accounts) {
-    let latestAcc = acc;
-    if (acc.status === "active") {
-      try {
-        const bounceCheck = await evaluateAccountBouncePause(acc.id, now);
-        if (bounceCheck.paused) {
-          const refreshed = await db.email_accounts.findUnique({ where: { id: acc.id } });
-          if (refreshed) latestAcc = refreshed;
+
+  const accountSelect = {
+    id: true,
+    user_id: true,
+    from_email: true,
+    account_type: true,
+    workspace_tier: true,
+    detected_age_days: true,
+    ramp_started_at: true,
+    start_limit_snapshot: true,
+    current_daily_limit: true,
+    healthy_weeks_completed: true,
+    last_evaluated_at: true,
+    health_status: true,
+    user_daily_limit: true,
+    admin_daily_limit_override: true,
+    rate_limited_until: true,
+    rate_limit_hit_at: true,
+    status: true,
+    last_error: true,
+    warmup_enabled: true,
+    warmup_day: true,
+    warmup_start_limit: true,
+    warmup_daily_increment: true,
+    warmup_max_limit: true,
+    daily_limit: true,
+  } as const;
+
+  while (true) {
+    const accounts = await db.email_accounts.findMany({
+      where: { status: { in: ["active", "paused_deliverability"] } },
+      select: accountSelect,
+      orderBy: { id: "asc" },
+      skip,
+      take: BATCH_SIZE,
+    });
+
+    if (!accounts || accounts.length === 0) {
+      break;
+    }
+
+    for (const acc of accounts) {
+      let latestAcc = acc;
+      if (acc.status === "active") {
+        try {
+          const bounceCheck = await evaluateAccountBouncePause(acc.id, now);
+          if (bounceCheck.paused) {
+            const refreshed = await db.email_accounts.findUnique({
+              where: { id: acc.id },
+              select: accountSelect,
+            });
+            if (refreshed) latestAcc = refreshed;
+          }
+        } catch (err) {
+          logger.error({ err, accountId: acc.id }, "Daily bounce pause sweep failed");
         }
+      }
+      if (!latestAcc.ramp_started_at) continue;
+      checked++;
+      try {
+        const res = await evaluateAccountSevenDayWindow(latestAcc, now);
+        if (res.evaluated) evaluated++;
       } catch (err) {
-        logger.error({ err, accountId: acc.id }, "Daily bounce pause sweep failed");
+        logger.error({ err, accountId: latestAcc.id }, "Daily account health evaluation failed");
       }
     }
-    if (!latestAcc.ramp_started_at) continue;
-    checked++;
-    try {
-      const res = await evaluateAccountSevenDayWindow(latestAcc, now);
-      if (res.evaluated) evaluated++;
-    } catch (err) {
-      logger.error({ err, accountId: latestAcc.id }, "Daily account health evaluation failed");
+
+    if (accounts.length < BATCH_SIZE) {
+      break;
     }
+    skip += BATCH_SIZE;
   }
 
   return { checked, evaluated };

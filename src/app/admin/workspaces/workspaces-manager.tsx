@@ -144,6 +144,7 @@ export function WorkspacesManager({ canManage }: { canManage: boolean }) {
       <div className="glass rounded-xl p-4 flex flex-wrap items-center gap-3">
         <input
           type="text"
+          aria-label="Search workspaces or owner email"
           value={query}
           onChange={(e) => {
             setPage(1);
@@ -153,6 +154,7 @@ export function WorkspacesManager({ canManage }: { canManage: boolean }) {
           className="input h-9 text-xs flex-1 min-w-[220px]"
         />
         <select
+          aria-label="Filter by sending status"
           value={statusFilter}
           onChange={(e) => {
             setPage(1);
@@ -310,13 +312,18 @@ export function WorkspacesManager({ canManage }: { canManage: boolean }) {
 
       {/* Pause Reason Modal */}
       {pauseTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pause-workspace-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        >
           <form
             onSubmit={handleConfirmPause}
             className="glass rounded-xl max-w-md w-full p-5 space-y-4 bg-surface border border-border"
           >
             <div>
-              <h3 className="text-sm font-bold text-fg">Pause Workspace Sending</h3>
+              <h3 id="pause-workspace-modal-title" className="text-sm font-bold text-fg">Pause Workspace Sending</h3>
               <p className="text-xs text-muted mt-1">
                 All outbound campaigns, follow-ups, and warm-up traffic for{" "}
                 <strong>{pauseTarget.user?.email || pauseTarget.name}</strong> will pause immediately. Existing jobs remain queued safely.

@@ -175,7 +175,7 @@ export function OutreachWizard() {
   // Spam checker & Pre-send deliverability state
   const [spamResult, setSpamResult] = useState<SpamCheckResult | null>(null);
   const [checkingSpam, setCheckingSpam] = useState(false);
-  const [deliverabilityWarningsDismissed, setDeliverabilityWarningsDismissed] = useState(false);
+  const [dismissedWarningSignature, setDismissedWarningSignature] = useState<string | null>(null);
 
   // Step 5: Test send & Launch states
   const [testEmailAddress, setTestEmailAddress] = useState("");
@@ -2193,36 +2193,42 @@ export function OutreachWizard() {
                       </div>
                     )}
 
-                    {deliverability.warnings.length > 0 && (
-                      <div className="space-y-2">
-                        {!deliverabilityWarningsDismissed && (
-                          <div className="space-y-1.5">
-                            {deliverability.warnings.map((issue) => (
-                              <div
-                                key={issue.code + issue.title}
-                                className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-800 dark:text-amber-300"
-                              >
-                                <div className="font-semibold">{issue.title}</div>
-                                <div className="text-[11px] opacity-90">{issue.message}</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={deliverabilityWarningsDismissed}
-                            onChange={(e) => setDeliverabilityWarningsDismissed(e.target.checked)}
-                            className="rounded cursor-pointer"
-                          />
-                          <span>
-                            {deliverabilityWarningsDismissed
-                              ? "Warnings dismissed — click to inspect warnings again"
-                              : "Dismiss deliverability warnings"}
-                          </span>
-                        </label>
-                      </div>
-                    )}
+                    {deliverability.warnings.length > 0 && (() => {
+                      const warningSignature = `${subjectTemplate}|${bodyTemplate}|${trackingOpen}|${trackingClick}|${selectedAccountIds.join(",")}|${recipients.length}|${physicalAddress}`;
+                      const isDismissed = dismissedWarningSignature === warningSignature;
+                      return (
+                        <div className="space-y-2">
+                          {!isDismissed && (
+                            <div className="space-y-1.5">
+                              {deliverability.warnings.map((issue) => (
+                                <div
+                                  key={issue.code + issue.title}
+                                  className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-800 dark:text-amber-300"
+                                >
+                                  <div className="font-semibold">{issue.title}</div>
+                                  <div className="text-[11px] opacity-90">{issue.message}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isDismissed}
+                              onChange={(e) =>
+                                setDismissedWarningSignature(e.target.checked ? warningSignature : null)
+                              }
+                              className="rounded cursor-pointer"
+                            />
+                            <span>
+                              {isDismissed
+                                ? "Warnings dismissed — click to inspect warnings again"
+                                : "Dismiss deliverability warnings"}
+                            </span>
+                          </label>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()}

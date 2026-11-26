@@ -219,6 +219,17 @@
 - Apify B2B lead normalization (`src/server/providers/leads/apify/b2b-leads.adapter.ts`) already captures upstream `email_status` metadata when available, and sender DNS (`spf`/`dmarc` + MX lookup) lives in `dns-checker.ts` / `account-profile-detector.ts`.
 - Those signals can later feed `analyzeDeliverability()` (e.g., warning when recipient rows lack `valid` `email_status` or fail recipient-domain MX lookup) without changing Phase 6 scope.
 
+### Formal `code-review-checklist` & `verification-before-completion` Pass
+- **Performance & Bounded Queries (`AGENTS.md` Rule 6):**
+  - Paginated `evaluateDailyAccountHealth()` (`src/server/email/adaptive-limit-service.ts`) in batches of `100` (`skip`, `take: 100`, `orderBy: { id: "asc" }`) with explicit non-credential `select` (eliminated full-table read + encrypted credential columns load).
+  - Bounded `getHealthyWarmupDaysCount()` (`orderBy: { sent_at: "desc" }, take: 500`) and 7-day bounce window queries in `adaptive-limit-service.ts` and `src/server/email/deliverability-pause.ts` (`orderBy: { created_at: "desc" }, take: 500`, minimal `select`).
+- **Stale State Prevention & Accessibility:**
+  - Replaced static `deliverabilityWarningsDismissed` boolean in `src/app/app/outreach/new/outreach-wizard.tsx` with `dismissedWarningSignature` keyed on copy/tracking/accounts/address/recipients so edited drafts never stay silently dismissed.
+  - Added `aria-label`, `role="dialog"`, `aria-modal="true"`, and `aria-labelledby` attributes on `/admin/workspaces` filters and pause modal (`src/app/admin/workspaces/workspaces-manager.tsx`).
+- **Safe Error Responses:**
+  - Replaced internal `err?.message` pass-throughs with structured `logger.error` + safe 500 client messages in `src/app/api/v1/admin/workspaces/route.ts` and `src/app/api/v1/email-accounts/[id]/recheck/route.ts`.
+- **Re-Verified Full Gate:** `npm.cmd test` (`58` files / `364` tests passed), `npx.cmd tsc --noEmit` (exit `0`), `npm.cmd run lint` (`0` errors), `npm.cmd run build` (exit `0`), `npm.cmd run build:worker` (`dist/worker.cjs` `810.7kb`).
+
 ### Plan (Task 10 Archive)
 - **Architecture:** Pure synchronous static analysis helper `analyzeDeliverability(input)` (`src/server/email/deliverability-checker.ts`) with zero external network calls, executed client-side against rendered sample copy in Step 5 of `outreach-wizard.tsx` and unit-tested across all Error/Warn branches.
 - **Files to add/modify:**

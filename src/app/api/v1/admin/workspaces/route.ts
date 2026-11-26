@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/server/auth/session";
 import { hasPermission } from "@/server/auth/permissions";
 import { db } from "@/server/db";
+import { logger } from "@/server/logger";
 
 export async function GET(req: NextRequest) {
   const session = await getSessionUser();
@@ -86,8 +87,9 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (err: any) {
+    logger.error({ err: err?.message }, "Failed to load admin workspaces");
     return NextResponse.json(
-      { error: err?.message || "Failed to load workspaces" },
+      { error: "Failed to load workspaces" },
       { status: 500 }
     );
   }
