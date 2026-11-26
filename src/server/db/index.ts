@@ -485,13 +485,25 @@ class LocalDevMockDb {
   email_messages = {
     findMany: async ({ where, take, skip, orderBy }: any = {}) => {
       let items = localDevStore.getEmailMessages((m) => {
+        if (where?.id && m.id !== where.id) return false;
         if (where?.user_id && m.user_id !== where.user_id) return false;
         if (where?.direction && m.direction !== where.direction) return false;
         if (where?.kind && m.kind !== where.kind) return false;
         if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
         if (where?.status && m.status !== where.status) return false;
+        if (where?.reply_category && m.reply_category !== where.reply_category) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
-        if (where?.recipient_id && m.recipient_id !== where.recipient_id) return false;
+        if (where?.variant_id !== undefined) {
+          if (where.variant_id?.not === null && (m.variant_id === null || m.variant_id === undefined)) return false;
+          else if (typeof where.variant_id === "string" && m.variant_id !== where.variant_id) return false;
+        }
+        if (where?.recipient_id) {
+          if (where.recipient_id?.in && Array.isArray(where.recipient_id.in)) {
+            if (!where.recipient_id.in.includes(m.recipient_id)) return false;
+          } else if (m.recipient_id !== where.recipient_id) {
+            return false;
+          }
+        }
         return true;
       });
       if (orderBy?.sent_at === "desc" || orderBy?.created_at === "desc") {
@@ -503,20 +515,28 @@ class LocalDevMockDb {
     },
     findFirst: async ({ where }: any = {}) => {
       return localDevStore.getEmailMessages((m) => {
+        if (where?.id && m.id !== where.id) return false;
         if (where?.user_id && m.user_id !== where.user_id) return false;
         if (where?.direction && m.direction !== where.direction) return false;
         if (where?.kind && m.kind !== where.kind) return false;
         if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
         if (where?.status && m.status !== where.status) return false;
+        if (where?.reply_category && m.reply_category !== where.reply_category) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
         if (where?.recipient_id && m.recipient_id !== where.recipient_id) return false;
         return true;
       })[0] || null;
     },
     create: async ({ data }: any) => localDevStore.saveEmailMessage(data),
+    update: async ({ where, data }: any) => {
+      const existing = localDevStore.getEmailMessages((m) => m.id === where.id)[0] || { id: where.id };
+      return localDevStore.saveEmailMessage({ ...existing, ...data });
+    },
     count: async ({ where }: any = {}) => {
       return localDevStore.getEmailMessages((m) => {
         if (where?.user_id && m.user_id !== where.user_id) return false;
+        if (where?.direction && m.direction !== where.direction) return false;
+        if (where?.reply_category && m.reply_category !== where.reply_category) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
         if (where?.status && m.status !== where.status) return false;
         if (where?.sent_at?.gte) {
@@ -585,11 +605,55 @@ class LocalDevMockDb {
     },
   };
 
+  campaign_variants = {
+    findMany: async ({ where, orderBy }: any = {}) => {
+      let items = localDevStore.getCampaignVariants((v: any) => {
+        if (where?.campaign_id && v.campaign_id !== where.campaign_id) return false;
+        if (where?.step_no !== undefined && v.step_no !== where.step_no) return false;
+        if (where?.is_active !== undefined && v.is_active !== where.is_active) return false;
+        return true;
+      });
+      if (orderBy?.label === "asc") items = [...items].sort((a, b) => String(a.label).localeCompare(String(b.label)));
+      return items;
+    },
+    findFirst: async ({ where }: any = {}) => {
+      return localDevStore.findCampaignVariant((v: any) => {
+        if (where?.id && v.id !== where.id) return false;
+        if (where?.campaign_id && v.campaign_id !== where.campaign_id) return false;
+        if (where?.step_no !== undefined && v.step_no !== where.step_no) return false;
+        if (where?.is_active !== undefined && v.is_active !== where.is_active) return false;
+        return true;
+      });
+    },
+    findUnique: async ({ where }: any = {}) => {
+      return localDevStore.findCampaignVariant((v: any) => v.id === where.id);
+    },
+    create: async ({ data }: any) => localDevStore.saveCampaignVariant(data),
+    createMany: async ({ data }: any) => {
+      if (Array.isArray(data)) {
+        data.forEach((d) => localDevStore.saveCampaignVariant(d));
+      }
+      return { count: Array.isArray(data) ? data.length : 0 };
+    },
+    update: async ({ where, data }: any) => {
+      const existing = localDevStore.findCampaignVariant((v: any) => v.id === where.id);
+      return localDevStore.saveCampaignVariant({ ...existing, ...data });
+    },
+    delete: async ({ where }: any) => {
+      localDevStore.deleteCampaignVariant(where.id);
+      return { id: where.id };
+    },
+  };
+
   tracking_events = {
     findMany: async ({ where, take, orderBy }: any = {}) => {
       let items = localDevStore.getTrackingEvents((e: any) => {
         if (where?.campaign_id && e.campaign_id !== where.campaign_id) return false;
         if (where?.recipient_id && e.recipient_id !== where.recipient_id) return false;
+        if (where?.variant_id !== undefined) {
+          if (where.variant_id?.not === null && (e.variant_id === null || e.variant_id === undefined)) return false;
+          else if (typeof where.variant_id === "string" && e.variant_id !== where.variant_id) return false;
+        }
         if (where?.event_type && e.event_type !== where.event_type) return false;
         return true;
       });
@@ -600,7 +664,164 @@ class LocalDevMockDb {
     count: async ({ where }: any = {}) => {
       return localDevStore.getTrackingEvents((e: any) => {
         if (where?.campaign_id && e.campaign_id !== where.campaign_id) return false;
+        if (where?.variant_id && e.variant_id !== where.variant_id) return false;
         if (where?.event_type && e.event_type !== where.event_type) return false;
+        return true;
+      }).length;
+    },
+  };
+
+  tracking_domains = {
+    findMany: async ({ where, take, skip, orderBy }: any = {}) => {
+      let items = localDevStore.getTrackingDomains((d: any) => {
+        if (where?.user_id && d.user_id !== where.user_id) return false;
+        if (where?.status && d.status !== where.status) return false;
+        if (where?.domain && d.domain !== where.domain) return false;
+        if (where?.is_default !== undefined && d.is_default !== where.is_default) return false;
+        return true;
+      });
+      if (orderBy?.created_at === "desc") {
+        items = [...items].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+      }
+      if (skip) items = items.slice(skip);
+      if (take) items = items.slice(0, take);
+      return items;
+    },
+    findFirst: async ({ where }: any = {}) => {
+      return localDevStore.findTrackingDomain((d: any) => {
+        if (where?.id && d.id !== where.id) return false;
+        if (where?.user_id && d.user_id !== where.user_id) return false;
+        if (where?.domain && d.domain !== where.domain) return false;
+        if (where?.status && d.status !== where.status) return false;
+        if (where?.is_default !== undefined && d.is_default !== where.is_default) return false;
+        return true;
+      });
+    },
+    findUnique: async ({ where }: any = {}) => {
+      return localDevStore.findTrackingDomain((d: any) => {
+        if (where?.id && d.id !== where.id) return false;
+        if (where?.domain && d.domain !== where.domain) return false;
+        return true;
+      });
+    },
+    create: async ({ data }: any) => localDevStore.saveTrackingDomain(data),
+    update: async ({ where, data }: any) => {
+      const existing = localDevStore.findTrackingDomain((d: any) => d.id === where.id);
+      return localDevStore.saveTrackingDomain({ ...existing, ...data });
+    },
+    updateMany: async ({ where, data }: any) => {
+      const matching = localDevStore.getTrackingDomains((d: any) => {
+        if (where?.user_id && d.user_id !== where.user_id) return false;
+        if (where?.id?.not && d.id === where.id.not) return false;
+        return true;
+      });
+      matching.forEach((m: any) => localDevStore.saveTrackingDomain({ ...m, ...data }));
+      return { count: matching.length };
+    },
+    delete: async ({ where }: any) => {
+      localDevStore.deleteTrackingDomain(where.id);
+      return { id: where.id };
+    },
+    count: async ({ where }: any = {}) => {
+      return localDevStore.getTrackingDomains((d: any) => {
+        if (where?.user_id && d.user_id !== where.user_id) return false;
+        if (where?.status && d.status !== where.status) return false;
+        return true;
+      }).length;
+    },
+  };
+
+  warmup_logs = {
+    findMany: async ({ where, include, take, skip, orderBy }: any = {}) => {
+      let items = localDevStore.getWarmupLogs((w: any) => {
+        if (where?.id && w.id !== where.id) return false;
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.from_account_id && w.from_account_id !== where.from_account_id) return false;
+        if (where?.to_account_id && w.to_account_id !== where.to_account_id) return false;
+        if (where?.status) {
+          if (Array.isArray(where.status?.in) && !where.status.in.includes(w.status)) return false;
+          if (typeof where.status === "string" && w.status !== where.status) return false;
+        }
+        if (where?.sent_at?.gte) {
+          if (new Date(w.sent_at).getTime() < new Date(where.sent_at.gte).getTime()) return false;
+        }
+        return true;
+      });
+      if (orderBy?.sent_at === "desc" || orderBy?.created_at === "desc") {
+        items = [...items].sort(
+          (a, b) => new Date(b.sent_at || b.created_at).getTime() - new Date(a.sent_at || a.created_at).getTime()
+        );
+      }
+      if (skip) items = items.slice(skip);
+      if (take) items = items.slice(0, take);
+      if (include) {
+        return items.map((w: any) => ({
+          ...w,
+          from_account: include.from_account
+            ? localDevStore.findEmailAccount((a: any) => a.id === w.from_account_id)
+            : undefined,
+          to_account: include.to_account
+            ? localDevStore.findEmailAccount((a: any) => a.id === w.to_account_id)
+            : undefined,
+        }));
+      }
+      return items;
+    },
+    findFirst: async ({ where }: any = {}) => {
+      return localDevStore.findWarmupLog((w: any) => {
+        if (where?.id && w.id !== where.id) return false;
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.from_account_id && w.from_account_id !== where.from_account_id) return false;
+        if (where?.to_account_id && w.to_account_id !== where.to_account_id) return false;
+        if (where?.status && w.status !== where.status) return false;
+        if (where?.message_id) {
+          if (Array.isArray(where.message_id?.in) && !where.message_id.in.includes(w.message_id)) return false;
+          if (typeof where.message_id === "string" && w.message_id !== where.message_id) return false;
+        }
+        if (Array.isArray(where?.OR)) {
+          const matchesAny = where.OR.some((clause: any) => {
+            if (clause.id && w.id === clause.id) return true;
+            if (clause.message_id && typeof clause.message_id === "string" && w.message_id === clause.message_id) return true;
+            if (Array.isArray(clause.message_id?.in) && clause.message_id.in.includes(w.message_id)) return true;
+            return false;
+          });
+          if (!matchesAny) return false;
+        }
+        return true;
+      });
+    },
+    create: async ({ data }: any) => localDevStore.saveWarmupLog(data),
+    update: async ({ where, data }: any) => {
+      const existing = localDevStore.findWarmupLog((w: any) => w.id === where.id);
+      return localDevStore.saveWarmupLog({ ...existing, ...data });
+    },
+    updateMany: async ({ where, data }: any) => {
+      const matching = localDevStore.getWarmupLogs((w: any) => {
+        if (where?.id && w.id !== where.id) return false;
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.status && w.status !== where.status) return false;
+        return true;
+      });
+      matching.forEach((m: any) => localDevStore.saveWarmupLog({ ...m, ...data }));
+      return { count: matching.length };
+    },
+    count: async ({ where }: any = {}) => {
+      return localDevStore.getWarmupLogs((w: any) => {
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.from_account_id && w.from_account_id !== where.from_account_id) return false;
+        if (where?.to_account_id && w.to_account_id !== where.to_account_id) return false;
+        if (where?.status) {
+          if (Array.isArray(where.status?.in) && !where.status.in.includes(w.status)) return false;
+          if (typeof where.status === "string" && w.status !== where.status) return false;
+        }
+        if (where?.sent_at?.gte) {
+          if (new Date(w.sent_at).getTime() < new Date(where.sent_at.gte).getTime()) return false;
+        }
+        if (where?.replied_at?.gte) {
+          if (!w.replied_at || new Date(w.replied_at).getTime() < new Date(where.replied_at.gte).getTime()) return false;
+        }
         return true;
       }).length;
     },

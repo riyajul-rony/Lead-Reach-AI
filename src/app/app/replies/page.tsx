@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/pagination";
+import { ReplyCategoryControls } from "@/components/outreach/reply-category-controls";
+import { VALID_REPLY_CATEGORIES } from "@/server/ai/reply-classifier";
 
 export const metadata = {
   title: "Replies Inbox — Lead Reach AI",
@@ -17,23 +19,32 @@ export const metadata = {
 export default async function RepliesInboxPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ page?: string }>;
+  searchParams?: Promise<{ page?: string; category?: string }>;
 }) {
   const user = await requireUser();
   const userId = user.id;
 
   const sp = searchParams ? await searchParams : {};
   const currentPage = Math.max(1, parseInt(sp.page || "1", 10));
+  const selectedCategory =
+    sp.category && (VALID_REPLY_CATEGORIES as readonly string[]).includes(sp.category)
+      ? sp.category
+      : "all";
   const pageSize = 50;
   const skip = (currentPage - 1) * pageSize;
+
+  const whereClause: any = {
+    user_id: userId,
+    direction: "in",
+  };
+  if (selectedCategory !== "all") {
+    whereClause.reply_category = selectedCategory;
+  }
 
   // Fetch incoming replies with pagination and ordered latest first
   const [replies, totalRepliesCount] = await Promise.all([
     db.email_messages.findMany({
-      where: {
-        user_id: userId,
-        direction: "in",
-      },
+      where: whereClause,
       take: pageSize,
       skip,
       orderBy: { sent_at: "desc" },
@@ -44,6 +55,9 @@ export default async function RepliesInboxPage({
         in_reply_to: true,
         sent_at: true,
         recipient_id: true,
+        reply_category: true,
+        reply_category_confidence: true,
+        reply_category_source: true,
         recipient: {
           select: {
             email: true,
@@ -54,10 +68,7 @@ export default async function RepliesInboxPage({
       },
     }),
     db.email_messages.count({
-      where: {
-        user_id: userId,
-        direction: "in",
-      },
+      where: whereClause,
     }),
   ]);
 
@@ -74,6 +85,23 @@ export default async function RepliesInboxPage({
           </Link>
         }
       />
+
+      {/* Category Filter Tabs */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {["all", ...VALID_REPLY_CATEGORIES].map((cat) => (
+          <Link
+            key={cat}
+            href={cat === "all" ? "/app/replies" : `/app/replies?category=${cat}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors border ${
+              selectedCategory === cat
+                ? "bg-primary text-primaryText border-primary"
+                : "bg-surface text-muted border-border hover:text-fg"
+            }`}
+          >
+            {cat.replace(/_/g, " ")}
+          </Link>
+        ))}
+      </div>
 
       {replies.length === 0 ? (
         <Card className="p-8">
@@ -101,13 +129,18 @@ export default async function RepliesInboxPage({
                 className="p-5 hover:bg-surface-hover transition-colors duration-150 flex flex-col sm:flex-row items-start justify-between gap-4"
               >
                 <div className="space-y-1.5 flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold text-sm text-fg truncate">
                       {reply.subject || "Reply to outreach"}
                     </span>
                     <Badge variant="success" size="sm" dot>
                       Replied
                     </Badge>
+                    <ReplyCategoryControls
+                      messageId={reply.id}
+                      initialCategory={reply.reply_category}
+                      source={reply.reply_category_source}
+                    />
                   </div>
 
                   <p className="text-xs text-muted line-clamp-2 leading-relaxed">

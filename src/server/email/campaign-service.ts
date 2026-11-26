@@ -5,6 +5,11 @@ import { assertLimit } from "@/server/billing/limits";
 import { saveCampaignSequence } from "@/server/email/sequence-service";
 import { queueEmailDispatch } from "@/server/queues";
 import { accountHasWorkingReplyDetection } from "@/server/email/account-service";
+import {
+  VariantInput,
+  validateVariantInputs,
+  getCampaignVariantStats,
+} from "@/server/email/variant-service";
 
 export interface RecipientInput {
   email: string;
@@ -41,10 +46,12 @@ export interface CreateCampaignInput {
   subjectTemplate?: string;
   bodyTemplate?: string;
   steps?: CreateCampaignStepInput[];
+  variants?: VariantInput[];
   presetMode?: "safe" | "balanced" | "aggressive";
   daysOfWeek?: number[];
   trackingOpen?: boolean;
   trackingClick?: boolean;
+  trackingDomainId?: string | null;
   dailyLeadLimit?: number;
   previewApproved?: boolean;
   aiConfig?: {
@@ -76,6 +83,31 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
 
   if (!input.senderAccountIds || input.senderAccountIds.length === 0) {
     throw new Error("At least one sender email account must be selected");
+  }
+
+  if (input.variants && Array.isArray(input.variants) && input.variants.length > 0) {
+    validateVariantInputs(input.variants);
+  }
+
+  // Validate custom tracking domain ownership & verified status if explicitly specified
+  let validatedTrackingDomainId: string | null = null;
+  if (input.trackingDomainId) {
+    const td = await db.tracking_domains.findFirst({
+      where: {
+        id: input.trackingDomainId,
+        user_id: userId,
+      },
+      select: { id: true, status: true, domain: true },
+    });
+    if (!td) {
+      throw new Error("Selected custom tracking domain not found.");
+    }
+    if (td.status !== "verified") {
+      throw new Error(
+        `Custom tracking domain (${td.domain}) is not verified yet. Please verify its CNAME DNS record first.`
+      );
+    }
+    validatedTrackingDomainId = td.id;
   }
 
   // Verify accounts belong to user and are active
@@ -180,6 +212,7 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
       jitter_max_sec: Math.min(input.jitterMaxSec ?? 180, 600),
       tracking_open: Boolean(input.trackingOpen),
       tracking_click: Boolean(input.trackingClick),
+      tracking_domain_id: validatedTrackingDomainId,
       preset_mode: input.presetMode || "balanced",
       days_of_week: input.daysOfWeek && input.daysOfWeek.length > 0 ? input.daysOfWeek : [1, 2, 3, 4, 5],
       daily_lead_limit: input.dailyLeadLimit || null,
@@ -232,6 +265,21 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
         });
       }
     } catch {}
+  }
+
+  // Save A/B test variants if provided (supports step 0 and/or follow-up steps)
+  if (input.variants && Array.isArray(input.variants) && input.variants.length > 0 && db.campaign_variants?.createMany) {
+    await db.campaign_variants.createMany({
+      data: input.variants.map((v) => ({
+        campaign_id: campaign.id,
+        step_no: v.step_no ?? 0,
+        label: String(v.label).trim(),
+        subject_template: v.subject_template ?? input.subjectTemplate ?? null,
+        body_template: v.body_template ?? input.bodyTemplate ?? null,
+        weight: Math.max(1, Math.floor(v.weight ?? 50)),
+        is_active: v.is_active !== false,
+      })),
+    });
   }
 
   // Update email accounts sending limits if provided in allocations
@@ -371,6 +419,9 @@ export async function getCampaignDetails(userId: string, campaignId: string) {
     }
   } catch {}
 
+  // Load A/B test variant performance stats
+  const variantStats = await getCampaignVariantStats(campaignId).catch(() => []);
+
   return {
     campaign,
     stats: {
@@ -391,6 +442,7 @@ export async function getCampaignDetails(userId: string, campaignId: string) {
     senderAccounts,
     recipients,
     steps,
+    variantStats,
   };
 }
 

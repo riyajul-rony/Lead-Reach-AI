@@ -6,12 +6,14 @@ import { decrypt } from "@/server/crypto";
 import { getDecryptedAccountCredentials, getEffectiveAccountDailyLimit } from "@/server/email/account-service";
 import { ensureFreshGoogleAccessToken, sendViaGmailApi } from "@/server/email/google-oauth";
 import { getUserApiKey } from "@/server/api-keys/service";
-import { renderEmailTemplate } from "@/server/email/template-renderer";
+import { renderEmailTemplate, resolveSpintax } from "@/server/email/template-renderer";
 import { generateOutreachEmail } from "@/server/ai/outreach-generator";
 import { assertLimit } from "@/server/billing/limits";
 import { trackUsageIncrement } from "@/server/billing/usage-tracker";
 import { queueEmailSend } from "@/server/queues";
 import { createSignedTrackingToken } from "@/server/email/tracking-token";
+import { selectVariantForRecipient } from "@/server/email/variant-service";
+import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
@@ -563,7 +565,11 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     return { skipped: true, reason: "Recipient already claimed or no longer queued" };
   }
 
-  const unsubscribeUrl = `${BASE_URL}/u/${recipient.unsubscribe_token}`;
+  const trackingBaseUrl = await resolveTrackingBaseUrl(
+    recipient.user_id,
+    campaign.tracking_domain_id
+  );
+  const unsubscribeUrl = `${trackingBaseUrl}/u/${recipient.unsubscribe_token}`;
   const legalAddress =
     (campaign.source_ref as any)?.sender_address_footer ||
     account.signature ||
@@ -574,8 +580,20 @@ export async function sendSingleRecipientEmail(recipientId: string) {
   let isThreadedFollowup = false;
   let inReplyToId: string | undefined = undefined;
   let transportAcceptedMessageId: string | null = null;
+  let selectedVariantId: string | null = recipient.variant_id || null;
 
   try {
+    // Select A/B test variant if configured for this campaign step (preserves assigned variant_id on retry)
+    const selectedVariant = await selectVariantForRecipient(campaign.id, currentStep, recipient);
+    if (selectedVariant) {
+      selectedVariantId = selectedVariant.id;
+    }
+
+    const effectiveSubjectTemplate =
+      selectedVariant?.subject_template || campaign.subject_template;
+    const effectiveBodyTemplate =
+      selectedVariant?.body_template || campaign.body_template;
+
     // 4. Generate content for initial outreach or follow-up step
     if (currentStep === 0) {
       // Step 0: Initial Outreach
@@ -606,26 +624,26 @@ export async function sendSingleRecipientEmail(recipientId: string) {
             tone: (campaign.ai_config as any)?.tone,
             textModel: campaign.text_model || (campaign.ai_config as any)?.textModel,
           });
-          finalSubject = generated.subject;
-          finalBody = generated.body;
+          finalSubject = resolveSpintax(generated.subject);
+          finalBody = resolveSpintax(generated.body);
         } else {
           finalSubject = renderEmailTemplate(
-            campaign.subject_template || "Quick question for {{company_name|your business}}",
+            effectiveSubjectTemplate || "Quick question for {{company_name|your business}}",
             (recipient.vars as any) || {}
           );
           finalBody = renderEmailTemplate(
-            campaign.body_template || "Hi {{first_name|there}},\n\nWould love to connect.",
+            effectiveBodyTemplate || "Hi {{first_name|there}},\n\nWould love to connect.",
             (recipient.vars as any) || {}
           );
         }
       } else {
         finalSubject = renderEmailTemplate(
-          campaign.subject_template || "Hello {{company_name|there}}",
+          effectiveSubjectTemplate || "Hello {{company_name|there}}",
           (recipient.vars as any) || {},
           unsubscribeUrl
         );
         finalBody = renderEmailTemplate(
-          campaign.body_template || "Hi {{first_name|there}},\n\nWould love to connect.",
+          effectiveBodyTemplate || "Hi {{first_name|there}},\n\nWould love to connect.",
           (recipient.vars as any) || {},
           unsubscribeUrl
         );
@@ -643,6 +661,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
 
       const previousSubject = recipient.generated_subject || campaign.subject_template || "Our conversation";
       const subjectTpl =
+        selectedVariant?.subject_template ||
         stepRecord?.subject_template ||
         `Re: ${previousSubject.replace(/^Re:\s*/i, "")}`;
 
@@ -656,7 +675,9 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       );
 
       finalBody = renderEmailTemplate(
-        stepRecord?.body_template || "Following up on my previous note. Let me know if you have 5 minutes to chat.",
+        selectedVariant?.body_template ||
+          stepRecord?.body_template ||
+          "Following up on my previous note. Let me know if you have 5 minutes to chat.",
         (recipient.vars as any) || {},
         unsubscribeUrl
       );
@@ -675,7 +696,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       trackingOpen: Boolean(campaign.tracking_open),
       trackingClick: Boolean(campaign.tracking_click),
       unsubscribeToken: recipient.unsubscribe_token,
-      baseUrl: BASE_URL,
+      baseUrl: trackingBaseUrl,
     });
 
     // Generate explicit RFC Message-ID
@@ -708,6 +729,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
         user_id: recipient.user_id,
         recipient_id: recipient.id,
         email_account_id: account.id,
+        variant_id: selectedVariantId,
         direction: "out",
         kind: currentStep === 0 ? "initial" : "followup",
         step_no: currentStep,
@@ -737,6 +759,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       where: { id: recipient.id },
       data: {
         status: "sent",
+        variant_id: selectedVariantId,
         sent_at: new Date(),
         last_sent_at: new Date(),
         generated_subject: finalSubject,

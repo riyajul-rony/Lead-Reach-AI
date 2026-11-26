@@ -12,6 +12,7 @@ services:
     environment:
       APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN is required}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      CTD_TLS_ASK_SECRET: ${CTD_TLS_ASK_SECRET:-}
     configs:
       - source: caddyfile
         target: /etc/caddy/Caddyfile
@@ -57,6 +58,13 @@ services:
       SYSTEM_SMTP_FROM: ${SYSTEM_SMTP_FROM:-}
       SCHEDULERS_ENABLED: ${SCHEDULERS_ENABLED:-false}
       STALE_THRESHOLD_HOURS: ${STALE_THRESHOLD_HOURS:-24}
+      REPLY_AI_PROVIDER: ${REPLY_AI_PROVIDER:-openai}
+      REPLY_AI_MODEL: ${REPLY_AI_MODEL:-gpt-4o-mini}
+      REPLY_AI_API_KEY: ${REPLY_AI_API_KEY:-}
+      TRACKING_CNAME_TARGET: ${TRACKING_CNAME_TARGET:-}
+      CTD_TLS_ASK_SECRET: ${CTD_TLS_ASK_SECRET:-}
+      SELF_WARMUP_INTERVAL_MINUTES: ${SELF_WARMUP_INTERVAL_MINUTES:-15}
+      SELF_WARMUP_MAX_PER_TICK: ${SELF_WARMUP_MAX_PER_TICK:-5}
       TZ: UTC
     volumes:
       - appdata:/data
@@ -164,6 +172,9 @@ configs:
       {
           admin off
           email {$ADMIN_EMAIL:admin@example.com}
+          on_demand_tls {
+              ask http://web:3000/api/internal/tls-ask?secret={$CTD_TLS_ASK_SECRET:}
+          }
       }
 
       {$APP_DOMAIN} {
@@ -188,6 +199,30 @@ configs:
               header_up X-Real-IP {remote_host}
               header_up X-Forwarded-For {remote_host}
               header_up X-Forwarded-Proto {scheme}
+          }
+      }
+
+      https:// {
+          tls {
+              on_demand
+          }
+          encode zstd gzip
+
+          @allowed_tracking {
+              path /api/v1/track/*
+              path /api/v1/unsubscribe/*
+              path /u/*
+          }
+          handle @allowed_tracking {
+              reverse_proxy web:3000 {
+                  header_up Host {host}
+                  header_up X-Real-IP {remote_host}
+                  header_up X-Forwarded-For {remote_host}
+                  header_up X-Forwarded-Proto {scheme}
+              }
+          }
+          handle {
+              respond "Not Found" 404
           }
       }
 

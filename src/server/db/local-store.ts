@@ -55,7 +55,10 @@ interface StoreSchema {
   email_messages: any[];
   followup_sequences: any[];
   campaign_steps: any[];
+  campaign_variants: any[];
   tracking_events: any[];
+  tracking_domains: any[];
+  warmup_logs: any[];
   suppressions: any[];
   lead_searches: any[];
   leads: any[];
@@ -89,7 +92,10 @@ function getInitialStore(): StoreSchema {
     email_messages: [],
     followup_sequences: [],
     campaign_steps: [],
+    campaign_variants: [],
     tracking_events: [],
+    tracking_domains: [],
+    warmup_logs: [],
     suppressions: [],
     lead_searches: [],
     leads: [],
@@ -608,6 +614,53 @@ export const localDevStore = {
     return { count: beforeCount - store.campaign_steps.length };
   },
 
+  // --- Campaign Variants (A/B Testing) ---
+  getCampaignVariants: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.campaign_variants) store.campaign_variants = [];
+    return filter ? store.campaign_variants.filter(filter) : store.campaign_variants;
+  },
+  findCampaignVariant: (filter: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.campaign_variants) store.campaign_variants = [];
+    return store.campaign_variants.find(filter) || null;
+  },
+  saveCampaignVariant: (item: any) => {
+    const store = loadStore();
+    if (!store.campaign_variants) store.campaign_variants = [];
+    const idx = store.campaign_variants.findIndex((v) => v.id === item.id);
+    if (idx >= 0) {
+      store.campaign_variants[idx] = { ...store.campaign_variants[idx], ...item };
+    } else {
+      store.campaign_variants.push({
+        id: item.id || `cv-${Math.random().toString(36).slice(2, 10)}`,
+        created_at: new Date().toISOString(),
+        step_no: 0,
+        weight: 50,
+        is_active: true,
+        ...item,
+      });
+    }
+    saveStore();
+    return idx >= 0 ? store.campaign_variants[idx] : store.campaign_variants[store.campaign_variants.length - 1];
+  },
+  deleteCampaignVariant: (id: string) => {
+    const store = loadStore();
+    if (!store.campaign_variants) store.campaign_variants = [];
+    store.campaign_variants = store.campaign_variants.filter((v) => v.id !== id);
+    // Mimic ON DELETE SET NULL
+    for (const r of store.campaign_recipients || []) {
+      if (r.variant_id === id) r.variant_id = null;
+    }
+    for (const m of store.email_messages || []) {
+      if (m.variant_id === id) m.variant_id = null;
+    }
+    for (const te of store.tracking_events || []) {
+      if (te.variant_id === id) te.variant_id = null;
+    }
+    saveStore();
+  },
+
   // --- Tracking Events ---
   getTrackingEvents: (filter?: (item: any) => boolean) => {
     const store = loadStore();
@@ -712,6 +765,12 @@ export const localDevStore = {
   saveEmailMessage: (item: any) => {
     const store = loadStore();
     if (!store.email_messages) store.email_messages = [];
+    const idx = item.id ? store.email_messages.findIndex((m) => m.id === item.id) : -1;
+    if (idx >= 0) {
+      store.email_messages[idx] = { ...store.email_messages[idx], ...item };
+      saveStore();
+      return store.email_messages[idx];
+    }
     const msg = {
       id: item.id || `msg-${Math.random().toString(36).slice(2, 10)}`,
       created_at: new Date().toISOString(),
@@ -1298,5 +1357,90 @@ export const localDevStore = {
     store.apify_keys = store.apify_keys.filter((item) => !filter(item));
     saveStore();
     return { count: beforeCount - store.apify_keys.length };
+  },
+
+  // --- Custom Tracking Domains ---
+  getTrackingDomains: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.tracking_domains) store.tracking_domains = [];
+    return filter ? store.tracking_domains.filter(filter) : store.tracking_domains;
+  },
+  findTrackingDomain: (filter: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.tracking_domains) store.tracking_domains = [];
+    return store.tracking_domains.find(filter) || null;
+  },
+  saveTrackingDomain: (item: any) => {
+    const store = loadStore();
+    if (!store.tracking_domains) store.tracking_domains = [];
+    const idx = store.tracking_domains.findIndex((d) => d.id === item.id);
+    if (idx >= 0) {
+      store.tracking_domains[idx] = {
+        ...store.tracking_domains[idx],
+        ...item,
+        updated_at: new Date().toISOString(),
+      };
+    } else {
+      store.tracking_domains.push({
+        id: item.id || `td-${Math.random().toString(36).slice(2, 10)}`,
+        status: "pending",
+        is_default: false,
+        last_checked_at: null,
+        last_error: null,
+        verified_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        ...item,
+      });
+    }
+    saveStore();
+    return idx >= 0
+      ? store.tracking_domains[idx]
+      : store.tracking_domains[store.tracking_domains.length - 1];
+  },
+  deleteTrackingDomain: (id: string) => {
+    const store = loadStore();
+    if (!store.tracking_domains) store.tracking_domains = [];
+    store.tracking_domains = store.tracking_domains.filter((d) => d.id !== id);
+    // Mimic ON DELETE SET NULL on outreach_campaigns
+    for (const c of store.outreach_campaigns || []) {
+      if (c.tracking_domain_id === id) c.tracking_domain_id = null;
+    }
+    saveStore();
+  },
+
+  // --- Self Warm-up Logs ---
+  getWarmupLogs: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.warmup_logs) store.warmup_logs = [];
+    return filter ? store.warmup_logs.filter(filter) : store.warmup_logs;
+  },
+  findWarmupLog: (filter: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.warmup_logs) store.warmup_logs = [];
+    return store.warmup_logs.find(filter) || null;
+  },
+  saveWarmupLog: (item: any) => {
+    const store = loadStore();
+    if (!store.warmup_logs) store.warmup_logs = [];
+    const idx = store.warmup_logs.findIndex((w) => w.id === item.id);
+    if (idx >= 0) {
+      store.warmup_logs[idx] = { ...store.warmup_logs[idx], ...item };
+    } else {
+      store.warmup_logs.push({
+        id: item.id || `wu-${Math.random().toString(36).slice(2, 10)}`,
+        status: item.status || "sent",
+        reply_message_id: null,
+        replied_at: null,
+        error: null,
+        sent_at: item.sent_at || new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        ...item,
+      });
+    }
+    saveStore();
+    return idx >= 0
+      ? store.warmup_logs[idx]
+      : store.warmup_logs[store.warmup_logs.length - 1];
   },
 };

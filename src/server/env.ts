@@ -36,6 +36,13 @@ const envSchema = z.object({
   APIFY_TOKEN: z.string().optional(),
   SCHEDULERS_ENABLED: z.string().optional().default("false"),
   STALE_THRESHOLD_HOURS: z.coerce.number().min(1).default(24),
+  REPLY_AI_PROVIDER: z.string().optional().default("openai"),
+  REPLY_AI_MODEL: z.string().optional().default("gpt-4o-mini"),
+  REPLY_AI_API_KEY: z.string().optional(),
+  TRACKING_CNAME_TARGET: z.string().optional(),
+  CTD_TLS_ASK_SECRET: z.string().optional(),
+  SELF_WARMUP_INTERVAL_MINUTES: z.coerce.number().min(1).max(1440).optional().default(15),
+  SELF_WARMUP_MAX_PER_TICK: z.coerce.number().min(1).max(50).optional().default(5),
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;

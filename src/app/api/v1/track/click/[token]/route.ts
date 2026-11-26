@@ -59,6 +59,7 @@ export async function GET(
         campaign: {
           include: {
             campaign_steps: true,
+            variants: true,
           },
         },
       },
@@ -68,7 +69,7 @@ export async function GET(
       return NextResponse.json({ error: "Link not found" }, { status: 404 });
     }
 
-    // 2. Validate targetUrl against URLs actually stored in the DB for this campaign
+    // 2. Validate targetUrl against URLs actually stored in the DB for this campaign (including A/B variants)
     const allowedUrls = new Set<string>();
 
     for (const u of extractUrlsFromText(recipient.campaign.body_template)) {
@@ -76,6 +77,11 @@ export async function GET(
     }
     for (const step of recipient.campaign.campaign_steps || []) {
       for (const u of extractUrlsFromText(step.body_template)) {
+        allowedUrls.add(normalizeUrl(u));
+      }
+    }
+    for (const variant of recipient.campaign.variants || []) {
+      for (const u of extractUrlsFromText(variant.body_template)) {
         allowedUrls.add(normalizeUrl(u));
       }
     }
@@ -130,6 +136,7 @@ export async function GET(
             data: {
               recipient_id: recipient.id,
               campaign_id: recipient.campaign_id,
+              variant_id: recipient.variant_id || null,
               event_type: "click",
               link_url: targetUrl,
               ip_address: ip,

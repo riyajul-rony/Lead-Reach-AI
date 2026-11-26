@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
       message.includes("sender email account") ||
       message.includes("Subject and body templates are required") ||
       message.includes("does not support reply detection") ||
+      message.includes("tracking domain") ||
       message.includes("Campaign name is required");
 
     const userFacingError = isKnownFriendly

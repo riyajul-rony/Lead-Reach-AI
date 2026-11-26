@@ -43,6 +43,7 @@ import { FollowupStepBuilder, FollowupStepData } from "@/components/outreach/fol
 import { AiPreviewApprover, GeneratedPreview } from "@/components/outreach/ai-preview-approver";
 import { SpamCheckResult } from "@/server/email/spam-checker";
 import { InfoTooltip } from "@/components/outreach/info-tooltip";
+import { renderEmailTemplate } from "@/server/email/template-renderer";
 
 interface EmailAccountItem {
   id: string;
@@ -111,6 +112,8 @@ export function OutreachWizard() {
   const [daysOfWeek, setDaysOfWeek] = useState<number[]>([1, 2, 3, 4, 5]);
   const [trackingOpen, setTrackingOpen] = useState(false);
   const [trackingClick, setTrackingClick] = useState(false);
+  const [trackingDomainId, setTrackingDomainId] = useState("");
+  const [trackingDomains, setTrackingDomains] = useState<Array<{ id: string; domain: string; is_default?: boolean }>>([]);
   const [physicalAddress, setPhysicalAddress] = useState(
     "123 Innovation Way, Suite 400, Wilmington, DE 19801"
   );
@@ -161,6 +164,10 @@ export function OutreachWizard() {
   const [followupSteps, setFollowupSteps] = useState<FollowupStepData[]>([]);
   const [previewsApproved, setPreviewsApproved] = useState(false);
   const [aiPreviews, setAiPreviews] = useState<GeneratedPreview[]>([]);
+  const [spinSeed, setSpinSeed] = useState(0);
+  const [enableAbTest, setEnableAbTest] = useState(false);
+  const [variantBSubject, setVariantBSubject] = useState("");
+  const [variantBBody, setVariantBBody] = useState("");
 
   // Spam checker state
   const [spamResult, setSpamResult] = useState<SpamCheckResult | null>(null);
@@ -258,7 +265,7 @@ export function OutreachWizard() {
     setDraftRestored(false);
   };
 
-  // Fetch accounts on mount
+  // Fetch accounts and verified tracking domains on mount
   useEffect(() => {
     fetch("/api/v1/email-accounts")
       .then((r) => r.json())
@@ -272,6 +279,16 @@ export function OutreachWizard() {
         }
       })
       .finally(() => setLoadingAccounts(false));
+
+    fetch("/api/v1/tracking-domains?limit=50")
+      .then((r) => r.json())
+      .then((res) => {
+        const verified = (res.data?.items || []).filter((d: any) => d.status === "verified");
+        setTrackingDomains(verified);
+        const def = verified.find((d: any) => d.is_default);
+        if (def) setTrackingDomainId((prev) => prev || def.id);
+      })
+      .catch(() => {});
   }, []);
 
   // Auto-distribute leads across selected accounts
@@ -379,19 +396,31 @@ export function OutreachWizard() {
     );
   }, [recipients]);
 
+  const previewVars = useMemo(
+    () => ({
+      first_name: sampleRecipient.name ? String(sampleRecipient.name).split(" ")[0] : "there",
+      company_name: sampleRecipient.company || "your business",
+      website: sampleRecipient.website || "your website",
+      city: (sampleRecipient as any).city || "",
+    }),
+    [sampleRecipient]
+  );
+
+  const makePreviewRng = (seedOffset: number) => {
+    let state = (spinSeed * 1664525 + seedOffset + 1013904223) >>> 0;
+    return () => {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      return state / 4294967296;
+    };
+  };
+
   const previewSubject = useMemo(() => {
-    return subjectTemplate
-      .replace(/\{\{\s*first_name(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.name || "there")
-      .replace(/\{\{\s*company_name(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.company || "your business")
-      .replace(/\{\{\s*website(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.website || "your website");
-  }, [subjectTemplate, sampleRecipient]);
+    return renderEmailTemplate(subjectTemplate, previewVars, undefined, makePreviewRng(17));
+  }, [subjectTemplate, previewVars, spinSeed]);
 
   const previewBody = useMemo(() => {
-    return bodyTemplate
-      .replace(/\{\{\s*first_name(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.name || "there")
-      .replace(/\{\{\s*company_name(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.company || "your company")
-      .replace(/\{\{\s*website(?:\|[^}]+)?\s*\}\}/g, sampleRecipient.website || "your website");
-  }, [bodyTemplate, sampleRecipient]);
+    return renderEmailTemplate(bodyTemplate, previewVars, undefined, makePreviewRng(73));
+  }, [bodyTemplate, previewVars, spinSeed]);
 
   // Live Spam Deliverability check with debouncing
   useEffect(() => {
@@ -618,10 +647,30 @@ export function OutreachWizard() {
         subjectTemplate,
         bodyTemplate,
         steps: followupSteps,
+        variants:
+          enableAbTest && variantBSubject.trim() && variantBBody.trim()
+            ? [
+                {
+                  step_no: 0,
+                  label: "A",
+                  subject_template: subjectTemplate,
+                  body_template: bodyTemplate,
+                  weight: 50,
+                },
+                {
+                  step_no: 0,
+                  label: "B",
+                  subject_template: variantBSubject,
+                  body_template: variantBBody,
+                  weight: 50,
+                },
+              ]
+            : undefined,
         presetMode,
         daysOfWeek,
         trackingOpen,
         trackingClick,
+        trackingDomainId: trackingDomainId || undefined,
         previewApproved: mode === "ai" ? previewsApproved : true,
         aiConfig: {
           goalOrOffer: aiGoal,
@@ -940,6 +989,32 @@ export function OutreachWizard() {
                       onChange={(e) => setPhysicalAddress(e.target.value)}
                       className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-surface text-fg"
                     />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-fg">
+                        Custom Tracking Domain (Optional)
+                      </label>
+                      <Link
+                        href="/app/settings/integrations"
+                        className="text-[11px] text-primary hover:underline"
+                      >
+                        Manage Domains
+                      </Link>
+                    </div>
+                    <select
+                      value={trackingDomainId}
+                      onChange={(e) => setTrackingDomainId(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-surface text-fg"
+                    >
+                      <option value="">Default App Domain</option>
+                      {trackingDomains.map((td) => (
+                        <option key={td.id} value={td.id}>
+                          https://{td.domain} {td.is_default ? "(Default)" : ""}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}
@@ -1543,6 +1618,62 @@ export function OutreachWizard() {
                 />
               </div>
 
+              {/* Optional A/B Test Variant B (Initial Email) */}
+              {mode === "custom" && (
+                <div className="p-3.5 rounded-xl border border-border bg-bgSubtle space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold text-fg">A/B Test Variant B (Optional, 50/50 Split)</div>
+                      <div className="text-[11px] text-muted">
+                        Test an alternate subject and body on the initial email.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!enableAbTest) {
+                          if (!variantBSubject) setVariantBSubject(subjectTemplate);
+                          if (!variantBBody) setVariantBBody(bodyTemplate);
+                        }
+                        setEnableAbTest(!enableAbTest);
+                      }}
+                      className="px-2.5 py-1 rounded-md text-xs font-medium bg-surface border border-border text-fg hover:border-primary/50 transition-colors cursor-pointer"
+                    >
+                      {enableAbTest ? "Remove Variant B" : "+ Add Variant B"}
+                    </button>
+                  </div>
+
+                  {enableAbTest && (
+                    <div className="space-y-2.5 pt-2 border-t border-border">
+                      <div>
+                        <label className="text-[11px] font-medium text-muted block mb-1">
+                          Variant B Subject
+                        </label>
+                        <input
+                          type="text"
+                          value={variantBSubject}
+                          onChange={(e) => setVariantBSubject(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-surface text-fg focus:outline-hidden focus:border-primary"
+                          placeholder="Variant B subject line..."
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-muted block mb-1">
+                          Variant B Body
+                        </label>
+                        <textarea
+                          rows={5}
+                          value={variantBBody}
+                          onChange={(e) => setVariantBBody(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-surface text-fg font-sans leading-relaxed focus:outline-hidden focus:border-primary"
+                          placeholder="Variant B email body..."
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* AI Prompt / Goal if AI mode is active */}
               {mode === "ai" && (
                 <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 space-y-3">
@@ -1594,9 +1725,19 @@ export function OutreachWizard() {
             {/* Right Column: Live Prospect Preview & Spam Checker */}
             <div className="space-y-4">
               <div className="rounded-xl border border-border bg-bgSubtle p-4 space-y-3">
-                <div className="flex items-center justify-between text-xs text-muted border-b border-border pb-2">
+                <div className="flex items-center justify-between text-xs text-muted border-b border-border pb-2 gap-2 flex-wrap">
                   <span className="font-semibold text-fg">Live Preview for Lead #1</span>
-                  <span className="text-[11px] font-mono">{sampleRecipient.email}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono">{sampleRecipient.email}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSpinSeed((s) => s + 1)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-surface border border-border text-fg hover:border-primary/50 hover:text-primary transition-colors cursor-pointer"
+                      title="Sample another spintax variation"
+                    >
+                      <RotateCcw size={11} /> Spin Preview
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-2 text-xs">

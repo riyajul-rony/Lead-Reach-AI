@@ -7,6 +7,7 @@ import { SettingsNav } from "@/components/settings/settings-nav";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { TrackingDomainsCard } from "@/components/settings/tracking-domains-card";
 
 export const metadata = {
   title: "Integrations — Lead Reach AI",
@@ -111,6 +112,9 @@ export default async function IntegrationsSettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Custom Tracking Domains (CNAME) */}
+        <TrackingDomainsCard />
       </div>
     </div>
   );

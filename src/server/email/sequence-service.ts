@@ -3,12 +3,14 @@ import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { decrypt } from "@/server/crypto";
 import { accountHasWorkingReplyDetection, getEffectiveAccountDailyLimit } from "@/server/email/account-service";
-import { renderEmailTemplate } from "@/server/email/template-renderer";
+import { renderEmailTemplate, resolveSpintax } from "@/server/email/template-renderer";
 import { getUserApiKey } from "@/server/api-keys/service";
 import { generateOutreachEmail } from "@/server/ai/outreach-generator";
 import { assertLimit } from "@/server/billing/limits";
 import { trackUsageIncrement } from "@/server/billing/usage-tracker";
 import { buildEmailMultipartBodies, calculateRandomJitterSec, dispatchEmailTransport } from "@/server/email/sending-engine";
+import { selectVariantForRecipient } from "@/server/email/variant-service";
+import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
@@ -275,7 +277,11 @@ export async function sendSingleRecipientFollowup(
   }
 
   // 3. Render Subject and Body
-  const unsubscribeUrl = `${BASE_URL}/u/${recipient.unsubscribe_token}`;
+  const trackingBaseUrl = await resolveTrackingBaseUrl(
+    recipient.user_id,
+    campaign.tracking_domain_id
+  );
+  const unsubscribeUrl = `${trackingBaseUrl}/u/${recipient.unsubscribe_token}`;
   const legalAddress =
     campaign.source_ref?.sender_address_footer ||
     account.signature ||
@@ -283,8 +289,16 @@ export async function sendSingleRecipientFollowup(
 
   let finalSubject = "";
   let finalBody = "";
+  let selectedVariantId: string | null = null;
 
   try {
+    const selectedVariant = await selectVariantForRecipient(campaign.id, step.step_no, recipient);
+    if (selectedVariant) {
+      selectedVariantId = selectedVariant.id;
+    }
+    const effectiveStepSubject = selectedVariant?.subject_template || step.subject_template;
+    const effectiveStepBody = selectedVariant?.body_template || step.body_template;
+
     if (step.mode === "ai") {
       let rawApiKey = "";
       if (campaign.openai_key_id) {
@@ -313,39 +327,39 @@ export async function sendSingleRecipientFollowup(
             tone: campaign.ai_config?.tone || "conversational",
             textModel: campaign.text_model || campaign.ai_config?.textModel,
           });
-          const rawSubj = generated.subject || "Quick follow-up";
+          const rawSubj = resolveSpintax(generated.subject || "Quick follow-up");
           finalSubject = rawSubj.startsWith("Re:") ? rawSubj : `Re: ${rawSubj}`;
-          finalBody = generated.body;
+          finalBody = resolveSpintax(generated.body);
         } catch {
           // Fallback if AI generation encounters issue
           finalSubject = renderEmailTemplate(
-            step.subject_template || "Re: {{previous_subject}}",
+            effectiveStepSubject || "Re: {{previous_subject}}",
             { ...recipient.vars, previous_subject: recipient.generated_subject || "our conversation" }
           );
           finalBody = renderEmailTemplate(
-            step.body_template || "Hi {{first_name|there}},\n\nJust floating this to the top of your inbox.",
+            effectiveStepBody || "Hi {{first_name|there}},\n\nJust floating this to the top of your inbox.",
             recipient.vars || {}
           );
         }
       } else {
         finalSubject = renderEmailTemplate(
-          step.subject_template || "Re: {{previous_subject}}",
+          effectiveStepSubject || "Re: {{previous_subject}}",
           { ...recipient.vars, previous_subject: recipient.generated_subject || "our conversation" }
         );
         finalBody = renderEmailTemplate(
-          step.body_template || "Hi {{first_name|there}},\n\nJust floating this to the top of your inbox.",
+          effectiveStepBody || "Hi {{first_name|there}},\n\nJust floating this to the top of your inbox.",
           recipient.vars || {}
         );
       }
     } else {
       // Custom Template Mode
       finalSubject = renderEmailTemplate(
-        step.subject_template || "Re: {{previous_subject}}",
+        effectiveStepSubject || "Re: {{previous_subject}}",
         { ...recipient.vars, previous_subject: recipient.generated_subject || "our conversation" },
         unsubscribeUrl
       );
       finalBody = renderEmailTemplate(
-        step.body_template || "Hi {{first_name|there}},\n\nJust floating this to the top of your inbox.",
+        effectiveStepBody || "Hi {{first_name|there}},\n\nJust floating this to the top of your inbox.",
         recipient.vars || {},
         unsubscribeUrl
       );
@@ -359,7 +373,7 @@ export async function sendSingleRecipientFollowup(
       trackingOpen: Boolean(campaign.tracking_open),
       trackingClick: Boolean(campaign.tracking_click),
       unsubscribeToken: recipient.unsubscribe_token,
-      baseUrl: BASE_URL,
+      baseUrl: trackingBaseUrl,
     });
 
     const senderDomain = account.from_email.split("@")[1] || "leadreach.ai";
@@ -392,6 +406,7 @@ export async function sendSingleRecipientFollowup(
         user_id: recipient.user_id,
         recipient_id: recipient.id,
         email_account_id: account.id,
+        variant_id: selectedVariantId,
         direction: "out",
         kind: "followup",
         step_no: step.step_no,

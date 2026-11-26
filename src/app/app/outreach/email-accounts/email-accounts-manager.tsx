@@ -30,6 +30,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SendingSpeedCard } from "@/components/outreach/sending-speed-card";
 import { InfoTooltip } from "@/components/outreach/info-tooltip";
+import {
+  GmailAppPasswordGuide,
+  stripAppPasswordSpaces,
+} from "@/components/warmup/gmail-app-password-guide";
 
 export interface EmailAccount {
   id: string;
@@ -77,11 +81,11 @@ export interface EmailAccount {
 const PROVIDER_PRESETS = [
   {
     id: "gmail",
-    name: "Google / Gmail",
-    hint: "App Password required · 2-Step Verification must be ON",
+    name: "Gmail (App Password)",
+    hint: "Uses smtp.gmail.com:587 (TLS) + imap.gmail.com:993 (SSL) · Spaces removed from App Password automatically",
     smtp_host: "smtp.gmail.com",
-    smtp_port: 465,
-    ssl: true,
+    smtp_port: 587,
+    ssl: false,
   },
   {
     id: "outlook",
@@ -160,8 +164,8 @@ export function EmailAccountsManager({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [smtpHost, setSmtpHost] = useState("smtp.gmail.com");
-  const [smtpPort, setSmtpPort] = useState(465);
-  const [sslEnabled, setSslEnabled] = useState(true);
+  const [smtpPort, setSmtpPort] = useState(587);
+  const [sslEnabled, setSslEnabled] = useState(false);
 
   // Connection test state
   const [modalTesting, setModalTesting] = useState(false);
@@ -187,6 +191,32 @@ export function EmailAccountsManager({
   // Deletion confirmation state
   const [accountToDelete, setAccountToDelete] = useState<{ id: string; email: string } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Self Warm-up Pool state
+  const [warmupLogs, setWarmupLogs] = useState<any[]>([]);
+  const [warmupSummary, setWarmupSummary] = useState<{
+    poolCount: number;
+    imapCapableCount: number;
+    poolActive: boolean;
+    sentToday: number;
+    repliedToday: number;
+  } | null>(null);
+  const [loadingWarmup, setLoadingWarmup] = useState(true);
+  const [warmupError, setWarmupError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoadingWarmup(true);
+    setWarmupError(null);
+    fetch("/api/v1/email-accounts/warmup-logs?limit=10")
+      .then(async (r) => {
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.error || "Failed to load warm-up logs");
+        setWarmupLogs(json.data?.items || []);
+        setWarmupSummary(json.data?.summary || null);
+      })
+      .catch((e: any) => setWarmupError(e?.message || "Failed to load warm-up logs"))
+      .finally(() => setLoadingWarmup(false));
+  }, [accounts.length]);
 
   // Banner notification from OAuth redirect
   const [bannerNotice, setBannerNotice] = useState<{
@@ -306,7 +336,9 @@ export function EmailAccountsManager({
   const handleModalTestConnection = async () => {
     const trimmedEmail = email.trim();
     const trimmedHost = smtpHost.trim();
-    if (!trimmedEmail || !password || !trimmedHost) return;
+    const normalizedPassword =
+      selectedPreset === "gmail" ? stripAppPasswordSpaces(password) : password;
+    if (!trimmedEmail || !normalizedPassword || !trimmedHost) return;
 
     setModalTesting(true);
     setTestResult(null);
@@ -322,14 +354,14 @@ export function EmailAccountsManager({
             port: smtpPort,
             security: sslEnabled ? "ssl" : "tls",
             username: trimmedEmail,
-            password: password,
+            password: normalizedPassword,
           },
           imap: {
             host: deriveImapHostClient(trimmedHost),
             port: 993,
             security: "ssl",
             username: trimmedEmail,
-            password: password,
+            password: normalizedPassword,
           },
         }),
       });
@@ -383,7 +415,9 @@ export function EmailAccountsManager({
     e.preventDefault();
     const trimmedEmail = email.trim();
     const trimmedHost = smtpHost.trim();
-    if (!trimmedEmail || !password || !trimmedHost) {
+    const normalizedPassword =
+      selectedPreset === "gmail" ? stripAppPasswordSpaces(password) : password;
+    if (!trimmedEmail || !normalizedPassword || !trimmedHost) {
       setFormError("Email, password, and SMTP host are required.");
       return;
     }
@@ -399,7 +433,7 @@ export function EmailAccountsManager({
           smtp_host: trimmedHost,
           smtp_port: smtpPort,
           smtp_security: sslEnabled ? "ssl" : "tls",
-          smtp_password: password,
+          smtp_password: normalizedPassword,
           // Everything else: server applies Safe Preset defaults + auto-derives IMAP
         }),
       });
@@ -609,6 +643,90 @@ export function EmailAccountsManager({
             <div className="text-[11px] text-muted">Sent Today</div>
           </div>
         </div>
+      </div>
+
+      {/* Private Self Warm-up Pool Card */}
+      <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+              <Flame size={16} />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-fg flex items-center gap-2">
+                <span>Self Warm-up Pool (Private)</span>
+                <Badge
+                  variant={
+                    (warmupSummary?.poolCount ?? accounts.filter((a) => a.status === "active" && a.warmup_enabled).length) >= 2
+                      ? "success"
+                      : "warning"
+                  }
+                  size="sm"
+                >
+                  {(warmupSummary?.poolCount ?? accounts.filter((a) => a.status === "active" && a.warmup_enabled).length) >= 2
+                    ? "Pool Active"
+                    : "Need 2+ Warm-up Inboxes"}
+                </Badge>
+              </div>
+              <p className="text-[11px] text-muted mt-0.5">
+                Private warm-up rotates messages only between your own connected active accounts with Warm-up ON (minimum 2 required). Automated replies require IMAP on the receiving inbox. This does not send to external third-party warm-up networks.
+              </p>
+            </div>
+          </div>
+          {warmupSummary && (
+            <div className="flex items-center gap-3 text-[11px] text-muted shrink-0 font-mono flex-wrap">
+              <span>Pool: {warmupSummary.poolCount} inboxes ({warmupSummary.imapCapableCount} IMAP)</span>
+              <span>Today: {warmupSummary.sentToday} sent · {warmupSummary.repliedToday} replied</span>
+              <Link
+                href="/app/warmup"
+                className="font-sans text-primary hover:underline font-semibold"
+              >
+                Open Warm-up Dashboard &rarr;
+              </Link>
+            </div>
+          )}
+        </div>
+
+        {loadingWarmup ? (
+          <div className="text-[11px] text-muted py-1">Loading recent warm-up pool activity...</div>
+        ) : warmupError ? (
+          <div className="text-[11px] text-rose-600 dark:text-rose-400">{warmupError}</div>
+        ) : warmupLogs.length === 0 ? (
+          <div className="text-[11px] text-muted border border-dashed border-border rounded-lg p-2.5">
+            No self warm-up activity yet. Enable Warm-up in Settings on at least 2 active inboxes to start internal warm-up rotations.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[11px]">
+              <thead>
+                <tr className="border-b border-border text-muted uppercase">
+                  <th className="py-1.5 pr-3">From</th>
+                  <th className="py-1.5 pr-3">To</th>
+                  <th className="py-1.5 pr-3">Subject</th>
+                  <th className="py-1.5 pr-3">Status</th>
+                  <th className="py-1.5">Sent</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {warmupLogs.slice(0, 5).map((wl) => (
+                  <tr key={wl.id}>
+                    <td className="py-1.5 pr-3 font-mono text-fg">{wl.from_account?.from_email || wl.from_account_id}</td>
+                    <td className="py-1.5 pr-3 font-mono text-muted">{wl.to_account?.from_email || wl.to_account_id}</td>
+                    <td className="py-1.5 pr-3 text-fg truncate max-w-[200px]">{wl.subject}</td>
+                    <td className="py-1.5 pr-3">
+                      <Badge variant={wl.status === "replied" ? "success" : wl.status === "failed" ? "danger" : "neutral"} size="sm">
+                        {wl.status}
+                      </Badge>
+                    </td>
+                    <td className="py-1.5 text-muted whitespace-nowrap">
+                      {wl.sent_at ? new Date(wl.sent_at).toLocaleString() : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Account List */}
@@ -893,14 +1011,33 @@ export function EmailAccountsManager({
                   required
                   placeholder={
                     selectedPreset === "gmail"
-                      ? "xxxx xxxx xxxx xxxx"
+                      ? "abcd efgh ijkl mnop"
                       : "Enter password"
                   }
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) =>
+                    setPassword(
+                      selectedPreset === "gmail"
+                        ? stripAppPasswordSpaces(e.target.value)
+                        : e.target.value
+                    )
+                  }
+                  onPaste={(e) => {
+                    if (selectedPreset === "gmail") {
+                      const pasted = e.clipboardData.getData("text");
+                      if (pasted) {
+                        e.preventDefault();
+                        setPassword(stripAppPasswordSpaces(pasted));
+                      }
+                    }
+                  }}
                   className="input w-full text-xs font-mono h-9"
                 />
               </div>
+
+              {selectedPreset === "gmail" && (
+                <GmailAppPasswordGuide compact />
+              )}
 
               {/* Fields 3-5: Host, Port, SSL — always visible and editable */}
               <div className="grid grid-cols-6 gap-3">
