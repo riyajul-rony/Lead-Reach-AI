@@ -11,6 +11,11 @@ import { trackUsageIncrement } from "@/server/billing/usage-tracker";
 import { buildEmailMultipartBodies, calculateRandomJitterSec, dispatchEmailTransport } from "@/server/email/sending-engine";
 import { selectVariantForRecipient } from "@/server/email/variant-service";
 import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
+import {
+  isWithinSendingWindow,
+  normalizeIanaTimezone,
+  resolveEffectiveSendingTimezone,
+} from "@/server/email/timezone";
 
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
@@ -484,14 +489,12 @@ export async function dispatchDueFollowups(
 
   for (const campaign of runningCampaigns) {
     try {
-      // Check send window
-      const currentHour = now.getUTCHours();
       const startHour = campaign.send_window?.startHour ?? 0;
       const endHour = campaign.send_window?.endHour ?? 24;
-
-      if (currentHour < startHour || currentHour >= endHour) {
-        continue;
-      }
+      const daysOfWeek =
+        Array.isArray(campaign.days_of_week) && campaign.days_of_week.length > 0
+          ? campaign.days_of_week
+          : [1, 2, 3, 4, 5, 6, 7];
 
       // Check active sequence
       const sequence = await db.followup_sequences.findFirst({
@@ -539,9 +542,65 @@ export async function dispatchDueFollowups(
         take: 20,
       });
 
+      // Batch-fetch lead & account timezones for recipient sending-window evaluation
+      const leadIds = Array.from(
+        new Set(eligibleRecipients.map((r: any) => r.lead_id).filter(Boolean))
+      ) as string[];
+      const leadTimezoneMap = new Map<string, string | null>();
+      if (leadIds.length > 0 && db.leads?.findMany) {
+        try {
+          const leadRows = await db.leads.findMany({
+            where: { id: { in: leadIds } },
+            select: { id: true, timezone: true },
+          });
+          for (const l of leadRows) {
+            leadTimezoneMap.set(l.id, l.timezone || null);
+          }
+        } catch {}
+      }
+
+      const accountIds = Array.from(
+        new Set(eligibleRecipients.map((r: any) => r.assigned_account_id).filter(Boolean))
+      ) as string[];
+      const accountTimezoneMap = new Map<string, string | null>();
+      if (accountIds.length > 0 && db.email_accounts?.findMany) {
+        try {
+          const accRows = await db.email_accounts.findMany({
+            where: { id: { in: accountIds } },
+            select: { id: true, timezone: true },
+          });
+          for (const a of accRows) {
+            accountTimezoneMap.set(a.id, a.timezone || null);
+          }
+        } catch {}
+      }
+
       for (const rec of eligibleRecipients) {
         const currentStep = rec.current_step || 0;
         if (currentStep >= sequence.steps.length) {
+          continue;
+        }
+
+        const recipientTimezone =
+          normalizeIanaTimezone((rec.vars as any)?.timezone) ||
+          normalizeIanaTimezone(rec.lead_id ? leadTimezoneMap.get(rec.lead_id) : null);
+        const accountTimezone = rec.assigned_account_id
+          ? accountTimezoneMap.get(rec.assigned_account_id)
+          : null;
+        const effectiveTz = resolveEffectiveSendingTimezone({
+          recipientTimezone,
+          campaignTimezone: campaign.timezone,
+          accountTimezone,
+        });
+
+        const inWindow = isWithinSendingWindow(now, {
+          timezone: effectiveTz,
+          startHour,
+          endHour,
+          daysOfWeek,
+        });
+        if (!inWindow) {
+          totalSkipped++;
           continue;
         }
 

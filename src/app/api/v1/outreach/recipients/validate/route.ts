@@ -20,6 +20,7 @@ const validateRequestSchema = z.object({
       website: z.string().optional(),
       job_title: z.string().optional(),
       phone: z.string().optional(),
+      timezone: z.string().optional(),
     })
     .optional(),
 });
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest) {
         website: true,
         phone_raw: true,
         phone_e164: true,
+        timezone: true,
       },
       take: 2000,
     });
@@ -85,6 +87,7 @@ export async function POST(req: NextRequest) {
       company: l.company_name || "",
       website: l.website || "",
       phone: l.phone_e164 || l.phone_raw || "",
+      timezone: l.timezone || undefined,
       lead_id: l.id,
     }));
 

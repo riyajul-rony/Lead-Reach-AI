@@ -2,6 +2,7 @@ import { getConfig } from "../../config";
 import type { LeadSourceProvider, LeadSearchParams, RawLead } from "./types";
 import { logger } from "../../logger";
 import { normalizePhone, resolveOfficialWebsite } from "./enrichment";
+import { normalizeIanaTimezone } from "@/server/email/timezone";
 import { parseString } from "fast-csv";
 
 export { resolveOfficialWebsite };
@@ -409,6 +410,7 @@ export class GoogleMapsProvider implements LeadSourceProvider {
         reviewsCount: isNaN(reviewsCount as number) ? undefined : reviewsCount,
         latitude: isNaN(latitude as number) ? undefined : latitude,
         longitude: isNaN(longitude as number) ? undefined : longitude,
+        timezone: normalizeIanaTimezone(row.timezone) || undefined,
       });
 
       if (leads.length >= targetCount) {

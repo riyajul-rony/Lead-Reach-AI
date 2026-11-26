@@ -17,6 +17,7 @@ export type RawLead = {
   reviewsCount?: number;
   latitude?: number;
   longitude?: number;
+  timezone?: string;
   extra?: Record<string, any>;
 };
 

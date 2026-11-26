@@ -1,25 +1,33 @@
-import Link from "next/link";
-import { Shield, Trash2, AlertTriangle } from "lucide-react";
+import { Shield } from "lucide-react";
 import { requireUser } from "@/server/auth/guards";
+import { db } from "@/server/db";
 import { PasswordForm } from "./password-form";
+import { GdprControls } from "./gdpr-controls";
 import { PageHeader } from "@/components/ui/page-header";
 import { SettingsNav } from "@/components/settings/settings-nav";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 
 export const metadata = {
   title: "Security Settings — Lead Reach AI",
-  description: "Manage your password, encryption settings, and security audits.",
+  description: "Manage your password, encryption settings, GDPR data export, and account deletion.",
 };
 
 export default async function SecuritySettingsPage() {
-  await requireUser();
+  const user = await requireUser();
+
+  const dbUser = await db.users.findUnique({
+    where: { id: user.id },
+    select: {
+      email: true,
+      password_hash: true,
+    },
+  });
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 pb-16">
       <PageHeader
         title="Account Settings"
-        description="Manage your password, encryption settings, and security audits."
+        description="Manage your password, encryption settings, GDPR data export, and account deletion."
       />
 
       <SettingsNav />
@@ -40,24 +48,11 @@ export default async function SecuritySettingsPage() {
         {/* Change Password Form (Client Component) */}
         <PasswordForm />
 
-        {/* Danger Zone */}
-        <Card className="border-red-500/30">
-          <CardHeader>
-            <CardTitle className="text-red-600 dark:text-red-400 flex items-center gap-2">
-              <AlertTriangle size={18} /> Danger Zone
-            </CardTitle>
-            <CardDescription>
-              Request permanent purging of your account, gathered leads, and automation runs.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <Link href="/data-deletion">
-              <Button variant="danger" size="sm">
-                <Trash2 size={14} className="mr-1.5" /> Request Data Deletion
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
+        {/* GDPR Export & Self-Service Account Deletion */}
+        <GdprControls
+          hasPassword={Boolean(dbUser?.password_hash)}
+          userEmail={dbUser?.email ?? user.email}
+        />
       </div>
     </div>
   );

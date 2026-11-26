@@ -3,6 +3,8 @@ import { db } from "@/server/db";
 import {
   getLocalTimeParts,
   isWithinSendingWindow,
+  isValidIanaTimezone,
+  resolveEffectiveSendingTimezone,
   calculateRandomJitterSec,
   selectAvailableAccountForCampaign,
   sendSingleRecipientEmail,
@@ -85,6 +87,146 @@ describe("Phase 5: Sending Engine & BullMQ Scheduler", () => {
         daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
       });
       expect(weekendAllowed).toBe(true);
+    });
+
+    it("validates IANA timezones and falls back from recipient -> campaign -> account -> UTC", () => {
+      expect(isValidIanaTimezone("America/New_York")).toBe(true);
+      expect(isValidIanaTimezone("Asia/Dhaka")).toBe(true);
+      expect(isValidIanaTimezone("Invalid/Zone_999")).toBe(false);
+      expect(isValidIanaTimezone("")).toBe(false);
+
+      expect(
+        resolveEffectiveSendingTimezone({
+          recipientTimezone: "America/Los_Angeles",
+          campaignTimezone: "Europe/London",
+          accountTimezone: "Asia/Dhaka",
+        })
+      ).toBe("America/Los_Angeles");
+
+      // Invalid recipient timezone falls back to campaign timezone
+      expect(
+        resolveEffectiveSendingTimezone({
+          recipientTimezone: "Bad/Timezone",
+          campaignTimezone: "Europe/London",
+          accountTimezone: "Asia/Dhaka",
+        })
+      ).toBe("Europe/London");
+
+      // Missing/invalid recipient + campaign falls back to account timezone, then UTC
+      expect(
+        resolveEffectiveSendingTimezone({
+          recipientTimezone: null,
+          campaignTimezone: "Not/ATimezone",
+          accountTimezone: "Asia/Tokyo",
+        })
+      ).toBe("Asia/Tokyo");
+
+      expect(
+        resolveEffectiveSendingTimezone({
+          recipientTimezone: null,
+          campaignTimezone: null,
+          accountTimezone: null,
+        })
+      ).toBe("UTC");
+    });
+
+    it("evaluates dispatchRunningCampaigns sending window in recipient's timezone when present", async () => {
+      // 2026-10-20 19:00 UTC (Tuesday):
+      // - UTC is 19:00 -> OUTSIDE 09:00-18:00
+      // - America/New_York (UTC-4) is 15:00 -> INSIDE 09:00-18:00
+      // - Asia/Tokyo (UTC+9) is 04:00 (Wed) -> OUTSIDE 09:00-18:00
+      const testNow = new Date("2026-10-20T19:00:00Z");
+
+      const acc = await db.email_accounts.create({
+        data: {
+          id: `acc-tz-${Date.now()}`,
+          user_id: testUserId,
+          label: "TZ Sender",
+          from_name: "Alex",
+          from_email: `tz-${Date.now()}@company.com`,
+          smtp_host: "smtp.company.com",
+          smtp_port: 587,
+          hourly_limit: 25,
+          daily_limit: 100,
+          status: "active",
+        },
+      });
+
+      const campaign = await db.outreach_campaigns.create({
+        data: {
+          id: `camp-tz-${Date.now()}`,
+          user_id: testUserId,
+          name: "Recipient TZ Campaign",
+          mode: "custom",
+          status: "running",
+          timezone: "UTC",
+          send_window: { startHour: 9, endHour: 18 },
+          days_of_week: [1, 2, 3, 4, 5],
+        },
+      });
+
+      const nyLead = await db.leads.create({
+        data: {
+          id: `lead-ny-${Date.now()}`,
+          user_id: testUserId,
+          dedupe_key: `dedupe-ny-${Date.now()}`,
+          company_name: "NY Co",
+          email: "ny@target.com",
+          timezone: "America/New_York",
+          source: "google_maps",
+        },
+      });
+
+      const recNy = await db.campaign_recipients.create({
+        data: {
+          id: `rec-ny-${Date.now()}`,
+          user_id: testUserId,
+          campaign_id: campaign.id,
+          lead_id: nyLead.id,
+          email: "ny@target.com",
+          assigned_account_id: acc.id,
+          status: "queued",
+          unsubscribe_token: `tok-ny-${Date.now()}`,
+        },
+      });
+
+      const recTokyo = await db.campaign_recipients.create({
+        data: {
+          id: `rec-tokyo-${Date.now()}`,
+          user_id: testUserId,
+          campaign_id: campaign.id,
+          email: "tokyo@target.com",
+          vars: { timezone: "Asia/Tokyo" },
+          assigned_account_id: acc.id,
+          status: "queued",
+          unsubscribe_token: `tok-tokyo-${Date.now()}`,
+        },
+      });
+
+      const recFallbackUtc = await db.campaign_recipients.create({
+        data: {
+          id: `rec-utc-${Date.now()}`,
+          user_id: testUserId,
+          campaign_id: campaign.id,
+          email: "utc@target.com",
+          vars: { timezone: "Invalid/Zone" },
+          assigned_account_id: acc.id,
+          status: "queued",
+          unsubscribe_token: `tok-utc-${Date.now()}`,
+        },
+      });
+
+      await dispatchRunningCampaigns(testNow);
+
+      const nyAfter = await db.campaign_recipients.findUnique({ where: { id: recNy.id } });
+      const tokyoAfter = await db.campaign_recipients.findUnique({ where: { id: recTokyo.id } });
+      const utcAfter = await db.campaign_recipients.findUnique({ where: { id: recFallbackUtc.id } });
+
+      // NY lead was inside 9-18 local time and was dispatched
+      expect(nyAfter?.status).toBe("sent");
+      // Tokyo and invalid-timezone fallback (UTC 19:00) remained queued outside window
+      expect(tokyoAfter?.status).toBe("queued");
+      expect(utcAfter?.status).toBe("queued");
     });
   });
 

@@ -226,6 +226,9 @@ class LocalDevMockDb {
       localDevStore.deleteApiKey(where.id);
       return { id: where.id };
     },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("api_keys", (k) => !where?.user_id || k.user_id === where.user_id);
+    },
     count: async ({ where }: any = {}) => {
       return localDevStore.getApiKeys(
         (k) =>
@@ -288,6 +291,7 @@ class LocalDevMockDb {
       return localDevStore.getEmailAccounts((a) => {
         if (where?.user_id && a.user_id !== where.user_id) return false;
         if (where?.status && a.status !== where.status) return false;
+        if (where?.id?.in && Array.isArray(where.id.in) && !where.id.in.includes(a.id)) return false;
         if (where?.OR && Array.isArray(where.OR)) {
           const orMatch = where.OR.some((cond: any) => {
             if (cond.reply_inbox_account_id && a.reply_inbox_account_id === cond.reply_inbox_account_id) return true;
@@ -318,6 +322,9 @@ class LocalDevMockDb {
       localDevStore.deleteEmailAccount(where.id);
       return { id: where.id };
     },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("email_accounts", (a) => !where?.user_id || a.user_id === where.user_id);
+    },
     count: async ({ where }: any = {}) => {
       return localDevStore.getEmailAccounts(where?.user_id ? (a) => a.user_id === where.user_id : undefined).length;
     },
@@ -347,6 +354,9 @@ class LocalDevMockDb {
     delete: async ({ where }: any) => {
       localDevStore.deleteOutreachCampaign(where.id);
       return { id: where.id };
+    },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("outreach_campaigns", (c) => !where?.user_id || c.user_id === where.user_id);
     },
     updateMany: async ({ where, data }: any = {}) => {
       const items = localDevStore.getOutreachCampaigns((c) => (!where?.user_id || c.user_id === where.user_id) && (!where?.status || c.status === where.status));
@@ -445,6 +455,9 @@ class LocalDevMockDb {
           (!where?.status || (where.status?.in ? where.status.in.includes(r.status) : r.status === where.status))
       ).length;
     },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("campaign_recipients", (r) => !where?.user_id || r.user_id === where.user_id);
+    },
   };
 
   outreach_campaign_accounts = {
@@ -471,6 +484,9 @@ class LocalDevMockDb {
       return localDevStore.getSuppressions((s) => (!where?.user_id || s.user_id === where.user_id) && (!where?.email || s.email.toLowerCase() === where.email.toLowerCase()))[0] || null;
     },
     create: async ({ data }: any) => localDevStore.saveSuppression({ ...data, email: data.email.toLowerCase() }),
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("suppressions", (s) => !where?.user_id || s.user_id === where.user_id);
+    },
     count: async ({ where }: any = {}) => {
       return localDevStore.getSuppressions((s) => !where?.user_id || s.user_id === where.user_id).length;
     },
@@ -526,6 +542,9 @@ class LocalDevMockDb {
       const existing = localDevStore.getEmailMessages((m) => m.id === where.id)[0] || { id: where.id };
       return localDevStore.saveEmailMessage({ ...existing, ...data });
     },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("email_messages", (m) => !where?.user_id || m.user_id === where.user_id);
+    },
     count: async ({ where }: any = {}) => {
       return localDevStore.getEmailMessages((m) => {
         if (where?.user_id && m.user_id !== where.user_id) return false;
@@ -567,6 +586,9 @@ class LocalDevMockDb {
     },
     delete: async ({ where }: any) => {
       return { id: where.id };
+    },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("followup_sequences", (s) => !where?.user_id || s.user_id === where.user_id);
     },
   };
 
@@ -637,6 +659,15 @@ class LocalDevMockDb {
       localDevStore.deleteCampaignVariant(where.id);
       return { id: where.id };
     },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("campaign_variants", (v) => {
+        if (where?.campaign_id?.in && Array.isArray(where.campaign_id.in)) {
+          return where.campaign_id.in.includes(v.campaign_id);
+        }
+        if (where?.campaign_id) return v.campaign_id === where.campaign_id;
+        return true;
+      });
+    },
   };
 
   tracking_events = {
@@ -655,6 +686,15 @@ class LocalDevMockDb {
       return items;
     },
     create: async ({ data }: any) => localDevStore.saveTrackingEvent(data),
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("tracking_events", (e) => {
+        if (where?.campaign_id?.in && Array.isArray(where.campaign_id.in)) {
+          return where.campaign_id.in.includes(e.campaign_id);
+        }
+        if (where?.campaign_id) return e.campaign_id === where.campaign_id;
+        return true;
+      });
+    },
     count: async ({ where }: any = {}) => {
       return localDevStore.getTrackingEvents((e: any) => {
         if (where?.campaign_id && e.campaign_id !== where.campaign_id) return false;
@@ -717,6 +757,9 @@ class LocalDevMockDb {
     delete: async ({ where }: any) => {
       localDevStore.deleteTrackingDomain(where.id);
       return { id: where.id };
+    },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("tracking_domains", (d) => !where?.user_id || d.user_id === where.user_id);
     },
     count: async ({ where }: any = {}) => {
       return localDevStore.getTrackingDomains((d: any) => {
@@ -800,6 +843,9 @@ class LocalDevMockDb {
       });
       matching.forEach((m: any) => localDevStore.saveWarmupLog({ ...m, ...data }));
       return { count: matching.length };
+    },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("warmup_logs", (w) => !where?.user_id || w.user_id === where.user_id);
     },
     count: async ({ where }: any = {}) => {
       return localDevStore.getWarmupLogs((w: any) => {
@@ -886,6 +932,9 @@ class LocalDevMockDb {
     },
     findUnique: async ({ where }: any = {}) => {
       return localDevStore.findLead((l) => l.id === where.id);
+    },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("leads", (l) => !where?.user_id || l.user_id === where.user_id);
     },
     count: async ({ where }: any = {}) => {
       return localDevStore.getLeads((l) => {
@@ -1298,6 +1347,9 @@ class LocalDevMockDb {
       const existing = localDevStore.findSubscription((s) => s.id === where.id);
       return localDevStore.saveSubscription({ ...existing, ...data });
     },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("subscriptions", (s) => !where?.user_id || s.user_id === where.user_id);
+    },
     count: async ({ where }: any = {}) => {
       return localDevStore.getSubscriptions((s) => {
         if (where?.user_id && s.user_id !== where.user_id) return false;
@@ -1339,6 +1391,9 @@ class LocalDevMockDb {
     update: async ({ where, data }: any) => {
       const existing = localDevStore.findPayment((p) => p.id === where.id);
       return localDevStore.savePayment({ ...existing, ...data });
+    },
+    deleteMany: async ({ where }: any = {}) => {
+      return localDevStore.deleteWhere("payments", (p) => !where?.user_id || p.user_id === where.user_id);
     },
     count: async ({ where }: any = {}) => {
       return localDevStore.getPayments((p) => {
@@ -1455,9 +1510,31 @@ class LocalDevMockDb {
 
 export function createTestMockDb(): any {
   const instance: any = new LocalDevMockDb();
-  return new Proxy(instance, {
+  const proxy: any = new Proxy(instance, {
     get(target, prop, receiver) {
+      if (prop === "$transaction") {
+        return async (arg: any) => {
+          if (typeof arg === "function") {
+            return arg(proxy);
+          }
+          return Promise.all(arg);
+        };
+      }
       const orig = Reflect.get(target, prop, receiver);
+      if (orig !== undefined && typeof orig === "object" && orig !== null) {
+        return new Proxy(orig, {
+          get(subTarget, subProp, subReceiver) {
+            const fn = Reflect.get(subTarget, subProp, subReceiver);
+            if (fn !== undefined) return fn;
+            return async () => {
+              if (String(subProp).includes("findMany")) return [];
+              if (String(subProp).includes("count")) return 0;
+              if (String(subProp).includes("deleteMany") || String(subProp).includes("updateMany")) return { count: 0 };
+              return null;
+            };
+          },
+        });
+      }
       if (orig !== undefined) return orig;
       return new Proxy({}, {
         get(_t, subProp) {
@@ -1471,6 +1548,7 @@ export function createTestMockDb(): any {
       });
     },
   });
+  return proxy;
 }
 
 export function scoped<T extends object>(userId: string, where?: T): T & { user_id: string } {
