@@ -197,7 +197,6 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
       recipient_source: input.recipientSource,
       source_ref: {
         ...(input.sourceRef || {}),
-        sender_address_footer: input.senderAddressFooter,
         sender_account_ids: validAccountIds,
         suppressed_filtered: suppressedCount,
       },

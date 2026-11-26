@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireUser } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { refreshSessionCache } from "@/server/auth/session";
+import { updateWorkspaceBusinessAddress } from "@/server/workspace/settings";
 import { revalidatePath } from "next/cache";
 
 const profileSchema = z.object({
@@ -38,6 +39,10 @@ export async function updateProfileAction(data: {
         sender_address: parsed.data.sender_address || null,
       },
     });
+
+    await updateWorkspaceBusinessAddress(user.id, parsed.data.sender_address || null).catch(
+      () => null
+    );
 
     await refreshSessionCache(user.id);
     revalidatePath("/app", "layout");

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/server/auth/session";
 import { getDecryptedAccountCredentials } from "@/server/email/account-service";
 import { ensureFreshGoogleAccessToken, sendViaGmailApi } from "@/server/email/google-oauth";
+import { renderEmailTemplate } from "@/server/email/template-renderer";
+import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
 import { logger } from "@/server/logger";
 import nodemailer from "nodemailer";
 import { z } from "zod";
@@ -18,23 +20,11 @@ const testSendSchema = z.object({
       company: z.string().optional(),
       company_name: z.string().optional(),
       website: z.string().optional(),
+      city: z.string().optional(),
+      business_address: z.string().optional(),
     })
     .optional(),
 });
-
-function renderPreviewText(template: string, data: Record<string, any>): string {
-  let result = template;
-  const firstName = data.first_name || data.name || "there";
-  const company = data.company_name || data.company || "your business";
-  const website = data.website || "your website";
-
-  result = result.replace(/\{\{\s*first_name(?:\|[^}]+)?\s*\}\}/g, firstName);
-  result = result.replace(/\{\{\s*name(?:\|[^}]+)?\s*\}\}/g, firstName);
-  result = result.replace(/\{\{\s*company_name(?:\|[^}]+)?\s*\}\}/g, company);
-  result = result.replace(/\{\{\s*company(?:\|[^}]+)?\s*\}\}/g, company);
-  result = result.replace(/\{\{\s*website(?:\|[^}]+)?\s*\}\}/g, website);
-  return result;
-}
 
 export async function POST(req: NextRequest) {
   const session = await getSessionUser();
@@ -64,18 +54,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Sender email account not found" }, { status: 404 });
   }
 
-  const renderedSubject = `[TEST PREVIEW] ` + renderPreviewText(subject, sampleData);
-  const renderedBody =
-    renderPreviewText(emailBody, sampleData) +
-    `\n\n---\n[Test Preview sent from Lead Reach AI Outreach Wizard via ${creds.from_email}]`;
+  const workspaceAddress = await resolveUserWorkspaceBusinessAddress(session.user.id);
+  const firstName = sampleData.first_name || sampleData.name || "there";
+  const company = sampleData.company_name || sampleData.company || "your business";
+  const website = sampleData.website || "your website";
+  const baseUrl = (process.env.APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000").replace(/\/$/, "");
+  const sampleUnsubscribeUrl = `${baseUrl}/u/preview-sample`;
 
-  // Dispatch via chosen account provider
+  const renderVars = {
+    ...sampleData,
+    first_name: firstName,
+    name: sampleData.name || firstName,
+    company_name: company,
+    company,
+    website,
+    business_address:
+      sampleData.business_address !== undefined ? sampleData.business_address : workspaceAddress,
+  };
+
+  const renderedSubject = renderEmailTemplate(subject, renderVars, sampleUnsubscribeUrl);
+  const renderedBody = renderEmailTemplate(emailBody, renderVars, sampleUnsubscribeUrl);
+
+  // Dispatch via chosen account provider as Pure Message Mode (text/plain unless user template is HTML)
   try {
     const isGmail = creds.provider === "gmail_api" || (creds as any).provider_id === "gmail_api";
     if (isGmail) {
       if (process.env.NODE_ENV === "test" || process.env.VITEST) {
         return NextResponse.json({
           ok: true,
+          renderedSubject,
+          renderedBody,
           messageId: `<mock-gmail-test-${Date.now()}@leadreachai.cerkitlabs.tech>`,
           message: `Test email sent successfully via Gmail API to ${toEmail}!`,
         });
@@ -88,10 +96,16 @@ export async function POST(req: NextRequest) {
         to: toEmail,
         subject: renderedSubject,
         text: renderedBody,
+        headers: {
+          "List-Unsubscribe": `<${sampleUnsubscribeUrl}>`,
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
       });
 
       return NextResponse.json({
         ok: true,
+        renderedSubject,
+        renderedBody,
         messageId: result.messageId,
         message: `Test email sent successfully via Gmail API to ${toEmail}!`,
       });
@@ -113,6 +127,8 @@ export async function POST(req: NextRequest) {
     if (process.env.NODE_ENV === "test" || process.env.VITEST) {
       return NextResponse.json({
         ok: true,
+        renderedSubject,
+        renderedBody,
         messageId: `<mock-smtp-test-${Date.now()}@leadreachai.cerkitlabs.tech>`,
         message: `Test email sent successfully via SMTP to ${toEmail}!`,
       });
@@ -139,6 +155,8 @@ export async function POST(req: NextRequest) {
       subject: renderedSubject,
       text: renderedBody,
       headers: {
+        "List-Unsubscribe": `<${sampleUnsubscribeUrl}>`,
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         "X-LeadReachAI-Test-Send": "true",
       },
     });
@@ -147,6 +165,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
+      renderedSubject,
+      renderedBody,
       messageId: info.messageId,
       message: `Test email sent successfully via SMTP to ${toEmail}!`,
     });
@@ -156,7 +176,6 @@ export async function POST(req: NextRequest) {
       "Failed to dispatch campaign test email"
     );
 
-    // Sanitize connection errors to avoid exposing raw system details to client
     const rawError = err?.message || "Failed to dispatch test email.";
     const isConnRefused = rawError.includes("ECONNREFUSED") || rawError.includes("ETIMEDOUT");
     const userMessage = isConnRefused

@@ -49,3 +49,36 @@
   - `src/test/mock-db.ts` and `src/test/local-store.ts` (any new Prisma models/fields must be supported in both and covered in GDPR export/delete)
 
 ---
+
+## Task 1 — Pure Message Mode (no body injection)
+
+**Status:** Completed
+
+### Outcome & Changes
+- Added optional `business_address` on `workspaces` (`prisma/schema.prisma`, additive migration `prisma/migrations/20261126060000_add_workspace_business_address/migration.sql`), workspace settings service & API (`src/server/workspace/settings.ts`, `src/app/api/v1/workspace/settings/route.ts`), synced with `src/app/app/settings/profile/actions.ts`, added `workspaces` mock DB support (`src/test/local-store.ts`, `src/test/mock-db.ts`), and included `business_address` in GDPR export (`src/server/account/gdpr-service.ts`).
+- Removed all auto-appended footers, `"---"` separators, hardcoded `"123 Innovation Way, Suite 400, Wilmington, DE 19801"`, `"Lead Reach AI Verified Cold Outreach, Cerkit Labs"`, and `[Test Preview sent...]` / `[TEST PREVIEW] ` prefixes from `src/server/email/sending-engine.ts`, `src/server/email/sequence-service.ts`, `src/server/email/campaign-service.ts`, `src/app/api/v1/outreach/test-send/route.ts`, `src/app/app/settings/profile/profile-form.tsx`, and `src/app/app/outreach/new/outreach-wizard.tsx`.
+- Plain-text templates with open/click tracking disabled emit `text/plain` only (`html` omitted on both Gmail API and Nodemailer transports), while preserving `List-Unsubscribe`, `List-Unsubscribe-Post`, `/u/*`, suppressions, and Stop-on-Reply.
+- Added cursor-position `"Insert unsubscribe line"` and `"Insert address"` buttons in `src/app/app/outreach/new/outreach-wizard.tsx` and `src/components/outreach/followup-step-builder.tsx`, optional `{{business_address}}` & `{{unsubscribe_url}}` rendering, and `"Raw message"` preview toggles on Step 4 & Step 5.
+- Added `src/server/email/pure-message-mode.test.ts` (5 tests) covering Step 1 & follow-up fidelity, `text/plain`-only Gmail API & SMTP dispatch, header preservation, optional variables, test-send parity, and repo-wide grep verification that `"123 Innovation Way"` is absent from `src/`.
+- **Decisions & Test Updates:** Updated `src/server/email/sending-engine.test.ts`, `src/server/email/tracking-token.test.ts`, and `src/server/email/outreach-followup.test.ts` assertions that previously expected auto-injected footers/`To unsubscribe:` or HTML wrappers on plain-text sends, because auto-footer injection was deleted per Task 1. (Note: `src/server/billing/providers/manual-provider.ts` still contains `Cerkit Labs / Lead Reach AI` as a manual bank transfer payee label unrelated to outreach emails.)
+- **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (49 test files, 295 tests passed).
+
+### Plan
+- **Files to add/modify:**
+  - `prisma/schema.prisma`: add `business_address String?` on `workspaces`
+  - `prisma/migrations/20261126060000_add_workspace_business_address/migration.sql`: additive `ALTER TABLE "workspaces" ADD COLUMN IF NOT EXISTS "business_address" TEXT;`
+  - `src/test/local-store.ts`, `src/test/mock-db.ts`: add `workspaces` store + delegate support with `business_address`
+  - `src/server/account/gdpr-service.ts`: include `business_address: true` in `workspaces` GDPR export (`exportUserAccountData`); deletion already cascades `workspaces`
+  - `src/app/api/v1/workspace/settings/route.ts`: `GET` / `PATCH` optional workspace `business_address` setting for the authenticated user's default workspace
+  - `src/app/app/settings/profile/actions.ts` & `src/app/app/settings/profile/profile-form.tsx`: keep user `sender_address` and default workspace `business_address` in sync; remove misleading footer copy
+  - `src/server/email/sending-engine.ts`: remove auto-appended `---`, `legalAddress`, and `To unsubscribe:` from `buildEmailMultipartBodies()`; omit HTML MIME part (`html: undefined`) for plain-text templates unless `trackingOpen`, `trackingClick`, or HTML tags require HTML (and still inject no footer); resolve workspace `business_address` for optional `{{business_address}}` rendering; update `DispatchTransportInput` to omit `html` when `undefined`; delete Cerkit Labs placeholder fallback
+  - `src/server/email/sequence-service.ts`: resolve workspace `business_address` for `{{business_address}}`; pass `unsubscribeUrl` into all template renders; pass `html` only when generated; delete fallback footer string
+  - `src/server/email/campaign-service.ts`: remove `sender_address_footer` injection into `source_ref`
+  - `src/app/api/v1/outreach/test-send/route.ts`: remove `[TEST PREVIEW]` prefix and `[Test Preview sent...]` footer; use `renderEmailTemplate` with workspace `business_address` and `/u/preview-test` sample URL
+  - `src/app/app/outreach/new/outreach-wizard.tsx`: delete `"123 Innovation Way, Suite 400, Wilmington, DE 19801"` and auto-footer field wording; load optional workspace `business_address` for `{{business_address}}` preview/insertion; replace chip append with cursor-position insertion; add `"Insert unsubscribe line"` and `"Insert address"` buttons; add `"Raw message"` preview toggle showing final body and headers (`From`, `To`, `Subject`, `Content-Type`, `List-Unsubscribe`, `List-Unsubscribe-Post`)
+  - `src/server/email/sending-engine.test.ts`, `src/server/email/spintax.test.ts`, `src/server/email/tracking-token.test.ts`, `src/server/email/outreach-followup.test.ts`: update existing assertions that explicitly checked the old auto-injected footer / `To unsubscribe:` text
+  - `src/server/email/pure-message-mode.test.ts`: comprehensive tests for pure body fidelity (step 1 + follow-ups), `text/plain`-only transmission, `List-Unsubscribe` headers preserved, optional `{{business_address}}` / `{{unsubscribe_url}}` rendering, test-send exact fidelity, and repo-wide grep test confirming `"123 Innovation Way"` is gone from `src/`
+- **Edge cases & risks:**
+  - Plain-text templates with tracking off MUST send `text/plain` only (`html` omitted on both Gmail API and Nodemailer), whereas templates with open/click tracking enabled still need multipart HTML without any footer.
+  - Workspaces may not exist yet for legacy test users created directly via `mock-db` -> fallback from `workspaces.business_address` to `users.sender_address` when resolving `{{business_address}}`.
+  - BullMQ retries / concurrent sends only read immutable template + workspace/user settings and do not mutate templates.

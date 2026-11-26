@@ -40,7 +40,6 @@ describe("HIGH-02: Secure Click Tracking & Link Wrapping", () => {
   it("wraps links in HTML when trackingClick=true, but keeps plain text unwrapped", () => {
     const bodies = buildEmailMultipartBodies({
       bodyText: "Check out our services at https://example.com/demo and read more at https://example.com/about",
-      legalAddress: "123 Business St, City",
       unsubscribeUrl: "http://localhost:3000/api/v1/unsubscribe/unsub_123",
       unsubscribeToken: "unsub_123",
       baseUrl: "http://localhost:3000",
@@ -52,19 +51,14 @@ describe("HIGH-02: Secure Click Tracking & Link Wrapping", () => {
     expect(bodies.text).toContain("https://example.com/demo");
     expect(bodies.text).not.toContain("/api/v1/track/click/");
 
-    // HTML wraps destination with secure click tracking
+    // HTML wraps destination with secure click tracking (no injected footer)
     expect(bodies.html).toContain("/api/v1/track/click/");
     expect(bodies.html).toContain("https://example.com/demo");
-
-    // Unsubscribe link in footer is never wrapped with click tracking
-    expect(bodies.html).toContain('href="http://localhost:3000/api/v1/unsubscribe/unsub_123"');
-    expect(bodies.html).not.toContain("/api/v1/track/click/?url=http://localhost:3000/api/v1/unsubscribe");
   });
 
-  it("leaves links unwrapped when trackingClick=false", () => {
+  it("omits HTML wrapper and leaves links unwrapped when trackingOpen=false and trackingClick=false", () => {
     const bodies = buildEmailMultipartBodies({
       bodyText: "Visit https://example.com/demo",
-      legalAddress: "123 Business St, City",
       unsubscribeUrl: "http://localhost:3000/api/v1/unsubscribe/unsub_123",
       unsubscribeToken: "unsub_123",
       baseUrl: "http://localhost:3000",
@@ -72,10 +66,23 @@ describe("HIGH-02: Secure Click Tracking & Link Wrapping", () => {
       trackingClick: false,
     });
 
-    // No tracking click endpoint anywhere in HTML or text
+    // Plain-text template with tracking disabled emits text/plain only
+    expect(bodies.html).toBeUndefined();
+    expect(bodies.text).toBe("Visit https://example.com/demo");
+  });
+
+  it("omits click tracking links and pixel on HTML templates when tracking toggles are false", () => {
+    const bodies = buildEmailMultipartBodies({
+      bodyText: "<p>Visit https://example.com/demo</p>",
+      unsubscribeUrl: "http://localhost:3000/api/v1/unsubscribe/unsub_123",
+      unsubscribeToken: "unsub_123",
+      baseUrl: "http://localhost:3000",
+      trackingOpen: false,
+      trackingClick: false,
+    });
+
     expect(bodies.html).not.toContain("/api/v1/track/click/");
-    expect(bodies.html).toContain('href="https://example.com/demo"');
-    expect(bodies.text).toContain("https://example.com/demo");
+    expect(bodies.html).not.toContain("/api/v1/track/open/");
   });
 
   it("never wraps unsubscribe links inside the body", () => {

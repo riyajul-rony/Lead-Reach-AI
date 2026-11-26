@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -114,9 +114,9 @@ export function OutreachWizard() {
   const [trackingClick, setTrackingClick] = useState(false);
   const [trackingDomainId, setTrackingDomainId] = useState("");
   const [trackingDomains, setTrackingDomains] = useState<Array<{ id: string; domain: string; is_default?: boolean }>>([]);
-  const [physicalAddress, setPhysicalAddress] = useState(
-    "123 Innovation Way, Suite 400, Wilmington, DE 19801"
-  );
+  const [physicalAddress, setPhysicalAddress] = useState("");
+  const [showRawPreview, setShowRawPreview] = useState(false);
+  const bodyTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Step 2: Leads & Recipients
   const [recipientSource, setRecipientSource] = useState<"paste" | "leads" | "csv" | "sheet">(
@@ -289,6 +289,15 @@ export function OutreachWizard() {
         if (def) setTrackingDomainId((prev) => prev || def.id);
       })
       .catch(() => {});
+
+    fetch("/api/v1/workspace/settings")
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.data?.business_address) {
+          setPhysicalAddress(res.data.business_address);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Auto-distribute leads across selected accounts
@@ -402,9 +411,21 @@ export function OutreachWizard() {
       company_name: sampleRecipient.company || "your business",
       website: sampleRecipient.website || "your website",
       city: (sampleRecipient as any).city || "",
+      business_address: physicalAddress.trim(),
     }),
-    [sampleRecipient]
+    [sampleRecipient, physicalAddress]
   );
+
+  const sampleUnsubscribeUrl = useMemo(() => {
+    const selectedDomain = trackingDomains.find((d) => d.id === trackingDomainId)?.domain;
+    const origin =
+      selectedDomain
+        ? `https://${selectedDomain}`
+        : typeof window !== "undefined"
+          ? window.location.origin
+          : "https://app.leadreach.ai";
+    return `${origin}/u/preview-sample`;
+  }, [trackingDomains, trackingDomainId]);
 
   const makePreviewRng = (seedOffset: number) => {
     let state = (spinSeed * 1664525 + seedOffset + 1013904223) >>> 0;
@@ -415,12 +436,48 @@ export function OutreachWizard() {
   };
 
   const previewSubject = useMemo(() => {
-    return renderEmailTemplate(subjectTemplate, previewVars, undefined, makePreviewRng(17));
-  }, [subjectTemplate, previewVars, spinSeed]);
+    return renderEmailTemplate(subjectTemplate, previewVars, sampleUnsubscribeUrl, makePreviewRng(17));
+  }, [subjectTemplate, previewVars, sampleUnsubscribeUrl, spinSeed]);
 
   const previewBody = useMemo(() => {
-    return renderEmailTemplate(bodyTemplate, previewVars, undefined, makePreviewRng(73));
-  }, [bodyTemplate, previewVars, spinSeed]);
+    return renderEmailTemplate(bodyTemplate, previewVars, sampleUnsubscribeUrl, makePreviewRng(73));
+  }, [bodyTemplate, previewVars, sampleUnsubscribeUrl, spinSeed]);
+
+  const primaryPreviewAccount = useMemo(() => {
+    return accounts.find((a) => selectedAccountIds.includes(a.id)) || accounts[0] || null;
+  }, [accounts, selectedAccountIds]);
+
+  const previewRawMessage = useMemo(() => {
+    const fromHeader = primaryPreviewAccount
+      ? primaryPreviewAccount.from_name
+        ? `"${primaryPreviewAccount.from_name}" <${primaryPreviewAccount.from_email}>`
+        : primaryPreviewAccount.from_email
+      : "you@example.com";
+    const looksLikeHtml = /<(?:html|body|p|div|br|table|a|span)\b/i.test(previewBody);
+    const contentType =
+      trackingOpen || trackingClick
+        ? "multipart/alternative (text/plain + tracking text/html)"
+        : looksLikeHtml
+          ? "multipart/alternative (text/plain + text/html)"
+          : "text/plain; charset=utf-8";
+    const headers = [
+      `From: ${fromHeader}`,
+      `To: ${sampleRecipient.email}`,
+      `Subject: ${previewSubject}`,
+      `Content-Type: ${contentType}`,
+      `List-Unsubscribe: <${sampleUnsubscribeUrl}>`,
+      `List-Unsubscribe-Post: List-Unsubscribe=One-Click`,
+    ];
+    return `${headers.join("\n")}\n\n${previewBody}`;
+  }, [
+    primaryPreviewAccount,
+    sampleRecipient.email,
+    previewSubject,
+    previewBody,
+    trackingOpen,
+    trackingClick,
+    sampleUnsubscribeUrl,
+  ]);
 
   // Live Spam Deliverability check with debouncing
   useEffect(() => {
@@ -545,9 +602,26 @@ export function OutreachWizard() {
     setSourceRef({ source: "manual_paste", count: parsed.length });
   };
 
-  // Variable chip inserter
+  // Insert text or merge tag at the current cursor position in the message body
+  const insertTextAtCursor = (snippet: string) => {
+    const el = bodyTextareaRef.current;
+    if (!el) {
+      setBodyTemplate((prev) => prev + snippet);
+      return;
+    }
+    const start = el.selectionStart ?? bodyTemplate.length;
+    const end = el.selectionEnd ?? start;
+    const nextValue = bodyTemplate.slice(0, start) + snippet + bodyTemplate.slice(end);
+    setBodyTemplate(nextValue);
+    requestAnimationFrame(() => {
+      el.focus();
+      const cursorPos = start + snippet.length;
+      el.setSelectionRange(cursorPos, cursorPos);
+    });
+  };
+
   const insertVariable = (varName: string) => {
-    setBodyTemplate((prev) => prev + ` {{${varName}}} `);
+    insertTextAtCursor(`{{${varName}}}`);
   };
 
   // Step validation checker
@@ -616,6 +690,8 @@ export function OutreachWizard() {
             first_name: sampleRecipient.name?.split(" ")[0] || "Sarah",
             company_name: sampleRecipient.company || "Acme Dental",
             website: sampleRecipient.website || "acmedental.com",
+            city: (sampleRecipient as any).city || "",
+            business_address: physicalAddress.trim(),
           },
         }),
       });
@@ -684,7 +760,6 @@ export function OutreachWizard() {
         timezone,
         jitterMinSec: 180,
         jitterMaxSec: 420,
-        senderAddressFooter: physicalAddress,
         launchNow,
         accountAllocations: selectedAccountIds.map((id) => ({
           accountId: id,
@@ -976,17 +1051,25 @@ export function OutreachWizard() {
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">
                       <label className="text-xs font-medium text-fg">
-                        Physical Mailing Address (CAN-SPAM Footer)
+                        Workspace Business Address (Optional)
                       </label>
                       <InfoTooltip
-                        title="Compliance Footer"
-                        content="Required by international email compliance laws (CAN-SPAM & GDPR). Lead Reach AI automatically appends a subtle address and one-click unsubscribe link."
+                        title="Optional Merge Variable"
+                        content="Nothing is ever auto-appended to your emails. If you want to display your postal address, save it here and click 'Insert address' or type {{business_address}} in your message template."
                       />
                     </div>
                     <input
                       type="text"
                       value={physicalAddress}
                       onChange={(e) => setPhysicalAddress(e.target.value)}
+                      onBlur={() => {
+                        fetch("/api/v1/workspace/settings", {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ business_address: physicalAddress.trim() || null }),
+                        }).catch(() => {});
+                      }}
+                      placeholder="Optional — used only when {{business_address}} is in your template"
                       className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-surface text-fg"
                     />
                   </div>
@@ -1602,6 +1685,20 @@ export function OutreachWizard() {
                     + {`{{${v}}}`}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  onClick={() => insertTextAtCursor("\n\nUnsubscribe: {{unsubscribe_url}}")}
+                  className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-surface border border-border text-fg hover:border-primary/50 hover:text-primary transition-colors cursor-pointer"
+                >
+                  Insert unsubscribe line
+                </button>
+                <button
+                  type="button"
+                  onClick={() => insertTextAtCursor("\n{{business_address}}")}
+                  className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-surface border border-border text-fg hover:border-primary/50 hover:text-primary transition-colors cursor-pointer"
+                >
+                  Insert address
+                </button>
               </div>
 
               {/* Email Body */}
@@ -1610,6 +1707,7 @@ export function OutreachWizard() {
                   Message Body <span className="text-danger">*</span>
                 </label>
                 <textarea
+                  ref={bodyTextareaRef}
                   rows={8}
                   value={bodyTemplate}
                   onChange={(e) => setBodyTemplate(e.target.value)}
@@ -1731,6 +1829,17 @@ export function OutreachWizard() {
                     <span className="text-[11px] font-mono">{sampleRecipient.email}</span>
                     <button
                       type="button"
+                      onClick={() => setShowRawPreview((v) => !v)}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                        showRawPreview
+                          ? "bg-primary/10 border-primary text-primary"
+                          : "bg-surface border-border text-fg hover:border-primary/50"
+                      }`}
+                    >
+                      Raw message
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setSpinSeed((s) => s + 1)}
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-surface border border-border text-fg hover:border-primary/50 hover:text-primary transition-colors cursor-pointer"
                       title="Sample another spintax variation"
@@ -1740,15 +1849,21 @@ export function OutreachWizard() {
                   </div>
                 </div>
 
-                <div className="space-y-2 text-xs">
-                  <div>
-                    <span className="text-muted">Subject: </span>
-                    <strong className="text-fg">{previewSubject}</strong>
+                {showRawPreview ? (
+                  <pre className="p-3.5 rounded-lg border border-border bg-surface text-fg leading-relaxed whitespace-pre-wrap font-mono text-[11px] overflow-x-auto">
+                    {previewRawMessage}
+                  </pre>
+                ) : (
+                  <div className="space-y-2 text-xs">
+                    <div>
+                      <span className="text-muted">Subject: </span>
+                      <strong className="text-fg">{previewSubject}</strong>
+                    </div>
+                    <div className="p-3.5 rounded-lg border border-border bg-surface text-fg leading-relaxed whitespace-pre-wrap font-sans text-xs">
+                      {previewBody}
+                    </div>
                   </div>
-                  <div className="p-3.5 rounded-lg border border-border bg-surface text-fg leading-relaxed whitespace-pre-wrap font-sans text-xs">
-                    {previewBody}
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Spam Check Score Badge */}
@@ -1899,13 +2014,34 @@ export function OutreachWizard() {
 
               {/* Email Content Snippet */}
               <div className="rounded-xl border border-border bg-surface p-4 space-y-2 text-xs">
-                <span className="font-semibold text-fg">Email Message Preview:</span>
-                <div className="text-muted">
-                  <strong>Subject: </strong> {previewSubject}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-fg">Email Message Preview:</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowRawPreview((v) => !v)}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                      showRawPreview
+                        ? "bg-primary/10 border-primary text-primary"
+                        : "bg-bgSubtle border-border text-fg hover:border-primary/50"
+                    }`}
+                  >
+                    Raw message
+                  </button>
                 </div>
-                <div className="p-3 rounded-lg border border-border bg-bgSubtle whitespace-pre-wrap font-sans text-xs">
-                  {previewBody}
-                </div>
+                {showRawPreview ? (
+                  <pre className="p-3 rounded-lg border border-border bg-bgSubtle whitespace-pre-wrap font-mono text-[11px] overflow-x-auto">
+                    {previewRawMessage}
+                  </pre>
+                ) : (
+                  <>
+                    <div className="text-muted">
+                      <strong>Subject: </strong> {previewSubject}
+                    </div>
+                    <div className="p-3 rounded-lg border border-border bg-bgSubtle whitespace-pre-wrap font-sans text-xs">
+                      {previewBody}
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Reply Detection & Follow-up Warnings */}

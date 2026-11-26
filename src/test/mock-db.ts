@@ -2,6 +2,69 @@ import { localDevStore, ensureDevAdminUser } from "./local-store";
 
 // In-memory demo store for when PostgreSQL is not running locally
 class LocalDevMockDb {
+  workspaces = {
+    findMany: async ({ where, take, skip, orderBy }: any = {}) => {
+      let items = localDevStore.getWorkspaces((w) => {
+        if (where?.id && w.id !== where.id) return false;
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.is_default !== undefined && w.is_default !== where.is_default) return false;
+        if (where?.sending_status && w.sending_status !== where.sending_status) return false;
+        return true;
+      });
+      if (orderBy) {
+        const orderKey = Object.keys(orderBy)[0];
+        const dir = orderBy[orderKey] === "asc" ? 1 : -1;
+        items = [...items].sort((a, b) => {
+          const valA = a[orderKey] ?? "";
+          const valB = b[orderKey] ?? "";
+          if (valA < valB) return -1 * dir;
+          if (valA > valB) return 1 * dir;
+          return 0;
+        });
+      }
+      if (skip && typeof skip === "number") items = items.slice(skip);
+      if (take && typeof take === "number") items = items.slice(0, take);
+      return items;
+    },
+    findUnique: async ({ where }: any = {}) =>
+      localDevStore.findWorkspace((w) => !where?.id || w.id === where.id),
+    findFirst: async ({ where }: any = {}) =>
+      localDevStore.findWorkspace((w) => {
+        if (where?.id && w.id !== where.id) return false;
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.is_default !== undefined && w.is_default !== where.is_default) return false;
+        return true;
+      }),
+    create: async ({ data }: any) => localDevStore.saveWorkspace(data),
+    update: async ({ where, data }: any) => localDevStore.updateWorkspace(where?.id, data),
+    updateMany: async ({ where, data }: any = {}) => {
+      const items = localDevStore.getWorkspaces((w) => {
+        if (where?.id && w.id !== where.id) return false;
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        return true;
+      });
+      let count = 0;
+      for (const item of items) {
+        localDevStore.updateWorkspace(item.id, data);
+        count++;
+      }
+      return { count };
+    },
+    delete: async ({ where }: any) => localDevStore.deleteWhere("workspaces", (w) => w.id === where?.id),
+    deleteMany: async ({ where }: any = {}) =>
+      localDevStore.deleteWhere("workspaces", (w) => {
+        if (where?.id && w.id !== where.id) return false;
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        return true;
+      }),
+    count: async ({ where }: any = {}) =>
+      localDevStore.getWorkspaces((w) => {
+        if (where?.user_id && w.user_id !== where.user_id) return false;
+        if (where?.sending_status && w.sending_status !== where.sending_status) return false;
+        return true;
+      }).length,
+  };
+
   users = {
     findMany: async ({ where, take, skip, orderBy }: any = {}) => {
       await ensureDevAdminUser();

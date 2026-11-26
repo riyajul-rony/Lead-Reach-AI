@@ -477,42 +477,54 @@ describe("Phase 5: Sending Engine & BullMQ Scheduler", () => {
     });
   });
 
-  describe("4. Multipart/alternative Email Construction (CRIT-01)", () => {
-    it("constructs clean plain-text without HTML tags or open tracking pixel", () => {
+  describe("4. Pure Message Mode & Multipart Email Construction (Phase 6)", () => {
+    it("constructs pure plain-text without injecting footer and omits HTML when tracking is off", () => {
+      const pure = buildEmailMultipartBodies({
+        bodyText: "Hello John,\n\nWe would love to connect with your team.\nBest,\nSarah",
+        unsubscribeUrl: "https://example.com/u/tok-123",
+        trackingOpen: false,
+        trackingClick: false,
+        unsubscribeToken: "tok-123",
+        baseUrl: "https://example.com",
+      });
+
+      expect(pure.text).toBe("Hello John,\n\nWe would love to connect with your team.\nBest,\nSarah");
+      expect(pure.html).toBeUndefined();
+    });
+
+    it("constructs clean plain-text without HTML tags or open tracking pixel while HTML carries pixel when trackingOpen is true", () => {
       const bodies = buildEmailMultipartBodies({
         bodyText: "Hello John,\n\nWe would love to connect with your team.\nBest,\nSarah",
-        legalAddress: "123 Business Way, Suite 100",
         unsubscribeUrl: "https://example.com/u/tok-123",
         trackingOpen: true,
         unsubscribeToken: "tok-123",
         baseUrl: "https://example.com",
       });
 
-      // Plaintext must NOT contain any HTML tags or image pixels
+      // Plaintext must match bodyText exactly without HTML tags, pixels, or injected footer
+      expect(bodies.text).toBe("Hello John,\n\nWe would love to connect with your team.\nBest,\nSarah");
       expect(bodies.text).not.toContain("<img");
       expect(bodies.text).not.toContain("<p");
       expect(bodies.text).not.toContain("<br");
-      expect(bodies.text).toContain("To unsubscribe: https://example.com/u/tok-123");
-      expect(bodies.text).toContain("Hello John,");
+      expect(bodies.text).not.toContain("To unsubscribe:");
 
-      // HTML body must carry the semantic elements and the open tracking pixel
+      // HTML body carries semantic elements and open tracking pixel only (no injected footer)
       expect(bodies.html).toContain("<img src=\"https://example.com/api/v1/track/open/tok-123\"");
-      expect(bodies.html).toContain("<a href=\"https://example.com/u/tok-123\"");
-      expect(bodies.html).toContain("123 Business Way, Suite 100");
+      expect(bodies.html).not.toContain(">Unsubscribe</a>");
     });
 
-    it("omits the tracking pixel from HTML when trackingOpen is disabled", () => {
+    it("omits HTML completely for plain-text templates when both trackingOpen and trackingClick are disabled", () => {
       const bodies = buildEmailMultipartBodies({
         bodyText: "Hello John,\n\nChecking in.",
-        legalAddress: "123 Business Way",
         unsubscribeUrl: "https://example.com/u/tok-456",
         trackingOpen: false,
+        trackingClick: false,
         unsubscribeToken: "tok-456",
         baseUrl: "https://example.com",
       });
 
-      expect(bodies.html).not.toContain("<img src=");
-      expect(bodies.html).toContain("<a href=\"https://example.com/u/tok-456\"");
+      expect(bodies.html).toBeUndefined();
+      expect(bodies.text).toBe("Hello John,\n\nChecking in.");
     });
   });
 });

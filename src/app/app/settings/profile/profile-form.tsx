@@ -225,7 +225,8 @@ export function ProfileForm({ initialValues }: ProfileFormProps) {
         <CardHeader>
           <CardTitle>Business &amp; Legal Information</CardTitle>
           <CardDescription>
-            Your sender legal name and physical address are required by CAN-SPAM regulations and will appear in email footers.
+            Optional sender legal name and workspace business address. Available via{" "}
+            <code className="font-mono text-[11px]">{"{{business_address}}"}</code> if you choose to insert it into an email template.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6 pt-0">

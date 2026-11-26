@@ -14,6 +14,7 @@ import { queueEmailSend } from "@/server/queues";
 import { createSignedTrackingToken } from "@/server/email/tracking-token";
 import { selectVariantForRecipient } from "@/server/email/variant-service";
 import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
+import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
 import {
   getLocalTimeParts,
   isValidIanaTimezone,
@@ -35,23 +36,32 @@ export type { SendingWindowOptions };
 const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 
 /**
- * Constructs strict multipart/alternative email bodies:
- * - text: Pure plaintext without raw HTML tags or tracking pixels.
- * - html: Semantic HTML carrying the open tracking pixel and a styled unsubscribe link.
+ * Pure Message Mode body builder:
+ * - Never appends or prepends footers, "---", addresses, or unsubscribe copy.
+ * - Preserves plain-text messages as text/plain ONLY (`html: undefined`) unless
+ *   tracking (open pixel / click wrapping) or explicit HTML markup requires HTML.
  */
 export function buildEmailMultipartBodies(opts: {
   bodyText: string;
-  legalAddress: string;
+  legalAddress?: string;
   unsubscribeUrl: string;
   trackingOpen?: boolean;
   trackingClick?: boolean;
   unsubscribeToken: string;
   baseUrl: string;
-}): { text: string; html: string } {
-  // 1. Clean plain-text body (strictly NO HTML tags or tracking pixels, raw URLs untouched)
-  const text = `${opts.bodyText}\n\n---\n${opts.legalAddress}\nTo unsubscribe: ${opts.unsubscribeUrl}`;
+}): { text: string; html?: string } {
+  const text = opts.bodyText;
+  const looksLikeHtml = /<(?:html|body|p|div|br|table|a|span)\b/i.test(opts.bodyText);
+  const needsTrackingHtml = Boolean(opts.trackingOpen) || Boolean(opts.trackingClick);
 
-  // Helper to escape HTML characters safely
+  if (!looksLikeHtml && !needsTrackingHtml) {
+    return { text };
+  }
+
+  if (looksLikeHtml && !needsTrackingHtml) {
+    return { text, html: opts.bodyText };
+  }
+
   const escapeHtml = (str: string) =>
     str
       .replace(/&/g, "&amp;")
@@ -60,7 +70,6 @@ export function buildEmailMultipartBodies(opts: {
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
 
-  // 2. Formatted HTML body with conditional click-tracking link wrapping
   const formattedHtmlParagraphs = opts.bodyText
     .split(/\r?\n\r?\n/)
     .map((para) => {
@@ -85,7 +94,6 @@ export function buildEmailMultipartBodies(opts: {
         if (isUnsubLink || !opts.trackingClick) {
           htmlPara += `<a href="${escapeHtml(rawUrl)}" style="color: #0284c7; text-decoration: underline;">${escapeHtml(rawUrl)}</a>`;
         } else {
-          // Wrap destination securely via HMAC-signed token
           const signedToken = createSignedTrackingToken(opts.unsubscribeToken, rawUrl);
           const clickUrl = `${opts.baseUrl}/api/v1/track/click/${signedToken}`;
           htmlPara += `<a href="${clickUrl}" style="color: #0284c7; text-decoration: underline;">${escapeHtml(rawUrl)}</a>`;
@@ -97,8 +105,6 @@ export function buildEmailMultipartBodies(opts: {
     })
     .join("");
 
-  const escapedAddress = escapeHtml(opts.legalAddress).replace(/\r?\n/g, "<br />");
-
   let html = `<!DOCTYPE html>
 <html>
 <head>
@@ -108,10 +114,6 @@ export function buildEmailMultipartBodies(opts: {
 <body style="margin: 0; padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; color: #1e293b; background-color: #ffffff;">
   <div>
     ${formattedHtmlParagraphs}
-  </div>
-  <div style="margin-top: 28px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">
-    <p style="margin: 0 0 8px 0;">${escapedAddress}</p>
-    <p style="margin: 0;"><a href="${opts.unsubscribeUrl}" style="color: #64748b; text-decoration: underline;">Unsubscribe</a></p>
   </div>
 `;
 
@@ -249,7 +251,7 @@ export interface DispatchTransportInput {
   to: string;
   subject: string;
   text: string;
-  html: string;
+  html?: string;
   explicitMessageId: string;
   inReplyTo?: string | null;
   references?: string | null;
@@ -347,7 +349,7 @@ export async function dispatchEmailTransport(
         replyTo: effectiveReplyTo,
         subject,
         text,
-        html,
+        ...(html ? { html } : {}),
         messageId: explicitMessageId,
         headers: mergedHeaders,
       });
@@ -514,10 +516,11 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     campaign.tracking_domain_id
   );
   const unsubscribeUrl = `${trackingBaseUrl}/u/${recipient.unsubscribe_token}`;
-  const legalAddress =
-    (campaign.source_ref as any)?.sender_address_footer ||
-    account.signature ||
-    "Lead Reach AI Verified Cold Outreach, Cerkit Labs";
+  const businessAddress = await resolveUserWorkspaceBusinessAddress(recipient.user_id);
+  const templateVars = {
+    ...((recipient.vars as any) || {}),
+    business_address: businessAddress,
+  };
 
   let finalSubject = "";
   let finalBody = "";
@@ -573,22 +576,24 @@ export async function sendSingleRecipientEmail(recipientId: string) {
         } else {
           finalSubject = renderEmailTemplate(
             effectiveSubjectTemplate || "Quick question for {{company_name|your business}}",
-            (recipient.vars as any) || {}
+            templateVars,
+            unsubscribeUrl
           );
           finalBody = renderEmailTemplate(
             effectiveBodyTemplate || "Hi {{first_name|there}},\n\nWould love to connect.",
-            (recipient.vars as any) || {}
+            templateVars,
+            unsubscribeUrl
           );
         }
       } else {
         finalSubject = renderEmailTemplate(
           effectiveSubjectTemplate || "Hello {{company_name|there}}",
-          (recipient.vars as any) || {},
+          templateVars,
           unsubscribeUrl
         );
         finalBody = renderEmailTemplate(
           effectiveBodyTemplate || "Hi {{first_name|there}},\n\nWould love to connect.",
-          (recipient.vars as any) || {},
+          templateVars,
           unsubscribeUrl
         );
       }
@@ -613,7 +618,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
         subjectTpl,
         {
           previous_subject: previousSubject,
-          ...((recipient.vars as any) || {}),
+          ...templateVars,
         },
         unsubscribeUrl
       );
@@ -622,7 +627,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
         selectedVariant?.body_template ||
           stepRecord?.body_template ||
           "Following up on my previous note. Let me know if you have 5 minutes to chat.",
-        (recipient.vars as any) || {},
+        templateVars,
         unsubscribeUrl
       );
 
@@ -632,10 +637,9 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       }
     }
 
-    // Construct clean multipart/alternative bodies (pure plain-text + semantic HTML)
+    // Construct Pure Message body (text/plain only unless tracking/HTML is active)
     const { text: plainTextBody, html: htmlBody } = buildEmailMultipartBodies({
       bodyText: finalBody,
-      legalAddress,
       unsubscribeUrl,
       trackingOpen: Boolean(campaign.tracking_open),
       trackingClick: Boolean(campaign.tracking_click),

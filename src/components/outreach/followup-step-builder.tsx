@@ -1,7 +1,7 @@
 "use client";
 
-import React from "react";
-import { Plus, Trash2, Clock, CornerDownRight, MessageSquare, Sparkles } from "lucide-react";
+import React, { useRef } from "react";
+import { Plus, Trash2, Clock, CornerDownRight } from "lucide-react";
 
 export interface FollowupStepData {
   step_no: number;
@@ -39,6 +39,25 @@ const PRESET_TEMPLATES = [
 ];
 
 export function FollowupStepBuilder({ steps, onChange, originalSubject = "" }: FollowupStepBuilderProps) {
+  const stepTextareaRefs = useRef<Record<number, HTMLTextAreaElement | null>>({});
+
+  const insertSnippetAtStepCursor = (index: number, snippet: string) => {
+    const el = stepTextareaRefs.current[index];
+    const current = steps[index]?.body || "";
+    if (!el) {
+      handleUpdateStep(index, { body: current + snippet });
+      return;
+    }
+    const start = el.selectionStart ?? current.length;
+    const end = el.selectionEnd ?? start;
+    const nextBody = current.slice(0, start) + snippet + current.slice(end);
+    handleUpdateStep(index, { body: nextBody });
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + snippet.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
   const handleAddStep = (preset?: typeof PRESET_TEMPLATES[0]) => {
     const nextStepNo = steps.length + 1;
     const newStep: FollowupStepData = {
@@ -177,10 +196,31 @@ export function FollowupStepBuilder({ steps, onChange, originalSubject = "" }: F
               )}
 
               <div>
-                <label className="text-[11px] font-semibold text-muted block mb-1">
-                  Follow-up Message Body
-                </label>
+                <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
+                  <label className="text-[11px] font-semibold text-muted">
+                    Follow-up Message Body
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => insertSnippetAtStepCursor(idx, "\n\nUnsubscribe: {{unsubscribe_url}}")}
+                      className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-surface border border-border text-fg hover:border-primary/50 hover:text-primary transition-colors cursor-pointer"
+                    >
+                      Insert unsubscribe line
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertSnippetAtStepCursor(idx, "\n{{business_address}}")}
+                      className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-surface border border-border text-fg hover:border-primary/50 hover:text-primary transition-colors cursor-pointer"
+                    >
+                      Insert address
+                    </button>
+                  </div>
+                </div>
                 <textarea
+                  ref={(el) => {
+                    stepTextareaRefs.current[idx] = el;
+                  }}
                   rows={4}
                   value={step.body}
                   onChange={(e) => handleUpdateStep(idx, { body: e.target.value })}

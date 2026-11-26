@@ -44,6 +44,7 @@ export async function ensureDevAdminUser(): Promise<void> {
 
 interface StoreSchema {
   users: any[];
+  workspaces: any[];
   sessions: any[];
   api_keys: any[];
   social_accounts: any[];
@@ -80,6 +81,7 @@ interface StoreSchema {
 function getInitialStore(): StoreSchema {
   return {
     users: [],
+    workspaces: [],
     sessions: [],
     verification_tokens: [],
     api_keys: [],
@@ -148,17 +150,39 @@ export const localDevStore = {
       saveStore();
       return store.users[idx];
     }
+    const { workspaces: nestedWorkspaces, ...userData } = item;
     const user = {
-      id: item.id || `user_${Date.now()}`,
+      id: userData.id || `user_${Date.now()}`,
       created_at: new Date().toISOString(),
-      role: item.role || "user",
+      role: userData.role || "user",
       status: "active",
       plan: "free",
-      email_verified_at: item.email_verified_at !== undefined ? item.email_verified_at : null,
-      onboarded_at: item.onboarded_at !== undefined ? item.onboarded_at : null,
-      ...item,
+      email_verified_at: userData.email_verified_at !== undefined ? userData.email_verified_at : null,
+      onboarded_at: userData.onboarded_at !== undefined ? userData.onboarded_at : null,
+      ...userData,
     };
     store.users.unshift(user);
+    if (nestedWorkspaces?.create) {
+      if (!store.workspaces) store.workspaces = [];
+      const toCreate = Array.isArray(nestedWorkspaces.create)
+        ? nestedWorkspaces.create
+        : [nestedWorkspaces.create];
+      for (const w of toCreate) {
+        store.workspaces.push({
+          id: w.id || `ws-${Math.random().toString(36).slice(2, 10)}`,
+          user_id: user.id,
+          name: w.name || "Default",
+          is_default: w.is_default ?? true,
+          business_address: w.business_address ?? null,
+          sending_status: w.sending_status ?? "active",
+          pause_reason: w.pause_reason ?? null,
+          paused_at: w.paused_at ?? null,
+          paused_by: w.paused_by ?? null,
+          created_at: new Date().toISOString(),
+          ...w,
+        });
+      }
+    }
     saveStore();
     return user;
   },
@@ -184,6 +208,7 @@ export const localDevStore = {
 
       // Cascade in-memory cleanup across tables
       if (store.sessions) store.sessions = store.sessions.filter((s) => s.user_id !== uid);
+      if (store.workspaces) store.workspaces = store.workspaces.filter((w) => w.user_id !== uid);
       if (store.verification_tokens && uemail) store.verification_tokens = store.verification_tokens.filter((t) => t.identifier?.toLowerCase() !== uemail);
       if (store.api_keys) store.api_keys = store.api_keys.filter((k) => k.user_id !== uid);
       if (store.social_accounts) store.social_accounts = store.social_accounts.filter((a) => a.user_id !== uid);
@@ -1449,6 +1474,54 @@ export const localDevStore = {
       ? store.warmup_logs[idx]
       : store.warmup_logs[store.warmup_logs.length - 1];
   },
+  // --- Workspaces ---
+  getWorkspaces: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.workspaces) store.workspaces = [];
+    return filter ? store.workspaces.filter(filter) : store.workspaces;
+  },
+  findWorkspace: (filter: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.workspaces) store.workspaces = [];
+    return store.workspaces.find(filter) || null;
+  },
+  saveWorkspace: (item: any) => {
+    const store = loadStore();
+    if (!store.workspaces) store.workspaces = [];
+    const idx = store.workspaces.findIndex((w) => w.id === item.id);
+    if (idx >= 0) {
+      store.workspaces[idx] = { ...store.workspaces[idx], ...item };
+    } else {
+      store.workspaces.push({
+        id: item.id || `ws-${Math.random().toString(36).slice(2, 10)}`,
+        name: "Default",
+        is_default: true,
+        business_address: null,
+        sending_status: "active",
+        pause_reason: null,
+        paused_at: null,
+        paused_by: null,
+        created_at: new Date().toISOString(),
+        ...item,
+      });
+    }
+    saveStore();
+    return idx >= 0
+      ? store.workspaces[idx]
+      : store.workspaces[store.workspaces.length - 1];
+  },
+  updateWorkspace: (id: string, data: any) => {
+    const store = loadStore();
+    if (!store.workspaces) store.workspaces = [];
+    const idx = store.workspaces.findIndex((w) => w.id === id);
+    if (idx >= 0) {
+      store.workspaces[idx] = { ...store.workspaces[idx], ...data };
+      saveStore();
+      return store.workspaces[idx];
+    }
+    return null;
+  },
+
   deleteWhere: (table: keyof StoreSchema, filter: (item: any) => boolean) => {
     const store = loadStore();
     const arr = (store[table] as any[]) || [];

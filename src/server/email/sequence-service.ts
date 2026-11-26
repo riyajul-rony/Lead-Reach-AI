@@ -11,6 +11,7 @@ import { trackUsageIncrement } from "@/server/billing/usage-tracker";
 import { buildEmailMultipartBodies, calculateRandomJitterSec, dispatchEmailTransport } from "@/server/email/sending-engine";
 import { selectVariantForRecipient } from "@/server/email/variant-service";
 import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
+import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
 import {
   isWithinSendingWindow,
   normalizeIanaTimezone,
@@ -287,10 +288,11 @@ export async function sendSingleRecipientFollowup(
     campaign.tracking_domain_id
   );
   const unsubscribeUrl = `${trackingBaseUrl}/u/${recipient.unsubscribe_token}`;
-  const legalAddress =
-    campaign.source_ref?.sender_address_footer ||
-    account.signature ||
-    "Lead Reach AI Verified Cold Outreach";
+  const businessAddress = await resolveUserWorkspaceBusinessAddress(recipient.user_id);
+  const templateVars = {
+    ...(recipient.vars || {}),
+    business_address: businessAddress,
+  };
 
   let finalSubject = "";
   let finalBody = "";
@@ -339,41 +341,44 @@ export async function sendSingleRecipientFollowup(
           // Fallback if AI generation encounters issue
           finalSubject = renderEmailTemplate(
             effectiveStepSubject || "Re: {{previous_subject}}",
-            { ...recipient.vars, previous_subject: recipient.generated_subject || "our conversation" }
+            { ...templateVars, previous_subject: recipient.generated_subject || "our conversation" },
+            unsubscribeUrl
           );
           finalBody = renderEmailTemplate(
             effectiveStepBody || "Hi {{first_name|there}},\n\nJust floating this to the top of your inbox.",
-            recipient.vars || {}
+            templateVars,
+            unsubscribeUrl
           );
         }
       } else {
         finalSubject = renderEmailTemplate(
           effectiveStepSubject || "Re: {{previous_subject}}",
-          { ...recipient.vars, previous_subject: recipient.generated_subject || "our conversation" }
+          { ...templateVars, previous_subject: recipient.generated_subject || "our conversation" },
+          unsubscribeUrl
         );
         finalBody = renderEmailTemplate(
           effectiveStepBody || "Hi {{first_name|there}},\n\nJust floating this to the top of your inbox.",
-          recipient.vars || {}
+          templateVars,
+          unsubscribeUrl
         );
       }
     } else {
       // Custom Template Mode
       finalSubject = renderEmailTemplate(
         effectiveStepSubject || "Re: {{previous_subject}}",
-        { ...recipient.vars, previous_subject: recipient.generated_subject || "our conversation" },
+        { ...templateVars, previous_subject: recipient.generated_subject || "our conversation" },
         unsubscribeUrl
       );
       finalBody = renderEmailTemplate(
         effectiveStepBody || "Hi {{first_name|there}},\n\nJust floating this to the top of your inbox.",
-        recipient.vars || {},
+        templateVars,
         unsubscribeUrl
       );
     }
 
-    // 4. Construct multipart body and dispatch via shared transport (Gmail API or SMTP)
+    // 4. Construct Pure Message body (text/plain only unless tracking/HTML is active)
     const { text: plainTextBody, html: htmlBody } = buildEmailMultipartBodies({
       bodyText: finalBody,
-      legalAddress,
       unsubscribeUrl,
       trackingOpen: Boolean(campaign.tracking_open),
       trackingClick: Boolean(campaign.tracking_click),

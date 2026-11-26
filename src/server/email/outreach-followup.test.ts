@@ -391,9 +391,8 @@ describe("Phase 6: Cold Email Outreach & Followup Sequence Automation", () => {
 
       expect(callArgs.to).toBe("prospect@acme.com");
       expect(callArgs.subject).toBe("Quick partnership idea for Acme Corp");
-      expect(callArgs.text).toContain("Hello John,");
-      expect(callArgs.text).toContain("Cerkit Labs, Tower 4, Singapore");
-      expect(callArgs.text).toContain(`/u/${recipient.unsubscribe_token}`);
+      expect(callArgs.text).toBe("Hello John,\n\nWould love to collaborate.");
+      expect(callArgs.html).toBeUndefined();
       expect(callArgs.headers["List-Unsubscribe"]).toBe(`<http://localhost:3000/u/${recipient.unsubscribe_token}>`);
       expect(callArgs.headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
 
