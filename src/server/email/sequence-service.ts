@@ -13,6 +13,7 @@ import { selectVariantForRecipient } from "@/server/email/variant-service";
 import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
 import { resolveSenderFirstName } from "@/server/email/sender-identity";
+import { resolveAccountJitterBounds } from "@/server/email/send-jitter";
 import {
   commitAccountDailyCapacity,
   ensureAccountRampStarted,
@@ -483,9 +484,8 @@ export async function sendSingleRecipientFollowup(
       },
     });
 
-    // Update account's next_allowed_at wait gap cooldown
-    const minGap = Math.max(Number(account.min_gap_seconds) || Number(account.gap_seconds) || 180, 30);
-    const maxGap = Math.max(Number(account.max_gap_seconds) || minGap * 2 || 420, minGap);
+    // Update account's next_allowed_at wait gap cooldown (default 120–300s)
+    const { minSeconds: minGap, maxSeconds: maxGap } = resolveAccountJitterBounds(account, campaign);
     const gapSec = calculateRandomJitterSec(minGap, maxGap);
     const nextAllowed = new Date(now.getTime() + gapSec * 1000);
     try {

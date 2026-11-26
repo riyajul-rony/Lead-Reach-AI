@@ -133,7 +133,36 @@
 - **Decisions:** Admin override (`admin_daily_limit_override`) explicitly supersedes `planCeiling` & weekly ramp up to `SYSTEM_MAX_DAILY_LIMIT` (default `150`) so admins can raise or lower caps above adaptive ceilings, while respecting any stricter lower `user_daily_limit`. Legacy accounts/test fixtures with no Phase 6 signals continue using legacy `warmup_start_limit` ramp behavior seamlessly.
 - **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (54 test files, 350 tests passed).
 
+---
+
+## Task 7 — Send jitter
+
+**Status:** Completed
+
+### Outcome & Changes
+- Created `src/server/email/send-jitter.ts` (`getDefaultSendJitterBounds`, `resolveAccountJitterBounds`, `computeSendJitterSeconds`) enforcing default randomized delays between `120–300` seconds (configurable via `SEND_JITTER_MIN_SECONDS` and `SEND_JITTER_MAX_SECONDS` or per-account bounds).
+- Fixed shared cross-account delay accumulation in `src/server/email/sending-engine.ts` (`dispatchRunningCampaigns`) by tracking `perAccountNextSlotMs` strictly per `assigned_account_id` so multiple accounts schedule in parallel via non-blocking BullMQ delays (`queueEmailSend(rec.id, delayMs)`) without slowing each other down.
+- Updated `next_allowed_at` calculation and defaults across `src/server/email/sending-engine.ts`, `src/server/email/sequence-service.ts`, `src/server/email/campaign-service.ts`, `src/server/email/account-service.ts`, and `src/app/api/v1/email-accounts/route.ts` (`120–300s` default) while preserving Task 6 daily capacity enforcement.
+- Added `src/server/email/send-jitter.test.ts` (4 tests) verifying default 120–300s randomized variance, env configuration, independent per-account BullMQ delayed scheduling even when another account has an active cooldown, and intact Task 6 daily caps.
+- **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (55 test files, 354 tests passed).
+
 ### Plan
+- **Behavior & Architecture:**
+  - Centralize randomized send jitter configuration in `src/server/email/send-jitter.ts` (`SEND_JITTER_MIN_SECONDS=120`, `SEND_JITTER_MAX_SECONDS=300` defaults, env-configurable, safe account/campaign overrides).
+  - Fix `dispatchRunningCampaigns` in `src/server/email/sending-engine.ts` where a single `cumulativeDelayMs` was shared across all recipients in the loop; track delays strictly per `assigned_account_id` (plus that account's own `next_allowed_at` cooldown) so different sending accounts schedule independently via non-blocking BullMQ delayed jobs (`queueEmailSend(rec.id, delayMs)`) without blocking each other or slowing down multi-account sending.
+  - Update `next_allowed_at` cooldown calculation in `sending-engine.ts` and `sequence-service.ts`, plus fallback creation bounds in `account-service.ts` and `campaign-service.ts`, to use `120–300` seconds defaults while keeping Task 6 daily caps untouched.
+- **Files to add/modify:**
+  - `src/server/email/send-jitter.ts`
+  - `src/server/email/sending-engine.ts`
+  - `src/server/email/sequence-service.ts`
+  - `src/server/email/campaign-service.ts`
+  - `src/server/email/account-service.ts`
+  - `src/server/email/send-jitter.test.ts`
+- **Edge cases & risks:**
+  - Unassigned recipients (`assigned_account_id: null`) in `dispatchRunningCampaigns` pre-select or isolate under an unassigned bucket so they never inflate another mailbox's delay chain; BullMQ `jobId` deduplication prevents duplicate delayed jobs on repeated scheduler ticks.
+  - Zero `sleep` / `setTimeout` inside BullMQ workers; delays occur solely via BullMQ `delay` option and persisted `next_allowed_at`.
+
+### Plan (Task 6 Archive)
 - **Data model changes (additive):**
   - `prisma/schema.prisma`:
     - Add to `email_accounts`: `account_type`, `workspace_tier`, `detected_age_days`, `message_count`, `age_source`, `detected_at`, `ramp_started_at`, `start_limit_snapshot`, `current_daily_limit`, `healthy_weeks_completed`, `last_evaluated_at`, `health_status`, `user_daily_limit`, `admin_daily_limit_override`, `rate_limited_until`, `rate_limit_hit_at`.

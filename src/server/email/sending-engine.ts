@@ -11,6 +11,10 @@ import { generateOutreachEmail } from "@/server/ai/outreach-generator";
 import { assertLimit } from "@/server/billing/limits";
 import { trackUsageIncrement } from "@/server/billing/usage-tracker";
 import { queueEmailSend } from "@/server/queues";
+import {
+  computeSendJitterSeconds,
+  resolveAccountJitterBounds,
+} from "@/server/email/send-jitter";
 import { createSignedTrackingToken } from "@/server/email/tracking-token";
 import { selectVariantForRecipient } from "@/server/email/variant-service";
 import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
@@ -141,10 +145,8 @@ export function buildEmailMultipartBodies(opts: {
 /**
  * Calculates a randomized jitter delay in seconds to protect sender domain reputation.
  */
-export function calculateRandomJitterSec(minSec = 60, maxSec = 180): number {
-  const min = Math.max(0, Math.floor(minSec));
-  const max = Math.max(min, Math.floor(maxSec));
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+export function calculateRandomJitterSec(minSec?: number, maxSec?: number): number {
+  return computeSendJitterSeconds(minSec, maxSec);
 }
 
 /**
@@ -738,9 +740,8 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       },
     });
 
-    // Update account's next_allowed_at with randomized wait gap (min_gap_seconds to max_gap_seconds)
-    const minGap = Math.max(Number(account.min_gap_seconds) || Number(account.gap_seconds) || 180, 30);
-    const maxGap = Math.max(Number(account.max_gap_seconds) || minGap * 2 || 420, minGap);
+    // Update account's next_allowed_at with randomized wait gap (default 120–300s)
+    const { minSeconds: minGap, maxSeconds: maxGap } = resolveAccountJitterBounds(account, campaign);
     const gapSec = calculateRandomJitterSec(minGap, maxGap);
     const nextAllowed = new Date(Date.now() + gapSec * 1000);
 
@@ -1003,7 +1004,8 @@ export async function dispatchRunningCampaigns(
       }
 
       // 2. Dispatch eligible recipients inside their effective timezone sending window
-      let cumulativeDelayMs = 0;
+      // Track cumulative delay strictly per sending account so multiple accounts run independently
+      const perAccountNextSlotMs = new Map<string, number>();
       for (const rec of queuedRecipients) {
         const acc = rec.assigned_account_id ? accountMap.get(rec.assigned_account_id) : null;
         const recipientTimezone =
@@ -1027,21 +1029,22 @@ export async function dispatchRunningCampaigns(
           continue; // Outside recipient/campaign local sending window; resume on next cycle
         }
 
-        let accountMinGap = campaign.jitter_min_sec || 60;
-        let accountMaxGap = campaign.jitter_max_sec || 180;
+        const { minSeconds: accountMinGap, maxSeconds: accountMaxGap } =
+          resolveAccountJitterBounds(acc, campaign);
         let accountCooldownMs = 0;
 
-        if (acc) {
-          if (acc.min_gap_seconds) accountMinGap = acc.min_gap_seconds;
-          if (acc.max_gap_seconds) accountMaxGap = acc.max_gap_seconds;
-          if (acc.next_allowed_at && new Date(acc.next_allowed_at) > now) {
-            accountCooldownMs = new Date(acc.next_allowed_at).getTime() - now.getTime();
-          }
+        if (acc?.next_allowed_at && new Date(acc.next_allowed_at) > now) {
+          accountCooldownMs = new Date(acc.next_allowed_at).getTime() - now.getTime();
         }
 
+        const accountKey = rec.assigned_account_id || "__unassigned__";
         const jitterSec = calculateRandomJitterSec(accountMinGap, accountMaxGap);
-        cumulativeDelayMs += jitterSec * 1000;
-        const totalDelayMs = Math.max(cumulativeDelayMs, accountCooldownMs);
+        const existingSlotMs = perAccountNextSlotMs.get(accountKey);
+        const totalDelayMs =
+          existingSlotMs === undefined
+            ? accountCooldownMs
+            : Math.max(existingSlotMs, accountCooldownMs);
+        perAccountNextSlotMs.set(accountKey, totalDelayMs + jitterSec * 1000);
 
         // Queue in BullMQ if available
         const enqueued = await queueEmailSend(rec.id, totalDelayMs);

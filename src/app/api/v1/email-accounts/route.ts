@@ -41,9 +41,9 @@ const createAccountSchema = z.object({
   // Speed & safety — Safe Preset defaults
   hourly_limit: z.coerce.number().min(1).max(25).default(25),
   daily_limit: z.coerce.number().min(1).max(500).default(75),
-  gap_seconds: z.coerce.number().min(30).max(3600).default(180),
-  min_gap_seconds: z.coerce.number().min(30).max(3600).default(180),
-  max_gap_seconds: z.coerce.number().min(30).max(3600).default(360),
+  gap_seconds: z.coerce.number().min(30).max(3600).default(120),
+  min_gap_seconds: z.coerce.number().min(30).max(3600).default(120),
+  max_gap_seconds: z.coerce.number().min(30).max(3600).default(300),
   timezone: z.string().default("UTC"),
 
   // Warmup — Safe Preset: enabled by default
