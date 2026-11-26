@@ -192,7 +192,34 @@
 - Added `src/server/email/deliverability-checker.test.ts` (4 tests) verifying clean pass baseline with zero network calls, every Error rule, every Warn rule, signature mismatch, and exact CAN-SPAM/PECR/GDPR warning string.
 - **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (58 test files, 364 tests passed).
 
-### Plan
+---
+
+## Task 11 — Final Verification & Phase 6 Summary
+
+**Status:** Completed
+
+### Final Gate Results (post-Task 10 on `feat/phase-6-deliverability`)
+- `npm.cmd test`: **PASS** — 58 test files passed (58), 364 tests passed (364) (note: `google-maps.test.ts` live integration test skips when local scraper isn't running at `127.0.0.1:8080`, as on baseline).
+- `npx.cmd tsc --noEmit`: **PASS** — exit code 0.
+- `npm.cmd run lint`: **PASS** — exit code 0 (0 errors; warnings only from pre-existing files).
+- `npm.cmd run build`: **PASS** — Next.js zero-secret production build completed cleanly.
+- `npm.cmd run build:worker`: **PASS** — `dist/worker.cjs` (809.4kb) + `dist/worker.cjs.map` (1.5mb) compiled cleanly in 79ms.
+- Leftover scan (`123 Innovation Way` in `src/`): 0 matches.
+
+### Additive Prisma Migrations Created (Not Applied)
+1. `prisma/migrations/20261126060000_add_workspace_business_address/migration.sql`
+2. `prisma/migrations/20261126070000_add_step_tracking_flags/migration.sql`
+3. `prisma/migrations/20261126080000_add_workspace_legal_acknowledgements/migration.sql`
+4. `prisma/migrations/20261126090000_add_adaptive_limits_and_admin_actions/migration.sql`
+5. `prisma/migrations/20261126100000_add_deliverability_auto_pause/migration.sql`
+6. `prisma/migrations/20261126110000_add_workspace_sending_pause/migration.sql`
+
+### Existing Recipient Verification Note (For Future Work)
+- Lead import/validation (`src/app/api/v1/outreach/recipients/validate/route.ts` and `src/server/email/recipient-importer.ts`) currently performs normalization, deduplication, syntax validation (`EMAIL_REGEX`), and suppression filtering (`db.suppressions`).
+- Apify B2B lead normalization (`src/server/providers/leads/apify/b2b-leads.adapter.ts`) already captures upstream `email_status` metadata when available, and sender DNS (`spf`/`dmarc` + MX lookup) lives in `dns-checker.ts` / `account-profile-detector.ts`.
+- Those signals can later feed `analyzeDeliverability()` (e.g., warning when recipient rows lack `valid` `email_status` or fail recipient-domain MX lookup) without changing Phase 6 scope.
+
+### Plan (Task 10 Archive)
 - **Architecture:** Pure synchronous static analysis helper `analyzeDeliverability(input)` (`src/server/email/deliverability-checker.ts`) with zero external network calls, executed client-side against rendered sample copy in Step 5 of `outreach-wizard.tsx` and unit-tested across all Error/Warn branches.
 - **Files to add/modify:**
   - `src/server/email/deliverability-checker.ts`:
