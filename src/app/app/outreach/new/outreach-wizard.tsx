@@ -42,6 +42,7 @@ import {
 import { FollowupStepBuilder, FollowupStepData } from "@/components/outreach/followup-step-builder";
 import { AiPreviewApprover, GeneratedPreview } from "@/components/outreach/ai-preview-approver";
 import { SpamCheckResult } from "@/server/email/spam-checker";
+import { analyzeDeliverability } from "@/server/email/deliverability-checker";
 import { InfoTooltip } from "@/components/outreach/info-tooltip";
 import { renderEmailTemplate } from "@/server/email/template-renderer";
 import { formatFromHeader, resolveSenderFirstName } from "@/server/email/sender-identity";
@@ -171,9 +172,10 @@ export function OutreachWizard() {
   const [variantBSubject, setVariantBSubject] = useState("");
   const [variantBBody, setVariantBBody] = useState("");
 
-  // Spam checker state
+  // Spam checker & Pre-send deliverability state
   const [spamResult, setSpamResult] = useState<SpamCheckResult | null>(null);
   const [checkingSpam, setCheckingSpam] = useState(false);
+  const [deliverabilityWarningsDismissed, setDeliverabilityWarningsDismissed] = useState(false);
 
   // Step 5: Test send & Launch states
   const [testEmailAddress, setTestEmailAddress] = useState("");
@@ -783,8 +785,8 @@ export function OutreachWizard() {
           endHour,
         },
         timezone,
-        jitterMinSec: 180,
-        jitterMaxSec: 420,
+        jitterMinSec: 120,
+        jitterMaxSec: 300,
         launchNow,
         accountAllocations: selectedAccountIds.map((id) => ({
           accountId: id,
@@ -2122,6 +2124,109 @@ export function OutreachWizard() {
                 )}
               </div>
 
+              {/* Pre-send Deliverability Check */}
+              {(() => {
+                const selectedAccountsList = accounts.filter((a) => selectedAccountIds.includes(a.id));
+                const deliverability = analyzeDeliverability({
+                  subject: previewSubject,
+                  body: previewBody,
+                  rawSubjectTemplate: subjectTemplate,
+                  rawBodyTemplate: bodyTemplate,
+                  mode,
+                  stepNo: 1,
+                  senderAccounts: selectedAccountsList,
+                  recipients,
+                  trackingOpen,
+                  trackingClick,
+                  businessAddress: physicalAddress,
+                  steps: followupSteps.map((s) => ({
+                    step_no: s.step_no,
+                    subject: s.subject,
+                    body: s.body,
+                    tracking_open: s.tracking_open ?? null,
+                    tracking_click: s.tracking_click ?? null,
+                  })),
+                });
+
+                return (
+                  <div className="rounded-xl border border-border bg-surface p-4 space-y-3 text-xs">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="font-semibold text-fg flex items-center gap-1.5">
+                        <ShieldCheck size={14} className="text-primary" />
+                        <span>Deliverability check</span>
+                      </span>
+                      <Badge
+                        variant={
+                          deliverability.status === "error"
+                            ? "danger"
+                            : deliverability.status === "warn"
+                              ? "warning"
+                              : "success"
+                        }
+                        size="sm"
+                      >
+                        {deliverability.status === "error"
+                          ? `${deliverability.errors.length} Blocking Error(s)`
+                          : deliverability.status === "warn"
+                            ? `${deliverability.warnings.length} Warning(s)`
+                            : "All checks passed"}
+                      </Badge>
+                    </div>
+
+                    {deliverability.errors.length === 0 && deliverability.warnings.length === 0 && (
+                      <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                        Your rendered message, sender identity, DNS, and recipient list look clean ({deliverability.summary.wordCount} words, {deliverability.summary.linkCount} links).
+                      </p>
+                    )}
+
+                    {deliverability.errors.length > 0 && (
+                      <div className="space-y-1.5">
+                        {deliverability.errors.map((issue) => (
+                          <div
+                            key={issue.code + issue.title}
+                            className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-rose-700 dark:text-rose-300"
+                          >
+                            <div className="font-semibold">{issue.title}</div>
+                            <div className="text-[11px] opacity-90">{issue.message}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {deliverability.warnings.length > 0 && (
+                      <div className="space-y-2">
+                        {!deliverabilityWarningsDismissed && (
+                          <div className="space-y-1.5">
+                            {deliverability.warnings.map((issue) => (
+                              <div
+                                key={issue.code + issue.title}
+                                className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-800 dark:text-amber-300"
+                              >
+                                <div className="font-semibold">{issue.title}</div>
+                                <div className="text-[11px] opacity-90">{issue.message}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={deliverabilityWarningsDismissed}
+                            onChange={(e) => setDeliverabilityWarningsDismissed(e.target.checked)}
+                            className="rounded cursor-pointer"
+                          />
+                          <span>
+                            {deliverabilityWarningsDismissed
+                              ? "Warnings dismissed — click to inspect warnings again"
+                              : "Dismiss deliverability warnings"}
+                          </span>
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Reply Detection & Follow-up Warnings */}
               {(() => {
                 const selectedAccountsList = accounts.filter((a) => selectedAccountIds.includes(a.id));
@@ -2239,7 +2344,28 @@ export function OutreachWizard() {
                 });
                 const hasNoReplyDetection = accountsWithoutReplyDetection.length > 0;
                 const hasFollowups = followupSteps.length > 0;
-                const isLaunchBlocked = hasNoReplyDetection && hasFollowups;
+                const deliverabilityCheck = analyzeDeliverability({
+                  subject: previewSubject,
+                  body: previewBody,
+                  rawSubjectTemplate: subjectTemplate,
+                  rawBodyTemplate: bodyTemplate,
+                  mode,
+                  stepNo: 1,
+                  senderAccounts: selectedAccountsList,
+                  recipients,
+                  trackingOpen,
+                  trackingClick,
+                  businessAddress: physicalAddress,
+                  steps: followupSteps.map((s) => ({
+                    step_no: s.step_no,
+                    subject: s.subject,
+                    body: s.body,
+                    tracking_open: s.tracking_open ?? null,
+                    tracking_click: s.tracking_click ?? null,
+                  })),
+                });
+                const isLaunchBlocked =
+                  (hasNoReplyDetection && hasFollowups) || !deliverabilityCheck.canLaunch;
 
                 return (
                   <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
@@ -2255,6 +2381,12 @@ export function OutreachWizard() {
                     >
                       {submitting ? "Launching..." : "Launch Campaign Now"}
                     </Button>
+
+                    {!deliverabilityCheck.canLaunch && (
+                      <p className="text-[11px] text-rose-600 dark:text-rose-400 text-center font-medium leading-relaxed">
+                        Resolve {deliverabilityCheck.errors.length} blocking deliverability error(s) before launching.
+                      </p>
+                    )}
 
                     {isLaunchBlocked && (
                       <p className="text-[11px] text-rose-600 dark:text-rose-400 text-center font-medium leading-relaxed">

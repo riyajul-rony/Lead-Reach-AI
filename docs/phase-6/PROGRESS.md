@@ -178,7 +178,33 @@
 - Added `src/server/workspace/sending-control.test.ts` (2 tests) verifying RBAC (`401`/`403`/`400`), campaign launch/resume HTTP `423`, worker initial/followup/warmup pause enforcement, job preservation across pause & clean recovery after resume, cross-tenant isolation, `admin_actions` audit entries, and GDPR export.
 - **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (57 test files, 360 tests passed).
 
+---
+
+## Task 10 — Pre-send deliverability checker
+
+**Status:** Completed
+
+### Outcome & Changes
+- Created `src/server/email/deliverability-checker.ts` (`analyzeDeliverability`) running 100% offline with zero network calls, reusing `analyzeSpamRisk` (`src/server/email/spam-checker.ts`) and `resolveSenderFirstName` (`src/server/email/sender-identity.ts`):
+  - **Errors (blocking Launch):** empty subject/body, broken/unclosed spintax or unresolved `{{var}}` placeholders, empty or invalid recipient emails, zero or non-active selected sender accounts, and explicit DNS `"fail"` (`spf`/`dkim`/`dmarc`).
+  - **Warnings (dismissible):** generic/brand/missing/mismatched `From Name` vs signature, links in Step 1, cross-domain URLs, URL shorteners (`bit.ly`, `tinyurl.com`, `t.co`, etc.), URLs `> 80` chars, open/click tracking enabled, missing postal address or opt-out line with exact compliance notice (`"Your text has no postal address or opt-out line. For US/UK recipients commercial email generally requires both (CAN-SPAM, PECR/GDPR). The List-Unsubscribe header is still sent."`), spam trigger phrases, excessive caps/exclamation marks, body `> 250` words, HTML markup, and unverified DNS (`unknown`).
+- Wired `"Deliverability check"` panel and blocking error gate onto Step 5 of `src/app/app/outreach/new/outreach-wizard.tsx` (disables `Launch Campaign Now` on errors while allowing `Save as Draft`, and provides warning dismissal checkbox; aligned wizard jitter defaults to `120–300s`).
+- Added `src/server/email/deliverability-checker.test.ts` (4 tests) verifying clean pass baseline with zero network calls, every Error rule, every Warn rule, signature mismatch, and exact CAN-SPAM/PECR/GDPR warning string.
+- **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (58 test files, 364 tests passed).
+
 ### Plan
+- **Architecture:** Pure synchronous static analysis helper `analyzeDeliverability(input)` (`src/server/email/deliverability-checker.ts`) with zero external network calls, executed client-side against rendered sample copy in Step 5 of `outreach-wizard.tsx` and unit-tested across all Error/Warn branches.
+- **Files to add/modify:**
+  - `src/server/email/deliverability-checker.ts`:
+    - **Errors (disable Launch until resolved):** empty subject or body; unclosed/broken spintax (`{a|}` / `{unclosed`) or unresolved `{{...}}` variables in rendered sample; empty or invalid recipient emails; zero/inactive selected sender accounts; explicit DNS `"fail"` status (`spf`, `dkim`, or `dmarc`).
+    - **Warnings (dismissible in UI):** missing/generic/brand/mismatched `From` name vs body signature; links present in Step 1; cross-domain URLs (host != sender domain); URL shorteners (`bit.ly`, `tinyurl.com`, `t.co`, etc.); long URLs (`> 80` chars); open or click tracking enabled; missing postal address or opt-out wording with exact copy `"Your text has no postal address or opt-out line. For US/UK recipients commercial email generally requires both (CAN-SPAM, PECR/GDPR). The List-Unsubscribe header is still sent."`; spam trigger words; excessive caps / exclamation marks; long body (`> 250` words); HTML tags instead of plain text; unverified DNS status (`unknown`).
+  - `src/app/app/outreach/new/outreach-wizard.tsx`: render `"Deliverability check"` panel in Step 5 on the rendered preview sample; disable `Launch Campaign Now` when errors exist; provide a warning dismissal checkbox when warnings exist; update wizard jitter payload defaults (`120–300s`).
+  - `src/server/email/deliverability-checker.test.ts`: test every Error rule, every Warn rule, exact compliance copy, zero network calls, and valid clean baseline.
+- **Risks / Edge cases:**
+  - Optional `{{business_address}}` / `{{unsubscribe_url}}` variables resolve to empty strings cleanly before running `analyzeDeliverability`, avoiding false unresolved-variable Errors while surfacing the postal/opt-out compliance warning when omitted.
+  - Pure plain-text message with matching human `from_name`/signature, zero links, zero tracking, valid recipients, and postal + opt-out text returns zero Errors and zero Warnings.
+
+### Plan (Task 9 Archive)
 - **Data model & GDPR (additive):**
   - `prisma/schema.prisma`: add `sending_status String @default("active")`, `pause_reason String?`, `paused_at DateTime? @db.Timestamptz`, and `paused_by String? @db.Uuid` on `workspaces` (`@@index([sending_status])`).
   - `prisma/migrations/20261126110000_add_workspace_sending_pause/migration.sql`: additive `ALTER TABLE "workspaces" ADD COLUMN IF NOT EXISTS ...` + index.
