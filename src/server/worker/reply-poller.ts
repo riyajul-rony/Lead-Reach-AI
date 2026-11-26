@@ -6,6 +6,7 @@ import { getDecryptedAccountCredentials } from "@/server/email/account-service";
 import { classifyReplyIntent } from "@/server/ai/reply-classifier";
 import { detectDeterministicOptOut } from "@/server/email/opt-out-detector";
 import { handleIncomingWarmupEmail, isWarmupMessageHeaders } from "@/server/email/warmup-pool-service";
+import { recordHardBounceAndSuppress } from "@/server/email/deliverability-pause";
 
 export interface PollResult {
   checked: number;
@@ -305,29 +306,14 @@ export async function pollInboxesForReplies(): Promise<PollResult> {
                     orderBy: { last_sent_at: "desc" },
                   });
                   if (rec && rec.status !== "bounced") {
-                    await db.campaign_recipients.update({
-                      where: { id: rec.id },
-                      data: {
-                        status: "bounced",
-                        error: "Delivery failed / bounced",
-                        next_followup_at: null,
-                      },
+                    await recordHardBounceAndSuppress({
+                      userId: rec.user_id,
+                      accountId: rec.assigned_account_id || account.id,
+                      recipientId: rec.id,
+                      campaignId: rec.campaign_id,
+                      email: bouncedEmail,
+                      reason: "Delivery failed / bounced",
                     });
-
-                    // Permanently suppress recipient
-                    const existingSup = await db.suppressions.findFirst({
-                      where: { user_id: rec.user_id, email: bouncedEmail },
-                    });
-                    if (!existingSup) {
-                      await db.suppressions.create({
-                        data: {
-                          user_id: rec.user_id,
-                          email: bouncedEmail,
-                          reason: "bounced",
-                          source_campaign_id: rec.campaign_id,
-                        },
-                      });
-                    }
                     bouncesFound++;
                   }
                 }

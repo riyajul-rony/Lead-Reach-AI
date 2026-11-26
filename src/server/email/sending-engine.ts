@@ -31,6 +31,13 @@ import {
   type DailyCapacityReservation,
 } from "@/server/email/daily-capacity";
 import {
+  isPermanentHardBounceSmtpError,
+  isSmtpAuthFailureError,
+  recordAccountAuthFailure,
+  recordHardBounceAndSuppress,
+  resetAccountAuthFailures,
+} from "@/server/email/deliverability-pause";
+import {
   getLocalTimeParts,
   isValidIanaTimezone,
   isWithinSendingWindow,
@@ -424,9 +431,22 @@ export async function sendSingleRecipientEmail(recipientId: string) {
   }
 
   if (!account || account.status !== "active") {
+    const wasDeliverabilityPaused = account?.status === "paused_deliverability";
     const selection = await selectAvailableAccountForCampaign(campaign.id, recipient.user_id);
     if (!selection.account) {
-      return { throttled: selection.throttled, reason: selection.reason || "No available sender account" };
+      if (wasDeliverabilityPaused && recipient.assigned_account_id) {
+        await db.campaign_recipients.update({
+          where: { id: recipient.id },
+          data: { assigned_account_id: null },
+        }).catch(() => null);
+      }
+      return {
+        throttled: selection.throttled || wasDeliverabilityPaused,
+        pausedDeliverability: wasDeliverabilityPaused,
+        reason: wasDeliverabilityPaused
+          ? account.deliverability_pause_reason || "Sender account paused due to deliverability signals"
+          : selection.reason || "No available sender account",
+      };
     }
     account = selection.account;
 
@@ -750,6 +770,9 @@ export async function sendSingleRecipientEmail(recipientId: string) {
         where: { id: account.id },
         data: { next_allowed_at: nextAllowed },
       });
+      if (account.consecutive_smtp_auth_failures > 0) {
+        await resetAccountAuthFailures(account.id);
+      }
     } catch {}
 
     logger.info(
@@ -782,30 +805,43 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       return { throttled: true, rateLimited: true, error: errorMsg };
     }
 
-    // Check for critical authentication / credentials failure
-    const isAuthFailure =
-      errorMsg.includes("EAUTH") ||
-      errorMsg.includes("BadCredentials") ||
-      errorMsg.includes("535") ||
-      errorMsg.includes("reconnection required") ||
-      errorMsg.includes("invalid_grant") ||
-      errorMsg.includes("Token has been expired or revoked");
-
-    if (isAuthFailure && account) {
-      await db.email_accounts.update({
-        where: { id: account.id },
+    // Handle SMTP authentication failure: auto-pause ONLY this account on 3 consecutive failures
+    if (!transportAcceptedMessageId && account && isSmtpAuthFailureError(errorMsg)) {
+      const authRes = await recordAccountAuthFailure(account.id, errorMsg);
+      await db.campaign_recipients.update({
+        where: { id: recipient.id },
         data: {
-          status: "needs_attention",
-          last_error: errorMsg,
+          status: "queued",
+          assigned_account_id: null,
+          error: authRes.paused
+            ? `Sender paused after ${authRes.consecutiveFailures} auth failures; queued cleanly`
+            : `Transient sender auth failure (${authRes.consecutiveFailures}/3); retrying`,
         },
-      });
+      }).catch(() => null);
+      return {
+        throttled: true,
+        authFailed: true,
+        accountPaused: authRes.paused,
+        error: errorMsg,
+      };
+    }
 
-      // Pause campaign for safety
-      await db.outreach_campaigns.update({
-        where: { id: campaign.id },
-        data: { status: "paused" },
+    // Handle synchronous SMTP hard bounce (e.g. 550 5.1.1 User Unknown): suppress + evaluate >2% bounce rate
+    if (!transportAcceptedMessageId && account && isPermanentHardBounceSmtpError(errorMsg)) {
+      const bounceEval = await recordHardBounceAndSuppress({
+        userId: recipient.user_id,
+        accountId: account.id,
+        recipientId: recipient.id,
+        campaignId: campaign.id,
+        email: recipient.email,
+        reason: errorMsg,
       });
-      logger.warn({ accountId: account.id, campaignId: campaign.id }, "Sender account requires attention, campaign paused");
+      return {
+        success: false,
+        bounced: true,
+        accountPaused: bounceEval.paused,
+        error: errorMsg,
+      };
     }
 
     if (transportAcceptedMessageId) {

@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
+import { evaluateAccountBouncePause } from "@/server/email/deliverability-pause";
 import {
   getAdaptiveLimitConfig,
   normalizeAccountPlanType,
@@ -460,13 +461,25 @@ export async function evaluateDailyAccountHealth(now: Date = new Date()): Promis
   let checked = 0;
   let evaluated = 0;
   for (const acc of accounts) {
-    if (!acc.ramp_started_at) continue;
+    let latestAcc = acc;
+    if (acc.status === "active") {
+      try {
+        const bounceCheck = await evaluateAccountBouncePause(acc.id, now);
+        if (bounceCheck.paused) {
+          const refreshed = await db.email_accounts.findUnique({ where: { id: acc.id } });
+          if (refreshed) latestAcc = refreshed;
+        }
+      } catch (err) {
+        logger.error({ err, accountId: acc.id }, "Daily bounce pause sweep failed");
+      }
+    }
+    if (!latestAcc.ramp_started_at) continue;
     checked++;
     try {
-      const res = await evaluateAccountSevenDayWindow(acc, now);
+      const res = await evaluateAccountSevenDayWindow(latestAcc, now);
       if (res.evaluated) evaluated++;
     } catch (err) {
-      logger.error({ err, accountId: acc.id }, "Daily account health evaluation failed");
+      logger.error({ err, accountId: latestAcc.id }, "Daily account health evaluation failed");
     }
   }
 

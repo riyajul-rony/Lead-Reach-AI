@@ -583,7 +583,21 @@ export async function updateEmailAccount(
   if (updates.warmup_start_limit !== undefined) dataPayload.warmup_start_limit = Number(updates.warmup_start_limit);
   if (updates.warmup_daily_increment !== undefined) dataPayload.warmup_daily_increment = Number(updates.warmup_daily_increment);
   if (updates.warmup_max_limit !== undefined) dataPayload.warmup_max_limit = Number(updates.warmup_max_limit);
-  if (updates.status !== undefined) dataPayload.status = updates.status;
+  if (updates.status !== undefined) {
+    dataPayload.status = updates.status;
+    if (
+      updates.status === "active" &&
+      (existing.status === "paused_deliverability" || existing.status === "needs_attention")
+    ) {
+      dataPayload.consecutive_smtp_auth_failures = 0;
+      dataPayload.deliverability_pause_reason = null;
+      dataPayload.deliverability_paused_at = null;
+      dataPayload.last_error = null;
+      if (existing.health_status === "paused") {
+        dataPayload.health_status = "holding";
+      }
+    }
+  }
 
   if (updates.workspace_tier === "trial" || updates.workspace_tier === "paid") {
     const emailDomain = (existing.from_email || "").split("@")[1]?.toLowerCase().trim() || "";

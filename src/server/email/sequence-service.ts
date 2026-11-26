@@ -15,6 +15,13 @@ import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings
 import { resolveSenderFirstName } from "@/server/email/sender-identity";
 import { resolveAccountJitterBounds } from "@/server/email/send-jitter";
 import {
+  isPermanentHardBounceSmtpError,
+  isSmtpAuthFailureError,
+  recordAccountAuthFailure,
+  recordHardBounceAndSuppress,
+  resetAccountAuthFailures,
+} from "@/server/email/deliverability-pause";
+import {
   commitAccountDailyCapacity,
   ensureAccountRampStarted,
   isGmailDailyLimitError,
@@ -230,6 +237,15 @@ export async function sendSingleRecipientFollowup(
   });
 
   if (!account || account.status !== "active") {
+    if (account?.status === "paused_deliverability") {
+      return {
+        throttled: true,
+        pausedDeliverability: true,
+        reason:
+          account.deliverability_pause_reason ||
+          "Sender account is paused due to deliverability signals",
+      };
+    }
     return { skipped: true, reason: "Assigned sender account is not active" };
   }
 
@@ -493,6 +509,9 @@ export async function sendSingleRecipientFollowup(
         where: { id: account.id },
         data: { next_allowed_at: nextAllowed },
       });
+      if (account.consecutive_smtp_auth_failures > 0) {
+        await resetAccountAuthFailures(account.id);
+      }
     } catch {}
 
     trackUsageIncrement(recipient.user_id, "monthly_outreach_emails", 1).catch(() => null);
@@ -518,6 +537,32 @@ export async function sendSingleRecipientFollowup(
         data: { next_followup_at: retryAt },
       }).catch(() => null);
       return { throttled: true, rateLimited: true, reason: errorMsg };
+    }
+    if (isSmtpAuthFailureError(errorMsg)) {
+      const authRes = await recordAccountAuthFailure(account.id, errorMsg, now);
+      return {
+        throttled: true,
+        authFailed: true,
+        accountPaused: authRes.paused,
+        reason: errorMsg,
+      };
+    }
+    if (isPermanentHardBounceSmtpError(errorMsg)) {
+      const bounceEval = await recordHardBounceAndSuppress({
+        userId: recipient.user_id,
+        accountId: account.id,
+        recipientId: recipient.id,
+        campaignId: campaign.id,
+        email: recipient.email,
+        reason: errorMsg,
+        now,
+      });
+      return {
+        success: false,
+        bounced: true,
+        accountPaused: bounceEval.paused,
+        error: errorMsg,
+      };
     }
     logger.error(
       { err, recipientId: recipient.id, stepNo: step.step_no },

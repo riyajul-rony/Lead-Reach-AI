@@ -67,6 +67,7 @@ enum EmailProviderId {
 enum EmailAccountStatus {
   active
   paused
+  paused_deliverability
   needs_attention
   disabled
 }
@@ -553,9 +554,12 @@ model email_accounts {
   health_status              String             @default("healthy")
   user_daily_limit           Int?
   admin_daily_limit_override Int?
-  rate_limited_until         DateTime?          @db.Timestamptz
-  rate_limit_hit_at          DateTime?          @db.Timestamptz
-  created_at                 DateTime           @default(now()) @db.Timestamptz
+  rate_limited_until             DateTime?          @db.Timestamptz
+  rate_limit_hit_at              DateTime?          @db.Timestamptz
+  consecutive_smtp_auth_failures Int                @default(0)
+  deliverability_pause_reason    String?
+  deliverability_paused_at       DateTime?          @db.Timestamptz
+  created_at                     DateTime           @default(now()) @db.Timestamptz
   user                       users              @relation(fields: [user_id], references: [id], onDelete: Cascade)
   google_connection          google_connections? @relation(fields: [google_connection_id], references: [id])
   reply_inbox                email_accounts?    @relation("AccountReplyInbox", fields: [reply_inbox_account_id], references: [id], onDelete: SetNull)

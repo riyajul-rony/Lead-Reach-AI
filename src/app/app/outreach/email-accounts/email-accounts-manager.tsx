@@ -71,6 +71,9 @@ export interface EmailAccount {
   dns_dmarc_status?: string | null;
   status: "active" | "paused" | "paused_deliverability" | "needs_attention" | "disabled" | string;
   last_error?: string | null;
+  consecutive_smtp_auth_failures?: number;
+  deliverability_pause_reason?: string | null;
+  deliverability_paused_at?: string | null;
   sentLastHour?: number;
   sentToday?: number;
   warmupToday?: number;
@@ -409,12 +412,36 @@ export function EmailAccountsManager({
         body: JSON.stringify({ status: nextStatus }),
       });
       if (res.ok) {
-        setAccounts((prev) =>
-          prev.map((a) => (a.id === account.id ? { ...a, status: nextStatus } : a))
-        );
+        await fetchAccounts();
       }
     } catch {
       alert("Failed to toggle account status");
+    }
+  };
+
+  /* ──── Manual resume for deliverability-paused accounts ──── */
+  const handleManualResume = async (accountId: string) => {
+    setTestingId(accountId);
+    try {
+      const res = await fetch(`/api/v1/email-accounts/${accountId}/resume`, {
+        method: "POST",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to resume account");
+      }
+      await fetchAccounts();
+      setTestResults((prev) => ({
+        ...prev,
+        [accountId]: { ok: true, message: "Inbox manually resumed cleanly." },
+      }));
+    } catch (err: any) {
+      setTestResults((prev) => ({
+        ...prev,
+        [accountId]: { ok: false, message: err?.message || "Failed to resume account" },
+      }));
+    } finally {
+      setTestingId(null);
     }
   };
 
@@ -934,10 +961,20 @@ export function EmailAccountsManager({
                           {isOAuth ? "Google OAuth" : "SMTP"}
                         </Badge>
                         <Badge
-                          variant={isActive ? "success" : "warning"}
+                          variant={
+                            isActive
+                              ? "success"
+                              : account.status === "paused_deliverability"
+                                ? "danger"
+                                : "warning"
+                          }
                           size="sm"
                         >
-                          {isActive ? "Active" : account.status}
+                          {isActive
+                            ? "Active"
+                            : account.status === "paused_deliverability"
+                              ? "Paused (Deliverability)"
+                              : account.status}
                         </Badge>
                         {!hasWorkingReply && (
                           <Badge variant="warning" size="sm">
@@ -987,7 +1024,7 @@ export function EmailAccountsManager({
                           al.healthStatus === "healthy"
                             ? "success"
                             : al.healthStatus === "paused"
-                              ? "error"
+                              ? "danger"
                               : "warning";
                         const healthLabel =
                           al.healthStatus === "healthy"
@@ -1112,6 +1149,33 @@ export function EmailAccountsManager({
                     </button>
                   </div>
                 </div>
+
+                {/* Deliverability Auto-Pause Banner */}
+                {account.status === "paused_deliverability" && (
+                  <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <div className="flex items-start gap-2 text-rose-700 dark:text-rose-300">
+                      <AlertTriangle size={14} className="shrink-0 mt-0.5 text-rose-500" />
+                      <div>
+                        <span className="font-semibold block">
+                          Sending paused automatically due to deliverability signal
+                        </span>
+                        <span className="text-[11px] opacity-90">
+                          {account.deliverability_pause_reason ||
+                            account.last_error ||
+                            "This mailbox exceeded safety thresholds and requires manual review before resuming."}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleManualResume(account.id)}
+                      disabled={testingId === account.id}
+                      className="btn btn-primary text-[11px] px-3 py-1.5 shrink-0 cursor-pointer"
+                    >
+                      {testingId === account.id ? "Resuming..." : "Manually Resume"}
+                    </button>
+                  </div>
+                )}
 
                 {/* Test Result Banner */}
                 {testResult && (

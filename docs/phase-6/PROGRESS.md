@@ -146,7 +146,43 @@
 - Added `src/server/email/send-jitter.test.ts` (4 tests) verifying default 120–300s randomized variance, env configuration, independent per-account BullMQ delayed scheduling even when another account has an active cooldown, and intact Task 6 daily caps.
 - **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (55 test files, 354 tests passed).
 
+---
+
+## Task 8 — Auto-pause on bad signals
+
+**Status:** Completed
+
+### Outcome & Changes
+- Added `paused_deliverability` to `EmailAccountStatus` enum plus `consecutive_smtp_auth_failures`, `deliverability_pause_reason`, and `deliverability_paused_at` on `email_accounts` (`prisma/schema.prisma`, additive migration `prisma/migrations/20261126100000_add_deliverability_auto_pause/migration.sql`) and included these fields in GDPR export (`src/server/account/gdpr-service.ts`).
+- Created `src/server/email/deliverability-pause.ts`:
+  - `evaluateAccountBouncePause`: computes rolling 7-day hard-bounce rate with minimum `>= 30` sends threshold and pauses ONLY the triggering account when bounce rate is strictly `> 2%`.
+  - `recordAccountAuthFailure` / `resetAccountAuthFailures`: increments serialized per-account `consecutive_smtp_auth_failures` (resets on successful send) and auto-pauses ONLY that account on the 3rd consecutive SMTP auth error.
+  - `recordHardBounceAndSuppress`: updates recipient `status: "bounced"`, clears `next_followup_at`, idempotently inserts permanent suppression in `db.suppressions`, and triggers `evaluateAccountBouncePause`.
+  - `resumePausedEmailAccount`: manual-only recovery resetting auth failure streak, clearing pause reason/timestamp, setting `status: "active"`, and preserving Task 6 `health_status: "holding"` without inflating limits.
+- Wired auto-pause checks, clean paused-job throttling (re-queuing/holding without failing leads or killing healthy accounts), and permanent bounce suppression into `src/server/worker/reply-poller.ts`, `src/server/email/sending-engine.ts`, `src/server/email/sequence-service.ts`, `src/server/email/adaptive-limit-service.ts`, and `src/server/email/account-service.ts`.
+- Added `POST /api/v1/email-accounts/[id]/resume` (`src/app/api/v1/email-accounts/[id]/resume/route.ts`) and rendered the deliverability pause banner, `Paused (Deliverability)` badge, and `"Manually Resume"` button in `src/app/app/outreach/email-accounts/email-accounts-manager.tsx`.
+- Added `src/server/email/deliverability-pause.test.ts` (4 tests) verifying `>= 30` sample guard & `> 2%` boundary, 3 consecutive auth failures & counter reset, account isolation, synchronous `550 5.1.1` bounce suppression vs `550 5.4.5` ignore, and manual resume with Task 6 limits preserved.
+- **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (56 test files, 358 tests passed).
+
 ### Plan
+- **Data model & GDPR (additive):**
+  - `prisma/schema.prisma`: add `paused_deliverability` to `enum EmailAccountStatus`; add `consecutive_smtp_auth_failures Int @default(0)`, `deliverability_pause_reason String?`, and `deliverability_paused_at DateTime?` to `email_accounts`.
+  - `prisma/migrations/20261126100000_add_deliverability_auto_pause/migration.sql`: additive `ALTER TYPE "EmailAccountStatus" ADD VALUE IF NOT EXISTS 'paused_deliverability';` and `ALTER TABLE "email_accounts" ADD COLUMN IF NOT EXISTS ...`.
+  - `src/server/account/gdpr-service.ts`: export new `email_accounts` columns (`deliverability_pause_reason`, `deliverability_paused_at`, `consecutive_smtp_auth_failures`); deletion already cascades `email_accounts`.
+- **Files to add/modify:**
+  - `src/server/email/deliverability-pause.ts`:
+    - `isSmtpAuthFailureError(msg)` & `isPermanentHardBounceSmtpError(msg)`.
+    - `evaluateAccountBouncePause(accountId, now)`: computes 7-day rolling hard-bounce rate with minimum sample `>= 30` sends; if `> 2%`, auto-pauses ONLY that account (`status: "paused_deliverability"`, `health_status: "paused"`, plain-language `deliverability_pause_reason`, `deliverability_paused_at`) without pausing healthy mailboxes.
+    - `recordAccountAuthFailure(accountId, errorMsg, now)` & `resetAccountAuthFailures(accountId)`: tracks `consecutive_smtp_auth_failures`; pauses ONLY that account once count reaches `3`.
+    - `recordHardBounceAndSuppress(...)`: marks recipient `bounced`, clears `next_followup_at`, idempotently inserts permanent suppression into `db.suppressions`, then calls `evaluateAccountBouncePause`.
+    - `resumePausedEmailAccount(userId, accountId)`: manual-only resume resetting `consecutive_smtp_auth_failures = 0`, clearing pause fields, setting `status = "active"` and `health_status = "holding"`.
+  - `src/server/worker/reply-poller.ts`, `src/server/email/sending-engine.ts`, `src/server/email/sequence-service.ts`, `src/server/email/adaptive-limit-service.ts`, `src/server/email/account-service.ts`.
+  - `src/app/api/v1/email-accounts/[id]/route.ts`, `src/app/api/v1/email-accounts/[id]/resume/route.ts`, `src/app/app/outreach/email-accounts/email-accounts-manager.tsx`.
+  - `src/server/email/deliverability-pause.test.ts`.
+- **Concurrency & risks:**
+  - Concurrent workers recording auth failures or bounces could race; keep per-account increment/check serialized and idempotent. Queued jobs hitting a `paused_deliverability` account requeue cleanly without failing leads.
+
+### Plan (Task 7 Archive)
 - **Behavior & Architecture:**
   - Centralize randomized send jitter configuration in `src/server/email/send-jitter.ts` (`SEND_JITTER_MIN_SECONDS=120`, `SEND_JITTER_MAX_SECONDS=300` defaults, env-configurable, safe account/campaign overrides).
   - Fix `dispatchRunningCampaigns` in `src/server/email/sending-engine.ts` where a single `cumulativeDelayMs` was shared across all recipients in the loop; track delays strictly per `assigned_account_id` (plus that account's own `next_allowed_at` cooldown) so different sending accounts schedule independently via non-blocking BullMQ delayed jobs (`queueEmailSend(rec.id, delayMs)`) without blocking each other or slowing down multi-account sending.
