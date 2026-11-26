@@ -60,7 +60,19 @@ export async function PATCH(
     const updated = await updateEmailAccount(session.user.id, id, body);
     return NextResponse.json({ data: updated });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Failed to update account" }, { status: 400 });
+    const rawMsg = String(err?.message || "");
+    const isPrismaErr =
+      Boolean(err?.code && String(err.code).startsWith("P")) ||
+      String(err?.name || "").includes("Prisma") ||
+      rawMsg.toLowerCase().includes("prisma");
+    return NextResponse.json(
+      {
+        error: isPrismaErr
+          ? "Could not update email account. Please verify your settings."
+          : rawMsg || "Failed to update account",
+      },
+      { status: 400 }
+    );
   }
 }
 

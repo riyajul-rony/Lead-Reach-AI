@@ -8,6 +8,7 @@ import {
   deriveImapFromSmtp,
 } from "@/server/email/account-service";
 import { assertLimit } from "@/server/billing/limits";
+import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { z } from "zod";
 
@@ -87,10 +88,27 @@ export async function POST(req: NextRequest) {
   }
 
   const input = parsed.data;
+  const normalizedEmail = input.from_email.toLowerCase().trim();
+
+  // Check duplicate email for this user before quota/create
+  const existingAccount = await db.email_accounts.findFirst({
+    where: { user_id: session.user.id, from_email: normalizedEmail },
+    select: { id: true },
+  });
+  if (existingAccount) {
+    return NextResponse.json(
+      {
+        error: "This email account is already connected.",
+        code: "ACCOUNT_ALREADY_EXISTS",
+        existingAccountId: existingAccount.id,
+      },
+      { status: 409 }
+    );
+  }
 
   // Derive defaults the user didn't explicitly provide
-  const smtpUsername = (input.smtp_username || input.from_email).trim();
-  const emailPrefix = input.from_email.split("@")[0] || "Inbox";
+  const smtpUsername = (input.smtp_username || normalizedEmail).trim();
+  const emailPrefix = normalizedEmail.split("@")[0] || "Inbox";
   const accountLabel = input.label?.trim() || `${emailPrefix} Inbox`;
   const senderName = input.from_name?.trim() || emailPrefix;
 
@@ -171,6 +189,49 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ data: account }, { status: 201 });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Failed to create email account" }, { status: 500 });
+    const errCode = err?.code || err?.cause?.code;
+    const rawMsg = String(err?.message || "");
+    const isUniqueConflict =
+      errCode === "P2002" ||
+      rawMsg.includes("Unique constraint") ||
+      rawMsg.includes("email_accounts_user_id_from_email_key");
+
+    if (isUniqueConflict) {
+      let existingId: string | undefined;
+      try {
+        const dup = await db.email_accounts.findFirst({
+          where: { user_id: session.user.id, from_email: normalizedEmail },
+          select: { id: true },
+        });
+        existingId = dup?.id;
+      } catch {}
+
+      return NextResponse.json(
+        {
+          error: "This email account is already connected.",
+          code: "ACCOUNT_ALREADY_EXISTS",
+          ...(existingId ? { existingAccountId: existingId } : {}),
+        },
+        { status: 409 }
+      );
+    }
+
+    logger.error(
+      { err: rawMsg, code: errCode, userId: session.user.id },
+      "Failed to create email account"
+    );
+    const isPrismaErr =
+      Boolean(errCode && String(errCode).startsWith("P")) ||
+      String(err?.name || "").includes("Prisma") ||
+      rawMsg.toLowerCase().includes("prisma");
+
+    return NextResponse.json(
+      {
+        error: isPrismaErr
+          ? "Could not save email account. Please verify your settings and try again."
+          : rawMsg || "Failed to create email account",
+      },
+      { status: 500 }
+    );
   }
 }

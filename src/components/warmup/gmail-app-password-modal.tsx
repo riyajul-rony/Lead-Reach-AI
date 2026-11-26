@@ -23,6 +23,7 @@ interface GmailAppPasswordModalProps {
   onClose: () => void;
   onSuccess: () => Promise<void> | void;
   initialEmail?: string;
+  existingAccounts?: Array<{ id: string; from_email: string }>;
 }
 
 export function GmailAppPasswordModal({
@@ -30,6 +31,7 @@ export function GmailAppPasswordModal({
   onClose,
   onSuccess,
   initialEmail = "",
+  existingAccounts = [],
 }: GmailAppPasswordModalProps) {
   const [email, setEmail] = useState(initialEmail);
   const [appPassword, setAppPassword] = useState("");
@@ -74,8 +76,11 @@ export function GmailAppPasswordModal({
 
   if (!isOpen) return null;
 
-  const cleanEmail = email.trim();
+  const cleanEmail = email.trim().toLowerCase();
   const cleanPass = stripAppPasswordSpaces(appPassword);
+  const matchingExisting = existingAccounts.find(
+    (a) => a.from_email?.toLowerCase().trim() === cleanEmail
+  );
 
   const handlePasswordChange = (rawVal: string) => {
     setAppPassword(stripAppPasswordSpaces(rawVal));
@@ -140,13 +145,13 @@ export function GmailAppPasswordModal({
     setSaving(true);
     setErrorMsg(null);
 
-    try {
-      const res = await fetch("/api/v1/email-accounts", {
-        method: "POST",
+    const upgradeExistingAccount = async (targetId: string) => {
+      const patchRes = await fetch(`/api/v1/email-accounts/${targetId}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          from_email: cleanEmail,
-          label: label.trim() || undefined,
+          provider: "smtp",
+          ...(label.trim() ? { label: label.trim() } : {}),
           smtp_host: smtpHost.trim(),
           smtp_port: smtpPort,
           smtp_security: smtpSecurity,
@@ -158,12 +163,57 @@ export function GmailAppPasswordModal({
           imap_username: cleanEmail,
           imap_password: cleanPass,
           warmup_enabled: true,
+          status: "active",
         }),
       });
+      const patchJson = await patchRes.json().catch(() => ({}));
+      if (!patchRes.ok) {
+        throw new Error(patchJson.error || "Could not update existing Gmail account.");
+      }
+    };
 
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json.error || "Could not save Gmail account.");
+    try {
+      if (matchingExisting?.id) {
+        await upgradeExistingAccount(matchingExisting.id);
+      } else {
+        const res = await fetch("/api/v1/email-accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from_email: cleanEmail,
+            label: label.trim() || undefined,
+            smtp_host: smtpHost.trim(),
+            smtp_port: smtpPort,
+            smtp_security: smtpSecurity,
+            smtp_username: cleanEmail,
+            smtp_password: cleanPass,
+            imap_host: imapHost.trim(),
+            imap_port: imapPort,
+            imap_security: imapSecurity,
+            imap_username: cleanEmail,
+            imap_password: cleanPass,
+            warmup_enabled: true,
+          }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+        if (res.status === 409) {
+          let targetId = json.existingAccountId as string | undefined;
+          if (!targetId) {
+            const listRes = await fetch("/api/v1/email-accounts");
+            const listJson = await listRes.json().catch(() => ({}));
+            const found = (listJson.data || []).find(
+              (a: any) => a.from_email?.toLowerCase().trim() === cleanEmail
+            );
+            targetId = found?.id;
+          }
+          if (!targetId) {
+            throw new Error(json.error || "This email account is already connected.");
+          }
+          await upgradeExistingAccount(targetId);
+        } else if (!res.ok) {
+          throw new Error(json.error || "Could not save Gmail account.");
+        }
       }
 
       await onSuccess();
@@ -216,6 +266,11 @@ export function GmailAppPasswordModal({
               }}
               className="input w-full text-xs font-mono h-9"
             />
+            {matchingExisting && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                This email is already connected — saving will upgrade it with App Password + IMAP credentials and enable Warm-up.
+              </p>
+            )}
           </div>
 
           <div>

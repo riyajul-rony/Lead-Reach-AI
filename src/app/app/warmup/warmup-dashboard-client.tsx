@@ -706,6 +706,7 @@ export function WarmupDashboardClient({
         onClose={() => setIsConnectModalOpen(false)}
         onSuccess={refreshAll}
         initialEmail={connectModalInitialEmail}
+        existingAccounts={accounts}
       />
     </div>
   );

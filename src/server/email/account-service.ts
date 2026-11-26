@@ -486,7 +486,7 @@ export async function createEmailAccount(userId: string, input: CreateEmailAccou
 export async function updateEmailAccount(
   userId: string,
   accountId: string,
-  updates: Partial<CreateEmailAccountInput> & { status?: string }
+  updates: Partial<CreateEmailAccountInput> & { status?: string; provider?: "smtp" | "gmail_api" }
 ) {
   const existing = await db.email_accounts.findFirst({
     where: { id: accountId, user_id: userId },
@@ -504,6 +504,19 @@ export async function updateEmailAccount(
     dataPayload.reply_inbox_account_id = updates.reply_inbox_account_id ? updates.reply_inbox_account_id.trim() : null;
   }
   if (updates.signature !== undefined) dataPayload.signature = updates.signature;
+  if (updates.smtp_host !== undefined) dataPayload.smtp_host = updates.smtp_host ? updates.smtp_host.trim() : null;
+  if (updates.smtp_port !== undefined) dataPayload.smtp_port = updates.smtp_port ? Number(updates.smtp_port) : null;
+  if (updates.smtp_security !== undefined) dataPayload.smtp_security = updates.smtp_security || "tls";
+  if (updates.smtp_username !== undefined) dataPayload.smtp_username = updates.smtp_username ? updates.smtp_username.trim() : null;
+  if (updates.imap_host !== undefined) dataPayload.imap_host = updates.imap_host ? updates.imap_host.trim() : null;
+  if (updates.imap_port !== undefined) dataPayload.imap_port = updates.imap_port ? Number(updates.imap_port) : null;
+  if (updates.imap_security !== undefined) dataPayload.imap_security = updates.imap_security || "ssl";
+  if (updates.imap_username !== undefined) dataPayload.imap_username = updates.imap_username ? updates.imap_username.trim() : null;
+  if (updates.provider === "smtp" || updates.provider === "gmail_api") {
+    dataPayload.provider = updates.provider;
+  } else if (updates.smtp_host && updates.smtp_password) {
+    dataPayload.provider = "smtp";
+  }
   if (updates.hourly_limit !== undefined) {
     dataPayload.hourly_limit = Math.min(Math.max(Number(updates.hourly_limit), 1), 25);
   }
