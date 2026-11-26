@@ -52,6 +52,8 @@ interface StoreSchema {
   social_campaigns: any[];
   post_runs: any[];
   email_accounts: any[];
+  account_limit_history: any[];
+  admin_actions: any[];
   outreach_campaigns: any[];
   campaign_recipients: any[];
   email_messages: any[];
@@ -91,6 +93,8 @@ function getInitialStore(): StoreSchema {
     social_campaigns: [],
     post_runs: [],
     email_accounts: [],
+    account_limit_history: [],
+    admin_actions: [],
     outreach_campaigns: [],
     campaign_recipients: [],
     email_messages: [],
@@ -222,6 +226,16 @@ export const localDevStore = {
       if (store.social_campaigns) store.social_campaigns = store.social_campaigns.filter((c) => c.user_id !== uid);
       if (store.post_runs) store.post_runs = store.post_runs.filter((p) => p.user_id !== uid);
       if (store.email_accounts) store.email_accounts = store.email_accounts.filter((e) => e.user_id !== uid);
+      if (store.account_limit_history) {
+        store.account_limit_history = store.account_limit_history.filter((h) => h.user_id !== uid);
+      }
+      if (store.admin_actions) {
+        store.admin_actions = store.admin_actions.map((a) => ({
+          ...a,
+          admin_id: a.admin_id === uid ? null : a.admin_id,
+          target_user_id: a.target_user_id === uid ? null : a.target_user_id,
+        }));
+      }
       if (store.outreach_campaigns) store.outreach_campaigns = store.outreach_campaigns.filter((c) => c.user_id !== uid);
       if (store.campaign_recipients) store.campaign_recipients = store.campaign_recipients.filter((r) => r.user_id !== uid);
       if (store.email_messages) store.email_messages = store.email_messages.filter((m) => m.user_id !== uid);
@@ -1566,6 +1580,59 @@ export const localDevStore = {
     return idx >= 0
       ? store.workspace_legal_acknowledgements[idx]
       : store.workspace_legal_acknowledgements[store.workspace_legal_acknowledgements.length - 1];
+  },
+
+  // --- Account Limit History ---
+  getLimitHistory: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.account_limit_history) store.account_limit_history = [];
+    return filter ? store.account_limit_history.filter(filter) : store.account_limit_history;
+  },
+  saveLimitHistory: (item: any) => {
+    const store = loadStore();
+    if (!store.account_limit_history) store.account_limit_history = [];
+    const entry = {
+      id: item.id || `alh-${Math.random().toString(36).slice(2, 10)}`,
+      date: item.date || new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      ...item,
+    };
+    store.account_limit_history.unshift(entry);
+    saveStore();
+    return entry;
+  },
+
+  // --- Admin Actions ---
+  getAdminActions: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!store.admin_actions) store.admin_actions = [];
+    return filter ? store.admin_actions.filter(filter) : store.admin_actions;
+  },
+  saveAdminAction: (item: any) => {
+    const store = loadStore();
+    if (!store.admin_actions) store.admin_actions = [];
+    const entry = {
+      id: item.id || `aa-${Math.random().toString(36).slice(2, 10)}`,
+      created_at: new Date().toISOString(),
+      ...item,
+    };
+    store.admin_actions.unshift(entry);
+    saveStore();
+    return entry;
+  },
+  updateManyAdminActions: (filter: (item: any) => boolean, data: any) => {
+    const store = loadStore();
+    if (!store.admin_actions) store.admin_actions = [];
+    let count = 0;
+    store.admin_actions = store.admin_actions.map((item) => {
+      if (filter(item)) {
+        count++;
+        return { ...item, ...data };
+      }
+      return item;
+    });
+    saveStore();
+    return { count };
   },
 
   deleteWhere: (table: keyof StoreSchema, filter: (item: any) => boolean) => {

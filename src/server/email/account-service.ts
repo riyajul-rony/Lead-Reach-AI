@@ -4,6 +4,13 @@ import { db } from "@/server/db";
 import { encrypt, decrypt } from "@/server/crypto";
 import { logger } from "@/server/logger";
 import { checkDomainDnsHealth } from "@/server/email/dns-checker";
+import { normalizeAccountPlanType } from "@/server/email/adaptive-limit-config";
+import { runAccountProfileDetection } from "@/server/email/account-profile-detector";
+import {
+  computeEffectiveAdaptiveLimit,
+  getAccountAdaptiveLimitSummary,
+} from "@/server/email/adaptive-limit-service";
+import { getUtcDayStart } from "@/server/email/daily-capacity";
 
 /**
  * Derive IMAP host/port/security from SMTP host.
@@ -73,29 +80,32 @@ export interface CreateEmailAccountInput {
   warmup_start_limit?: number;
   warmup_daily_increment?: number;
   warmup_max_limit?: number;
+  workspace_tier?: "trial" | "paid";
+  account_type?: string;
+  user_daily_limit?: number | null;
 }
 
 /**
- * Calculates the dynamic effective daily sending limit.
- * If warmup is active, limit starts small and ramps up daily until max cap.
+ * Calculates the dynamic effective daily sending limit via the Phase 6 adaptive engine.
  */
 export function getEffectiveAccountDailyLimit(account: {
-  daily_limit: number;
+  daily_limit?: number | null;
+  from_email?: string | null;
+  account_type?: string | null;
+  workspace_tier?: string | null;
+  detected_age_days?: number | null;
+  ramp_started_at?: Date | string | null;
+  start_limit_snapshot?: number | null;
+  healthy_weeks_completed?: number | null;
+  user_daily_limit?: number | null;
+  admin_daily_limit_override?: number | null;
   warmup_enabled?: boolean | null;
   warmup_day?: number | null;
   warmup_start_limit?: number | null;
   warmup_daily_increment?: number | null;
   warmup_max_limit?: number | null;
 }): number {
-  if (!account.warmup_enabled) {
-    return Math.min(account.daily_limit || 150, 500);
-  }
-  const day = Math.max(1, account.warmup_day || 1);
-  const start = account.warmup_start_limit || 10;
-  const inc = account.warmup_daily_increment || 5;
-  const max = account.warmup_max_limit || 50;
-  const calculated = start + (day - 1) * inc;
-  return Math.min(calculated, max, account.daily_limit || 150);
+  return computeEffectiveAdaptiveLimit(account).effectiveLimit;
 }
 
 /**
@@ -441,12 +451,29 @@ export async function createEmailAccount(userId: string, input: CreateEmailAccou
     } catch {}
   }
 
+  const initialPlanType = normalizeAccountPlanType(
+    input.account_type,
+    input.from_email,
+    input.workspace_tier
+  );
+
   const created = await db.email_accounts.create({
     data: {
       user_id: userId,
       label: input.label.trim(),
       from_name: (input.senderName ?? input.from_name)?.trim() || null,
       from_email: input.from_email.toLowerCase().trim(),
+      account_type: initialPlanType,
+      workspace_tier:
+        initialPlanType === "free_gmail"
+          ? null
+          : input.workspace_tier === "paid"
+            ? "paid"
+            : "trial",
+      user_daily_limit:
+        input.user_daily_limit !== undefined && input.user_daily_limit !== null
+          ? Math.max(5, Math.floor(Number(input.user_daily_limit)))
+          : null,
       reply_to: input.reply_to?.toLowerCase().trim() || null,
       reply_inbox_account_id: input.reply_inbox_account_id?.trim() || null,
       signature: input.signature?.trim() || null,
@@ -477,6 +504,13 @@ export async function createEmailAccount(userId: string, input: CreateEmailAccou
       status: "active",
     },
   });
+
+  if (process.env.NODE_ENV !== "test" && !process.env.VITEST) {
+    try {
+      const detected = await runAccountProfileDetection(created.id, { force: true });
+      return sanitizeAccount(detected.account || created);
+    } catch {}
+  }
 
   return sanitizeAccount(created);
 }
@@ -551,6 +585,38 @@ export async function updateEmailAccount(
   if (updates.warmup_max_limit !== undefined) dataPayload.warmup_max_limit = Number(updates.warmup_max_limit);
   if (updates.status !== undefined) dataPayload.status = updates.status;
 
+  if (updates.workspace_tier === "trial" || updates.workspace_tier === "paid") {
+    const emailDomain = (existing.from_email || "").split("@")[1]?.toLowerCase().trim() || "";
+    if (emailDomain !== "gmail.com" && emailDomain !== "googlemail.com") {
+      dataPayload.workspace_tier = updates.workspace_tier;
+      dataPayload.account_type =
+        updates.workspace_tier === "paid" ? "workspace_paid" : "workspace_trial";
+    }
+  }
+
+  if (updates.user_daily_limit !== undefined) {
+    if (updates.user_daily_limit === null || (updates.user_daily_limit as unknown) === "") {
+      dataPayload.user_daily_limit = null;
+    } else {
+      const parsedUserLimit = Math.floor(Number(updates.user_daily_limit));
+      if (!Number.isFinite(parsedUserLimit) || parsedUserLimit < 5) {
+        throw new Error("Daily send limit cannot be below 5.");
+      }
+      const nextAccountState = {
+        ...existing,
+        ...dataPayload,
+        user_daily_limit: null,
+      };
+      const maxAdaptiveAllowed = computeEffectiveAdaptiveLimit(nextAccountState).effectiveLimit;
+      if (parsedUserLimit > maxAdaptiveAllowed) {
+        throw new Error(
+          `You can set a lower daily limit, but never higher than the adaptive limit of ${maxAdaptiveAllowed}.`
+        );
+      }
+      dataPayload.user_daily_limit = parsedUserLimit;
+    }
+  }
+
   if (updates.smtp_password) {
     dataPayload.smtp_password_enc = encrypt(updates.smtp_password);
   }
@@ -577,18 +643,20 @@ export async function listEmailAccounts(userId: string) {
 
   const now = new Date();
   const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const utcDayStart = getUtcDayStart(now);
   const accountMap = new Map<string, any>(accounts.map((a: any) => [a.id, a]));
 
   return Promise.all(
     accounts.map(async (acc: any) => {
       let sentLastHour = 0;
       let sentToday = 0;
+      let warmupToday = 0;
       try {
         if (db.email_messages?.count) {
           sentLastHour = await db.email_messages.count({
             where: {
               email_account_id: acc.id,
+              direction: "out",
               sent_at: { gte: oneHourAgo },
               status: "sent",
             },
@@ -596,15 +664,30 @@ export async function listEmailAccounts(userId: string) {
           sentToday = await db.email_messages.count({
             where: {
               email_account_id: acc.id,
-              sent_at: { gte: startOfDay },
+              direction: "out",
+              sent_at: { gte: utcDayStart },
               status: "sent",
             },
           });
         }
+        if (db.warmup_logs?.findMany) {
+          const wLogs = await db.warmup_logs.findMany({
+            where: {
+              from_account_id: acc.id,
+              status: { in: ["sent", "replied"] },
+              sent_at: { gte: utcDayStart },
+            },
+            select: { id: true },
+          });
+          warmupToday = wLogs.length;
+        }
       } catch {}
 
-      const effectiveDailyLimit = getEffectiveAccountDailyLimit(acc);
-      const remainingToday = Math.max(0, effectiveDailyLimit - sentToday);
+      const adaptive = await getAccountAdaptiveLimitSummary(
+        acc,
+        { campaignSentToday: sentToday, warmupSentToday: warmupToday },
+        now
+      );
       const linkedInbox = acc.reply_inbox_account_id ? accountMap.get(acc.reply_inbox_account_id) : null;
 
       return {
@@ -612,10 +695,12 @@ export async function listEmailAccounts(userId: string) {
         reply_inbox: linkedInbox
           ? { id: linkedInbox.id, label: linkedInbox.label, from_email: linkedInbox.from_email }
           : null,
-        effective_daily_limit: effectiveDailyLimit,
-        remainingToday,
+        effective_daily_limit: adaptive.effectiveDailyLimit,
+        remainingToday: adaptive.remainingToday,
         sentLastHour,
         sentToday,
+        warmupToday,
+        adaptive_limit: adaptive,
       };
     })
   );

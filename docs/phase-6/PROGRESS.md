@@ -118,6 +118,43 @@
 - Added `src/server/legal/acknowledgement.test.ts` (4 tests) verifying gating, 422 API enforcement on create & PATCH, no repeat prompt, re-prompt & 422 enforcement on new `LEGAL_TERMS_VERSION`, `signupAction` consent enforcement, and GDPR export/deletion.
 - **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (53 test files, 341 tests passed).
 
+---
+
+## Task 6 — Adaptive per-account daily limit
+
+**Status:** Completed
+
+### Outcome & Changes
+- Added adaptive profile, ramp, override, and rate-limit fields on `email_accounts` plus `account_limit_history` (`ON DELETE CASCADE`) and `admin_actions` (`ON DELETE SET NULL`) in `prisma/schema.prisma`, `prisma/migrations/20261126090000_add_adaptive_limits_and_admin_actions/migration.sql`, `src/test/local-store.ts`, `src/test/mock-db.ts`, and `src/server/account/gdpr-service.ts`.
+- Implemented `src/server/email/adaptive-limit-config.ts`, `src/server/email/account-profile-detector.ts` (Gmail/Google Workspace MX lookup with timeout, read-only IMAP `\All` special-use attribute & `1:5` `INTERNALDATE` age detection with fallback warning `"Could not verify account age"`), `src/server/email/adaptive-limit-service.ts` (start tiers `10/20/30/40`, ceilings `50/50/100`, `>=14d` `+10` warmup bonus, daily 7-day window evaluator + `account_limit_history`, legacy pre-Phase-6 fixture preservation, and `admin_daily_limit_override` up to `SYSTEM_MAX_DAILY_LIMIT` default `150`), and `src/server/email/daily-capacity.ts` (atomic Redis Lua + per-account mutex reservation & failure release, 50% official limit safety invariant accounting for `warmup_logs`, UTC day keys, Gmail `550 5.4.5` / `454 4.7.0` postponement).
+- Wired adaptive detection, capacity reservation/release, and daily 7-day health checks across `src/server/email/account-service.ts`, `src/server/email/sending-engine.ts`, `src/server/email/sequence-service.ts`, `src/server/email/warmup-pool-service.ts`, and `src/server/worker/index.ts`.
+- Added/updated endpoints (`GET/POST/PATCH /api/v1/email-accounts*`, `POST /api/v1/email-accounts/[id]/recheck`, `PATCH /api/v1/admin/email-accounts/[id]/limit-override`), UI cards & Re-check / Workspace selector / user lower-cap controls (`src/app/app/outreach/email-accounts/*`), wizard today-capacity banner & warning (`src/app/app/outreach/new/outreach-wizard.tsx`), and admin override panel (`src/app/admin/users/[id]/*`).
+- Added `src/server/email/adaptive-limit.test.ts` (9 tests) covering type/MX classification, IMAP `\All` read-only scan, age-tier boundaries & warmup bonus, 7-day ramp progression & floor `5`, forced re-check stability, user lower-cap & admin RBAC + `admin_actions`/`account_limit_history` logs, concurrent capacity race safety, 50% safety invariant, Gmail `550 5.4.5` rate-limit handling, and GDPR export/deletion.
+- **Decisions:** Admin override (`admin_daily_limit_override`) explicitly supersedes `planCeiling` & weekly ramp up to `SYSTEM_MAX_DAILY_LIMIT` (default `150`) so admins can raise or lower caps above adaptive ceilings, while respecting any stricter lower `user_daily_limit`. Legacy accounts/test fixtures with no Phase 6 signals continue using legacy `warmup_start_limit` ramp behavior seamlessly.
+- **Verification:** `npx.cmd tsc --noEmit` PASS (0 errors), `npm.cmd run lint` PASS (0 errors), `npm.cmd test` PASS (54 test files, 350 tests passed).
+
+### Plan
+- **Data model changes (additive):**
+  - `prisma/schema.prisma`:
+    - Add to `email_accounts`: `account_type`, `workspace_tier`, `detected_age_days`, `message_count`, `age_source`, `detected_at`, `ramp_started_at`, `start_limit_snapshot`, `current_daily_limit`, `healthy_weeks_completed`, `last_evaluated_at`, `health_status`, `user_daily_limit`, `admin_daily_limit_override`, `rate_limited_until`, `rate_limit_hit_at`.
+    - Add `model account_limit_history` (`id`, `account_id`, `user_id`, `date`, `old_limit`, `new_limit`, `reason`, `created_at`) with `ON DELETE CASCADE`.
+    - Add `model admin_actions` (`id`, `admin_id`, `action`, `reason`, `target_user_id`, `workspace_id`, `account_id`, `metadata`, `created_at`) with `ON DELETE SET NULL` so audit logs survive GDPR deletion cleanly with identifiers removed.
+  - `prisma/migrations/20261126090000_add_adaptive_limits_and_admin_actions/migration.sql`: additive `ALTER TABLE` + `CREATE TABLE IF NOT EXISTS` statements + indexes.
+  - `src/test/local-store.ts`, `src/test/mock-db.ts`: add `account_limit_history` & `admin_actions` stores/delegates and cascade cleanup / anonymization on user deletion.
+  - `src/server/account/gdpr-service.ts`: export new adaptive fields & `account_limit_history`; delete `account_limit_history` and strip PII (`admin_id`, `target_user_id`, metadata identifiers) from `admin_actions` on `deleteOwnAccount`.
+- **Files to add/modify:**
+  - `src/server/email/adaptive-limit-config.ts`: centralized config for plan ceilings (`free_gmail: 50`, `workspace_trial: 50`, `workspace_paid: 100`), official limits (`500 / 500 / 2000`), age-tier starts (`10 / 20 / 30 / 40`), warmup bonus (`+10` after `>=14` healthy days), weekly growth (`+10`), floor (`5`), and `SYSTEM_MAX_DAILY_LIMIT` (`150`), all overridable via optional env vars / settings.
+  - `src/server/email/account-profile-detector.ts`: domain type & Google MX resolution with timeout; IMAP read-only `\All` special-use folder lookup (never hardcoded folder name), sequence `1:5` `INTERNALDATE` metadata-only scan, message count check (empty/almost-empty counts as `<30d`), and `<=1/day` / `force` detection without modifying already-started ramp start tier.
+  - `src/server/email/adaptive-limit-service.ts`: start-limit & `effectiveLimit` computation, 7-day window daily health evaluation (`healthy` / `holding` / `reduced` / `paused`), `account_limit_history` logging, UI summary metrics, and legacy pre-Phase-6 fixture compatibility.
+  - `src/server/email/daily-capacity.ts`: atomic per-account UTC daily capacity reservation & release (Redis Lua INCR/EXPIRE + process-local async mutex DB-backed reservation), 50% official limit safety invariant accounting for `warmup_logs` traffic, and Gmail 550/454 rate-limit detection + tomorrow retry scheduling without failing leads.
+  - `src/server/email/account-service.ts`, `src/server/email/sending-engine.ts`, `src/server/email/sequence-service.ts`, `src/server/worker/index.ts`: wire auto-detection on connect, daily health eval in `maintenance` worker, atomic reservation/release & `ramp_started_at` initialization on dispatch, Gmail rate-limit handling.
+  - `src/app/api/v1/email-accounts/route.ts`, `src/app/api/v1/email-accounts/[id]/route.ts`, `src/app/api/v1/email-accounts/[id]/recheck/route.ts`, `src/app/api/v1/admin/email-accounts/[id]/limit-override/route.ts`: API endpoints + server-side admin check (`requirePermission`/403 for non-admins).
+  - `src/app/app/outreach/email-accounts/*`, `src/app/app/outreach/new/outreach-wizard.tsx`, `src/app/admin/users/[id]/*`: per-mailbox limit cards, Workspace selector, Re-check button, wizard total capacity warning, and admin limit override control.
+  - `src/server/email/adaptive-limit.test.ts`: comprehensive mocked tests covering 6a–6f rules, concurrency race safety, capacity release on failed send, 50% provider invariant with warmup traffic, Gmail 550/454 handling, admin auth, and GDPR export/deletion.
+- **Concurrency & migration risks:**
+  - Two workers sending concurrently must never overshoot `min(adaptiveCap, remaining50PctCap)`: enforced by atomic Redis Lua check+incr AND serialized per-account async reservation mutex when Redis is unavailable, with immediate release on send failure before SMTP/Gmail acceptance.
+  - UTC day boundaries: daily counters key on `YYYY-MM-DD` UTC; retries revert recipient to `queued` / postpone follow-up to next UTC midnight.
+
 ### Plan
 - **Data model changes (additive):**
   - `prisma/schema.prisma`: add `model workspace_legal_acknowledgements` (`id`, `user_id`, `workspace_id`, `terms_version`, `accepted_at`, `@@unique([workspace_id, terms_version])`) + relation fields on `users` and `workspaces`.

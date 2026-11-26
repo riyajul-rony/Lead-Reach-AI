@@ -372,6 +372,7 @@ model users {
   tracking_domains                  tracking_domains[]
   warmup_logs                       warmup_logs[]
   workspace_legal_acknowledgements  workspace_legal_acknowledgements[]
+  account_limit_history             account_limit_history[]
 
   @@index([created_at(sort: Desc)])
   @@index([role, status])
@@ -533,16 +534,32 @@ model email_accounts {
   oauth_refresh_token_enc String?
   oauth_expires_at    DateTime?          @db.Timestamptz
   oauth_scopes        String[]           @default([])
-  status              EmailAccountStatus @default(active)
-  last_error          String?
-  last_polled_at      DateTime?          @db.Timestamptz
-  last_imap_uid       Int?
-  next_allowed_at     DateTime?          @db.Timestamptz
-  created_at          DateTime           @default(now()) @db.Timestamptz
-  user                users              @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  google_connection   google_connections? @relation(fields: [google_connection_id], references: [id])
-  reply_inbox         email_accounts?    @relation("AccountReplyInbox", fields: [reply_inbox_account_id], references: [id], onDelete: SetNull)
-  forwarded_accounts  email_accounts[]   @relation("AccountReplyInbox")
+  status                     EmailAccountStatus @default(active)
+  last_error                 String?
+  last_polled_at             DateTime?          @db.Timestamptz
+  last_imap_uid              Int?
+  next_allowed_at            DateTime?          @db.Timestamptz
+  account_type               String?
+  workspace_tier             String?
+  detected_age_days          Int?
+  message_count              Int?
+  age_source                 String?
+  detected_at                DateTime?          @db.Timestamptz
+  ramp_started_at            DateTime?          @db.Timestamptz
+  start_limit_snapshot       Int?
+  current_daily_limit        Int?
+  healthy_weeks_completed    Int                @default(0)
+  last_evaluated_at          DateTime?          @db.Timestamptz
+  health_status              String             @default("healthy")
+  user_daily_limit           Int?
+  admin_daily_limit_override Int?
+  rate_limited_until         DateTime?          @db.Timestamptz
+  rate_limit_hit_at          DateTime?          @db.Timestamptz
+  created_at                 DateTime           @default(now()) @db.Timestamptz
+  user                       users              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  google_connection          google_connections? @relation(fields: [google_connection_id], references: [id])
+  reply_inbox                email_accounts?    @relation("AccountReplyInbox", fields: [reply_inbox_account_id], references: [id], onDelete: SetNull)
+  forwarded_accounts         email_accounts[]   @relation("AccountReplyInbox")
 
   campaign_accounts   outreach_campaign_accounts[]
   recipients          campaign_recipients[]
@@ -550,10 +567,44 @@ model email_accounts {
   sequences           followup_sequences[]
   warmup_sent_logs    warmup_logs[]        @relation("WarmupSentLogs")
   warmup_received_logs warmup_logs[]       @relation("WarmupReceivedLogs")
+  limit_history       account_limit_history[]
 
   @@unique([user_id, from_email])
   @@index([reply_inbox_account_id])
   // Hard cap: never above 25/hour (spec 5.6). Enforced again in SQL migration CHECK.
+}
+
+model account_limit_history {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id    String         @db.Uuid
+  user_id       String         @db.Uuid
+  date          DateTime       @default(now()) @db.Timestamptz
+  old_limit     Int
+  new_limit     Int
+  reason        String
+  created_at    DateTime       @default(now()) @db.Timestamptz
+  email_account email_accounts @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  user          users          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([account_id, date(sort: Desc)])
+  @@index([user_id, date(sort: Desc)])
+}
+
+model admin_actions {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  admin_id       String?  @db.Uuid
+  action         String
+  reason         String
+  target_user_id String?  @db.Uuid
+  workspace_id   String?  @db.Uuid
+  account_id     String?  @db.Uuid
+  metadata       Json?
+  created_at     DateTime @default(now()) @db.Timestamptz
+
+  @@index([action, created_at(sort: Desc)])
+  @@index([workspace_id, created_at(sort: Desc)])
+  @@index([account_id, created_at(sort: Desc)])
+  @@index([target_user_id])
 }
 
 // ───────────── Social module ─────────────

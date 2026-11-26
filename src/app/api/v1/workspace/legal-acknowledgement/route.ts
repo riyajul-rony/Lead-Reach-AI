@@ -58,3 +58,4 @@ export async function POST(req: NextRequest) {
   const saved = await recordWorkspaceLegalAcknowledgement(session.user.id, currentVersion);
   return NextResponse.json({ data: saved }, { status: 200 });
 }
+

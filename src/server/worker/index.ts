@@ -15,6 +15,7 @@ import { processSubscriptionLifecycles } from "@/server/billing/lifecycle";
 import { recordErrorLog } from "@/server/logging/error-logger";
 import { cleanupOldLogs } from "@/server/logging/cleaner";
 import { incrementWarmupDayForActiveAccounts } from "@/server/email/account-service";
+import { evaluateDailyAccountHealth } from "@/server/email/adaptive-limit-service";
 import { runSelfWarmupTick } from "@/server/email/warmup-pool-service";
 
 /**
@@ -411,6 +412,7 @@ export function startMaintenanceWorker() {
       const lifecycleResult = await processSubscriptionLifecycles();
       const purgeResult = await cleanupOldLogs(90);
       const warmupResult = await incrementWarmupDayForActiveAccounts();
+      const healthResult = await evaluateDailyAccountHealth();
       const durationMs = Date.now() - startedAt;
       logger.info(
         {
@@ -418,9 +420,10 @@ export function startMaintenanceWorker() {
           lifecycles: lifecycleResult,
           purgedLogs: purgeResult,
           warmupIncrements: warmupResult,
+          accountHealthEval: healthResult,
           durationMs,
         },
-        "Maintenance tick completed (archived counters, processed lifecycles, purged 90d logs & warmup incremented)"
+        "Maintenance tick completed (archived counters, processed lifecycles, purged 90d logs, warmup incremented & account health evaluated)"
       );
 
       try {

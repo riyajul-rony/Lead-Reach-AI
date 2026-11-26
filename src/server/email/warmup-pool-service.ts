@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { getEffectiveAccountDailyLimit } from "@/server/email/account-service";
+import { getAdaptiveLimitConfig, normalizeAccountPlanType } from "@/server/email/adaptive-limit-config";
 import { dispatchEmailTransport } from "@/server/email/sending-engine";
 
 export const WARMUP_HEADER = "X-LeadReachAI-Warmup";
@@ -181,10 +182,19 @@ export async function runSelfWarmupTick(
       if (!toAccount) continue;
 
       const dailyCap = getEffectiveAccountDailyLimit(fromAccount);
+      const cfg = getAdaptiveLimitConfig();
+      const planType = normalizeAccountPlanType(
+        fromAccount.account_type,
+        fromAccount.from_email,
+        fromAccount.workspace_tier
+      );
+      const maxCombined50 = Math.floor(
+        cfg.providerOfficialLimits[planType] * cfg.safetyOfficialLimitFraction
+      );
       const hourlyCap = Math.min(25, Math.max(1, Number(fromAccount.hourly_limit || 25)));
       const { sentToday, sentLastHour } = await getCombinedAccountSendCounts(fromAccount.id, now);
 
-      if (sentToday >= dailyCap || sentLastHour >= hourlyCap) {
+      if (sentToday >= Math.min(dailyCap, maxCombined50) || sentLastHour >= hourlyCap) {
         throttled++;
         continue;
       }

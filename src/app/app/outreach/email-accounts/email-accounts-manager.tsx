@@ -69,10 +69,41 @@ export interface EmailAccount {
   dns_spf_status?: string | null;
   dns_dkim_status?: string | null;
   dns_dmarc_status?: string | null;
-  status: "active" | "paused" | "needs_attention" | "disabled" | string;
+  status: "active" | "paused" | "paused_deliverability" | "needs_attention" | "disabled" | string;
   last_error?: string | null;
   sentLastHour?: number;
   sentToday?: number;
+  warmupToday?: number;
+  workspace_tier?: "trial" | "paid" | string | null;
+  user_daily_limit?: number | null;
+  admin_daily_limit_override?: number | null;
+  adaptive_limit?: {
+    accountType: "free_gmail" | "workspace_trial" | "workspace_paid";
+    workspaceTier: "trial" | "paid" | null;
+    ageTier: "under_30d" | "30_to_89d" | "90_to_364d" | "365d_plus";
+    ageTierLabel: string;
+    ageSource: "imap" | "fallback";
+    ageVerificationFailed: boolean;
+    detectedAgeDays: number | null;
+    messageCount: number | null;
+    detectedAt: string | null;
+    hasWarmupBonus: boolean;
+    startLimit: number;
+    planCeiling: number;
+    officialLimit: number;
+    effectiveDailyLimit: number;
+    baseAdaptiveLimit: number;
+    usedToday: number;
+    warmupToday: number;
+    remainingToday: number;
+    healthyWeeksCompleted: number;
+    rampStartedAt: string | null;
+    nextIncreaseDate: string | null;
+    healthStatus: "healthy" | "holding" | "reduced" | "paused";
+    userDailyLimit: number | null;
+    adminDailyLimitOverride: number | null;
+    rateLimitedUntil: string | null;
+  } | null;
   has_smtp_password?: boolean;
   has_imap_password?: boolean;
   has_oauth_token?: boolean;
@@ -183,8 +214,10 @@ export function EmailAccountsManager({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Per-account live test state
+  // Per-account live test & profile recheck state
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [recheckingId, setRecheckingId] = useState<string | null>(null);
+  const [tierUpdatingId, setTierUpdatingId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<
     Record<string, { ok: boolean; message: string }>
   >({});
@@ -292,6 +325,77 @@ export function EmailAccountsManager({
       }));
     } finally {
       setTestingId(null);
+    }
+  };
+
+  /* ──── Re-check mailbox age & adaptive profile ──── */
+  const handleRecheckProfile = async (
+    accountId: string,
+    workspaceTier?: "trial" | "paid"
+  ) => {
+    setRecheckingId(accountId);
+    try {
+      const res = await fetch(`/api/v1/email-accounts/${accountId}/recheck`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(workspaceTier ? { workspaceTier } : {}),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to re-check account profile");
+      }
+      await fetchAccounts();
+      const warning = json.data?.warning;
+      const adaptive = json.data?.adaptive_limit;
+      setTestResults((prev) => ({
+        ...prev,
+        [accountId]: {
+          ok: !warning,
+          message: warning
+            ? `Profile refreshed (${adaptive?.ageTierLabel || "< 30 days"} fallback). ${warning}`
+            : `Profile verified: ${adaptive?.ageTierLabel || "verified"}, ${adaptive?.effectiveDailyLimit ?? "--"}/day limit`,
+        },
+      }));
+    } catch (err: any) {
+      setTestResults((prev) => ({
+        ...prev,
+        [accountId]: {
+          ok: false,
+          message: err?.message || "Failed to re-check account profile",
+        },
+      }));
+    } finally {
+      setRecheckingId(null);
+    }
+  };
+
+  /* ──── Update Workspace plan tier ──── */
+  const handleWorkspaceTierChange = async (
+    accountId: string,
+    workspaceTier: "trial" | "paid"
+  ) => {
+    setTierUpdatingId(accountId);
+    try {
+      const res = await fetch(`/api/v1/email-accounts/${accountId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_tier: workspaceTier }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || "Failed to update Workspace tier");
+      }
+      await fetchAccounts();
+    } catch (err: any) {
+      setTestResults((prev) => ({
+        ...prev,
+        [accountId]: {
+          ok: false,
+          message: err?.message || "Failed to update Workspace tier",
+        },
+      }));
+    } finally {
+      setTierUpdatingId(null);
     }
   };
 
@@ -509,6 +613,10 @@ export function EmailAccountsManager({
           signature: editingAccount.signature || undefined,
           hourly_limit: editingAccount.hourly_limit,
           daily_limit: editingAccount.daily_limit,
+          user_daily_limit:
+            editingAccount.user_daily_limit === undefined
+              ? null
+              : editingAccount.user_daily_limit,
           gap_seconds: editingAccount.min_gap_seconds || editingAccount.gap_seconds || 180,
           min_gap_seconds: editingAccount.min_gap_seconds || editingAccount.gap_seconds || 180,
           max_gap_seconds: editingAccount.max_gap_seconds || 420,
@@ -850,16 +958,108 @@ export function EmailAccountsManager({
                       <div className="text-[11px] text-muted flex items-center gap-3 mt-0.5 flex-wrap">
                         <span>{account.label || "Inbox"}</span>
                         {account.from_name && <span>· {account.from_name}</span>}
-                        <span>· {effectiveLimit}/day</span>
+                        <span>· {account.adaptive_limit?.effectiveDailyLimit ?? effectiveLimit}/day</span>
                         <span>
                           · {Math.round(minGap / 60)}–{Math.round(maxGap / 60)} min gap
                         </span>
-                        {account.sentToday !== undefined && (
+                        {account.adaptive_limit ? (
                           <span>
-                            · Sent today: {account.sentToday}/{effectiveLimit}
+                            · Used today: {account.adaptive_limit.usedToday}/{account.adaptive_limit.effectiveDailyLimit}
                           </span>
+                        ) : (
+                          account.sentToday !== undefined && (
+                            <span>
+                              · Sent today: {account.sentToday}/{effectiveLimit}
+                            </span>
+                          )
                         )}
                       </div>
+
+                      {account.adaptive_limit && (() => {
+                        const al = account.adaptive_limit;
+                        const accountTypeLabel =
+                          al.accountType === "free_gmail"
+                            ? "Free Gmail"
+                            : al.accountType === "workspace_paid"
+                              ? "Workspace Paid"
+                              : "Workspace Trial";
+                        const healthBadgeVariant =
+                          al.healthStatus === "healthy"
+                            ? "success"
+                            : al.healthStatus === "paused"
+                              ? "error"
+                              : "warning";
+                        const healthLabel =
+                          al.healthStatus === "healthy"
+                            ? "Healthy"
+                            : al.healthStatus === "holding"
+                              ? "Holding"
+                              : al.healthStatus === "reduced"
+                                ? "Reduced"
+                                : "Paused";
+                        const nextIncreaseText =
+                          al.baseAdaptiveLimit >= al.planCeiling
+                            ? "At ceiling"
+                            : al.nextIncreaseDate
+                              ? new Date(al.nextIncreaseDate).toLocaleDateString()
+                              : "After first 7 healthy days";
+
+                        return (
+                          <div className="mt-2 pt-2 border-t border-border/60 flex flex-wrap items-center gap-2 text-[11px]">
+                            <Badge variant="neutral" size="sm">
+                              {accountTypeLabel}
+                            </Badge>
+                            {al.accountType !== "free_gmail" && (
+                              <select
+                                aria-label="Google Workspace plan tier"
+                                disabled={tierUpdatingId === account.id}
+                                value={al.workspaceTier === "paid" ? "paid" : "trial"}
+                                onChange={(e) =>
+                                  handleWorkspaceTierChange(
+                                    account.id,
+                                    e.target.value === "paid" ? "paid" : "trial"
+                                  )
+                                }
+                                className="input h-6 text-[11px] py-0 px-2 w-auto"
+                              >
+                                <option value="trial">Workspace trial or not sure</option>
+                                <option value="paid">Paid Workspace</option>
+                              </select>
+                            )}
+                            <Badge variant={al.ageVerificationFailed ? "warning" : "neutral"} size="sm">
+                              Age: {al.ageTierLabel} ({al.ageVerificationFailed ? "Could not verify account age" : "IMAP verified"})
+                            </Badge>
+                            <Badge variant={healthBadgeVariant as any} size="sm">
+                              Health: {healthLabel}
+                            </Badge>
+                            <span className="text-muted">
+                              Ceiling: <strong className="text-fg">{al.planCeiling}/day</strong>
+                            </span>
+                            <span className="text-muted">
+                              Next increase: <strong className="text-fg">{nextIncreaseText}</strong>
+                            </span>
+                            {al.userDailyLimit !== null && (
+                              <span className="text-muted">
+                                · User cap: <strong className="text-fg">{al.userDailyLimit}/day</strong>
+                              </span>
+                            )}
+                            {al.adminDailyLimitOverride !== null && (
+                              <span className="text-amber-600 dark:text-amber-400 font-medium">
+                                · Admin override: {al.adminDailyLimitOverride}/day
+                              </span>
+                            )}
+                            {al.rateLimitedUntil && (
+                              <span className="text-amber-600 dark:text-amber-400 font-medium">
+                                · Provider throttle until {new Date(al.rateLimitedUntil).toLocaleString()}
+                              </span>
+                            )}
+                            <InfoTooltip
+                              title="Adaptive Sending Ramp"
+                              content={`Adaptive ramp starts at ${al.startLimit}/day based on account age (${al.ageTierLabel})${al.hasWarmupBonus ? " +10 warm-up bonus" : ""}, grows +10/week after 7 healthy days up to ${al.planCeiling}/day (${al.accountType === "free_gmail" ? "Gmail" : "Workspace"}). Official provider cap: ${al.officialLimit}/day.`}
+                            />
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -875,6 +1075,18 @@ export function EmailAccountsManager({
                         className={testingId === account.id ? "animate-spin" : ""}
                       />
                       Test
+                    </button>
+                    <button
+                      onClick={() => handleRecheckProfile(account.id)}
+                      disabled={recheckingId === account.id}
+                      className="btn btn-secondary text-[11px] px-2 py-1.5 cursor-pointer flex items-center gap-1"
+                      title="Re-check account age & DNS/IMAP profile"
+                    >
+                      <ShieldCheck
+                        size={11}
+                        className={recheckingId === account.id ? "animate-pulse" : ""}
+                      />
+                      {recheckingId === account.id ? "Checking..." : "Re-check"}
                     </button>
                     <button
                       onClick={() => handleToggleStatus(account)}
@@ -1368,6 +1580,37 @@ export function EmailAccountsManager({
                   });
                 }}
               />
+
+              {/* Optional user lower daily cap */}
+              <div className="p-3 rounded-lg bg-bgSubtle border border-border space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-semibold text-fg">
+                    Custom Daily Limit Cap (Optional, lower only)
+                  </label>
+                  {editingAccount.adaptive_limit && (
+                    <span className="text-[11px] text-muted font-mono">
+                      Adaptive max: {editingAccount.adaptive_limit.planCeiling}/day
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="number"
+                  min={5}
+                  placeholder="Leave blank to use automatic adaptive limit"
+                  value={editingAccount.user_daily_limit ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    setEditingAccount({
+                      ...editingAccount,
+                      user_daily_limit: raw === "" ? null : Math.max(5, Number(raw) || 5),
+                    });
+                  }}
+                  className="input w-full text-xs h-9"
+                />
+                <p className="text-[10px] text-muted">
+                  You can lower your daily sending cap below the adaptive limit (minimum 5/day). Raising above the adaptive limit requires admin approval.
+                </p>
+              </div>
 
               <div>
                 <label className="text-xs font-medium text-fg block mb-1">Timezone</label>

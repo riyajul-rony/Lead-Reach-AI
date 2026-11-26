@@ -162,6 +162,18 @@ export async function exportUserAccountData(userId: string) {
           warmup_start_limit: true,
           warmup_daily_increment: true,
           warmup_max_limit: true,
+          account_type: true,
+          workspace_tier: true,
+          detected_age_days: true,
+          message_count: true,
+          age_source: true,
+          detected_at: true,
+          ramp_started_at: true,
+          current_daily_limit: true,
+          healthy_weeks_completed: true,
+          health_status: true,
+          user_daily_limit: true,
+          admin_daily_limit_override: true,
           status: true,
           created_at: true,
         },
@@ -405,6 +417,24 @@ export async function exportUserAccountData(userId: string) {
         })
       )
     : [];
+  const accountLimitHistory = db.account_limit_history?.findMany
+    ? await fetchPaginated((skip, take) =>
+        db.account_limit_history.findMany({
+          where: { user_id: userId },
+          select: {
+            id: true,
+            account_id: true,
+            date: true,
+            old_limit: true,
+            new_limit: true,
+            reason: true,
+            created_at: true,
+          },
+          skip,
+          take,
+        })
+      )
+    : [];
   const campaignSteps =
     campaignIds.length > 0 && db.campaign_steps?.findMany
       ? await fetchPaginated((skip, take) =>
@@ -434,6 +464,7 @@ export async function exportUserAccountData(userId: string) {
     workspace_legal_acknowledgements: workspaceLegalAcknowledgements,
     oauth_accounts: oauthAccounts,
     email_accounts: emailAccounts,
+    account_limit_history: accountLimitHistory,
     social_accounts: socialAccounts,
     google_connections: googleConnections,
     api_keys: apiKeys,
@@ -588,6 +619,19 @@ export async function deleteOwnAccount(
     await tx.social_campaigns.deleteMany({ where: { user_id: userId } });
 
     await tx.email_accounts.deleteMany({ where: { user_id: userId } });
+    if (tx.account_limit_history?.deleteMany) {
+      await tx.account_limit_history.deleteMany({ where: { user_id: userId } });
+    }
+    if (tx.admin_actions?.updateMany) {
+      await tx.admin_actions.updateMany({
+        where: { target_user_id: userId },
+        data: { target_user_id: null, metadata: null },
+      });
+      await tx.admin_actions.updateMany({
+        where: { admin_id: userId },
+        data: { admin_id: null },
+      });
+    }
     await tx.export_jobs.deleteMany({ where: { user_id: userId } });
     await tx.leads.deleteMany({ where: { user_id: userId } });
     await tx.lead_searches.deleteMany({ where: { user_id: userId } });

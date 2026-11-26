@@ -17,6 +17,16 @@ import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
 import { formatFromHeader, resolveSenderFirstName } from "@/server/email/sender-identity";
 import {
+  commitAccountDailyCapacity,
+  ensureAccountRampStarted,
+  getAccountDailyCapacitySnapshot,
+  isGmailDailyLimitError,
+  markAccountRateLimitedForToday,
+  releaseAccountDailyCapacity,
+  reserveAccountDailyCapacity,
+  type DailyCapacityReservation,
+} from "@/server/email/daily-capacity";
+import {
   getLocalTimeParts,
   isValidIanaTimezone,
   isWithinSendingWindow,
@@ -175,7 +185,6 @@ export async function selectAvailableAccountForCampaign(campaignId: string, user
 
   const now = new Date();
   const sixtyMinutesAgo = new Date(now.getTime() - 60 * 60 * 1000);
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   const evaluatedAccounts: Array<{
     account: any;
@@ -188,7 +197,6 @@ export async function selectAvailableAccountForCampaign(campaignId: string, user
 
   for (const account of candidateAccounts) {
     let sentLastHour = 0;
-    let sentToday = 0;
     try {
       if (db.email_messages?.count) {
         sentLastHour = await db.email_messages.count({
@@ -198,21 +206,16 @@ export async function selectAvailableAccountForCampaign(campaignId: string, user
             status: "sent",
           },
         });
-        sentToday = await db.email_messages.count({
-          where: {
-            email_account_id: account.id,
-            sent_at: { gte: startOfDay },
-            status: "sent",
-          },
-        });
       }
     } catch {}
 
+    const capacity = await getAccountDailyCapacitySnapshot(account, now);
     const hourlyCap = Math.min(account.hourly_limit || 25, 25);
-    const dailyCap = getEffectiveAccountDailyLimit(account);
+    const dailyCap = capacity.effectiveCampaignDailyCap;
+    const sentToday = capacity.campaignSentToday;
 
     const isHourlyThrottled = sentLastHour >= hourlyCap;
-    const isDailyThrottled = sentToday >= dailyCap;
+    const isDailyThrottled = capacity.isRateLimitedToday || capacity.remainingCampaignToday <= 0;
     const isWaitGapActive = Boolean(account.next_allowed_at && new Date(account.next_allowed_at) > now);
 
     if (!isHourlyThrottled && !isDailyThrottled && !isWaitGapActive) {
@@ -222,7 +225,7 @@ export async function selectAvailableAccountForCampaign(campaignId: string, user
         sentToday,
         hourlyCap,
         dailyCap,
-        availableCapacity: Math.min(hourlyCap - sentLastHour, dailyCap - sentToday),
+        availableCapacity: Math.min(hourlyCap - sentLastHour, capacity.remainingCampaignToday),
       });
     }
   }
@@ -448,21 +451,6 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     return { throttled: true, reason: "Hourly limit reached" };
   }
 
-  const dailyCap = getEffectiveAccountDailyLimit(account);
-  const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
-  const sentToday = await db.email_messages.count({
-    where: {
-      email_account_id: account.id,
-      sent_at: { gte: startOfDay },
-      status: "sent",
-    },
-  });
-
-  if (sentToday >= dailyCap) {
-    logger.warn({ accountId: account.id, sentToday, dailyCap }, "Account reached daily warmup limit");
-    return { throttled: true, reason: "Daily warmup limit reached" };
-  }
-
   // Check per-account wait gap cooldown
   if (account.next_allowed_at && new Date(account.next_allowed_at) > new Date()) {
     const cooldownMs = new Date(account.next_allowed_at).getTime() - Date.now();
@@ -470,6 +458,21 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     logger.warn({ accountId: account.id, cooldownSec }, "Account wait gap cooldown active");
     return { throttled: true, reason: `Account wait gap active (cooldown: ${cooldownSec}s remaining)` };
   }
+
+  // Atomically reserve 1 UTC daily campaign capacity slot (enforces adaptive cap + 50% safety invariant)
+  const capReservation = await reserveAccountDailyCapacity(account, new Date());
+  if (!capReservation.allowed) {
+    logger.warn(
+      {
+        accountId: account.id,
+        sentToday: capReservation.snapshot.campaignSentToday,
+        dailyCap: capReservation.snapshot.effectiveCampaignDailyCap,
+      },
+      "Account reached daily warmup limit"
+    );
+    return { throttled: true, reason: capReservation.reason };
+  }
+  const reservedSlot: DailyCapacityReservation = capReservation.reservation;
 
   const currentStep = recipient.current_step || 0;
 
@@ -508,6 +511,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
     data: { status: "sending", sending_started_at: new Date() },
   });
   if (!claimed || claimed.count === 0) {
+    await releaseAccountDailyCapacity(reservedSlot);
     return { skipped: true, reason: "Recipient already claimed or no longer queued" };
   }
 
@@ -699,6 +703,10 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       },
     });
 
+    // Reconcile daily capacity reservation & initialize ramp start timestamp on first campaign send
+    commitAccountDailyCapacity(reservedSlot);
+    await ensureAccountRampStarted(account);
+
     // 7. Calculate next follow-up date if further steps exist
     let nextFollowupAt: Date | null = null;
     try {
@@ -754,6 +762,24 @@ export async function sendSingleRecipientEmail(recipientId: string) {
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : "Failed to send email";
     logger.error({ err, recipientId: recipient.id }, "Failed to send outreach email");
+
+    if (!transportAcceptedMessageId) {
+      await releaseAccountDailyCapacity(reservedSlot);
+    }
+
+    // Handle Gmail/provider daily rate limit (e.g. 550 5.4.5 or 454 4.7.0) without failing lead
+    if (!transportAcceptedMessageId && account && isGmailDailyLimitError(errorMsg)) {
+      const nextRetryAt = await markAccountRateLimitedForToday(account.id, errorMsg);
+      await db.campaign_recipients.update({
+        where: { id: recipient.id },
+        data: {
+          status: "queued",
+          assigned_account_id: null,
+          error: `Provider rate limit reached; queued for retry after ${nextRetryAt.toISOString()}`,
+        },
+      }).catch(() => null);
+      return { throttled: true, rateLimited: true, error: errorMsg };
+    }
 
     // Check for critical authentication / credentials failure
     const isAuthFailure =

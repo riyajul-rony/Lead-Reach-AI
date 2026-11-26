@@ -356,14 +356,17 @@ export function OutreachWizard() {
 
     const totalDaily = selected.reduce((sum, a) => {
       const alloc = accountAllocations[a.id];
-      return sum + (alloc?.dailyLimit || a.daily_limit || 75);
+      const adaptiveCap = a.effective_daily_limit ?? a.daily_limit ?? 50;
+      const requested = alloc?.dailyLimit || adaptiveCap;
+      return sum + Math.min(requested, adaptiveCap);
     }, 0);
 
     const todayMax = selected.reduce((sum, a) => {
       const alloc = accountAllocations[a.id];
-      const limit = alloc?.dailyLimit || a.daily_limit || 75;
-      const rem = a.remainingToday !== undefined ? Math.min(a.remainingToday, limit) : limit;
-      return sum + rem;
+      const adaptiveCap = a.effective_daily_limit ?? a.daily_limit ?? 50;
+      const requested = Math.min(alloc?.dailyLimit || adaptiveCap, adaptiveCap);
+      const rem = a.remainingToday !== undefined ? Math.min(a.remainingToday, requested) : requested;
+      return sum + Math.max(0, rem);
     }, 0);
 
     const estimatedDays = totalDaily > 0 ? Math.ceil(totalLeads / totalDaily) : 0;
@@ -1637,25 +1640,39 @@ export function OutreachWizard() {
               </div>
 
               {/* Prominent Live Summary Banner */}
-              <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                <div className="space-y-1">
-                  <div className="font-semibold text-primary flex items-center gap-1.5">
-                    <CheckCircle2 size={15} />
-                    <span>Live Campaign Schedule Estimate</span>
+              <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 space-y-3 text-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="font-semibold text-primary flex items-center gap-1.5">
+                      <CheckCircle2 size={15} />
+                      <span>Live Campaign Schedule Estimate</span>
+                    </div>
+                    <p className="text-fg leading-relaxed">
+                      At this rate, sending to <strong>{recipients.length}</strong> leads will take approximately{" "}
+                      <strong>{allocationSummary.estimatedDays} {allocationSummary.estimatedDays === 1 ? "day" : "days"}</strong>.{" "}
+                      Available capacity today across selected inboxes: <strong>{allocationSummary.todayMax}</strong>{" "}
+                      (sending <strong>{allocationSummary.todaySends}</strong> today).
+                    </p>
                   </div>
-                  <p className="text-fg leading-relaxed">
-                    At this rate, sending to <strong>{recipients.length}</strong> leads will take approximately{" "}
-                    <strong>{allocationSummary.estimatedDays} {allocationSummary.estimatedDays === 1 ? "day" : "days"}</strong>. Today,{" "}
-                    <strong>{allocationSummary.todaySends}</strong> emails will be sent.
-                  </p>
+
+                  <div className="text-right shrink-0">
+                    <div className="text-lg font-bold font-mono text-fg">
+                      ~{allocationSummary.totalDaily} / day
+                    </div>
+                    <span className="text-[11px] text-muted">Across selected inboxes</span>
+                  </div>
                 </div>
 
-                <div className="text-right shrink-0">
-                  <div className="text-lg font-bold font-mono text-fg">
-                    ~{allocationSummary.totalDaily} / day
+                {recipients.length > allocationSummary.todayMax && (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5 text-amber-500" />
+                    <span>
+                      Lead volume ({recipients.length}) exceeds today&apos;s available adaptive capacity ({allocationSummary.todayMax}).{" "}
+                      <strong>{allocationSummary.todaySends}</strong> emails will send today and the remaining{" "}
+                      <strong>{recipients.length - allocationSummary.todayMax}</strong> will continue automatically across subsequent days.
+                    </span>
                   </div>
-                  <span className="text-[11px] text-muted">Across selected inboxes</span>
-                </div>
+                )}
               </div>
             </div>
           )}

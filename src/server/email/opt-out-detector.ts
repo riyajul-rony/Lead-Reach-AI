@@ -93,3 +93,4 @@ export function detectDeterministicOptOut(bodyText = ""): {
 
   return { isOptOut: false, firstLine };
 }
+

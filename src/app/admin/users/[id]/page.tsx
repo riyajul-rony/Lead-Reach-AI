@@ -17,11 +17,15 @@ import {
   Mail,
 } from "lucide-react";
 import { requirePermission } from "@/server/auth/guards";
+import { hasPermission } from "@/server/auth/permissions";
 import { db } from "@/server/db";
 import { getUserUsageAndLimits } from "@/server/billing/limits";
+import { listEmailAccounts } from "@/server/email/account-service";
+import { getAdaptiveLimitConfig } from "@/server/email/adaptive-limit-config";
 import { StatusBadge } from "@/components/admin/status-badge";
 import { StatCard } from "@/components/admin/stat-card";
 import { UserDetailActions } from "./user-detail-actions";
+import { AccountLimitOverrideControl } from "./account-limit-override-control";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -81,6 +85,7 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
     availablePlans,
     userOverrides,
     limitsAndUsage,
+    userEmailAccounts,
   ] = await Promise.all([
     db.social_accounts.count({ where: { user_id: userId } }).catch(() => 0),
     db.google_connections.count({ where: { user_id: userId } }).catch(() => 0),
@@ -102,9 +107,12 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
     db.plans.findMany({ where: { is_active: true }, orderBy: { monthly_price: "asc" } }).catch(() => []),
     db.user_limit_overrides.findUnique({ where: { user_id: userId } }).catch(() => null),
     getUserUsageAndLimits(userId),
+    listEmailAccounts(userId).catch(() => []),
   ]);
 
   const isCurrentAdmin = currentAdmin.id === user.id;
+  const canManageUsers = hasPermission(currentAdmin.role, "users.manage");
+  const systemMaxDailyLimit = getAdaptiveLimitConfig().systemMaxDailyLimit;
 
   return (
     <div className="space-y-6 pb-16">
@@ -366,6 +374,28 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
           subtext="Direct delivery records"
         />
       </div>
+
+      {/* Connected Mailboxes & Adaptive Daily Limit Overrides */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Mail size={16} className="text-primary" /> Connected Mailboxes &amp; Daily Limit Overrides
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <AccountLimitOverrideControl
+            accounts={userEmailAccounts.map((acc: any) => ({
+              id: acc.id,
+              from_email: acc.from_email,
+              label: acc.label ?? null,
+              status: acc.status,
+              adaptive_limit: acc.adaptive_limit ?? null,
+            }))}
+            systemMaxDailyLimit={systemMaxDailyLimit}
+            canEdit={canManageUsers}
+          />
+        </CardContent>
+      </Card>
 
       {/* Account Details & Integrations Grid */}
       <div className="grid gap-6 lg:grid-cols-2">

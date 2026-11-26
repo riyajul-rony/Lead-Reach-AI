@@ -54,3 +54,4 @@ export function formatFromHeader(
   const email = account.from_email.trim();
   return name ? `"${name}" <${email}>` : email;
 }
+

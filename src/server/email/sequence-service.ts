@@ -14,6 +14,15 @@ import { resolveTrackingBaseUrl } from "@/server/email/tracking-domain-service";
 import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
 import { resolveSenderFirstName } from "@/server/email/sender-identity";
 import {
+  commitAccountDailyCapacity,
+  ensureAccountRampStarted,
+  isGmailDailyLimitError,
+  markAccountRateLimitedForToday,
+  releaseAccountDailyCapacity,
+  reserveAccountDailyCapacity,
+  type DailyCapacityReservation,
+} from "@/server/email/daily-capacity";
+import {
   isWithinSendingWindow,
   normalizeIanaTimezone,
   resolveEffectiveSendingTimezone,
@@ -254,26 +263,6 @@ export async function sendSingleRecipientFollowup(
     return { throttled: true, reason: "Hourly limit reached" };
   }
 
-  // Per-account daily limit (including dynamic warmup_day limit)
-  const dailyCap = getEffectiveAccountDailyLimit(account);
-  const startOfDay = new Date(now);
-  startOfDay.setHours(0, 0, 0, 0);
-  const sentToday = await db.email_messages.count({
-    where: {
-      email_account_id: account.id,
-      sent_at: { gte: startOfDay },
-      status: "sent",
-    },
-  });
-
-  if (sentToday >= dailyCap) {
-    logger.warn(
-      { accountId: account.id, sentToday, dailyCap },
-      "Account reached daily warmup limit, postponing followup"
-    );
-    return { throttled: true, reason: "Daily warmup limit reached" };
-  }
-
   // Per-account wait gap cooldown
   if (account.next_allowed_at && new Date(account.next_allowed_at) > now) {
     const cooldownMs = new Date(account.next_allowed_at).getTime() - now.getTime();
@@ -290,6 +279,21 @@ export async function sendSingleRecipientFollowup(
     logger.warn({ recipientId: recipient.id, userId: recipient.user_id, err: err.message }, "Outreach quota exceeded for followup");
     return { skipped: true, throttled: true, reason: err.message };
   }
+
+  // Atomic UTC daily capacity reservation (adaptive cap + 50% safety invariant)
+  const capReservation = await reserveAccountDailyCapacity(account, now);
+  if (!capReservation.allowed) {
+    logger.warn(
+      {
+        accountId: account.id,
+        sentToday: capReservation.snapshot.campaignSentToday,
+        dailyCap: capReservation.snapshot.effectiveCampaignDailyCap,
+      },
+      "Account reached daily warmup limit, postponing followup"
+    );
+    return { throttled: true, reason: capReservation.reason };
+  }
+  const reservedSlot: DailyCapacityReservation = capReservation.reservation;
 
   // 3. Render Subject and Body
   const trackingBaseUrl = await resolveTrackingBaseUrl(
@@ -462,6 +466,9 @@ export async function sendSingleRecipientFollowup(
       },
     });
 
+    commitAccountDailyCapacity(reservedSlot);
+    await ensureAccountRampStarted(account, now);
+
     const nextStep = sequence.steps.find((s: FollowupStep) => s.step_no === step.step_no + 1);
     const nextFollowupAt = nextStep
       ? new Date(now.getTime() + (Number(nextStep.delay_days) || 1) * 86400000)
@@ -502,7 +509,16 @@ export async function sendSingleRecipientFollowup(
 
     return { success: true, messageId, stepNo: step.step_no };
   } catch (err: unknown) {
+    await releaseAccountDailyCapacity(reservedSlot);
     const errorMsg = err instanceof Error ? err.message : "Failed to send followup email";
+    if (isGmailDailyLimitError(errorMsg)) {
+      const retryAt = await markAccountRateLimitedForToday(account.id, errorMsg, now);
+      await db.campaign_recipients.update({
+        where: { id: recipient.id },
+        data: { next_followup_at: retryAt },
+      }).catch(() => null);
+      return { throttled: true, rateLimited: true, reason: errorMsg };
+    }
     logger.error(
       { err, recipientId: recipient.id, stepNo: step.step_no },
       "Failed to dispatch followup email"

@@ -52,6 +52,8 @@ const createAccountSchema = z.object({
   warmup_start_limit: z.coerce.number().min(1).max(50).default(10),
   warmup_daily_increment: z.coerce.number().min(1).max(20).default(5),
   warmup_max_limit: z.coerce.number().min(10).max(500).default(50),
+  workspace_tier: z.enum(["trial", "paid"]).optional(),
+  user_daily_limit: z.coerce.number().int().min(5).max(500).nullable().optional(),
 
   validate_before_save: z.boolean().default(false),
 });
@@ -191,6 +193,8 @@ export async function POST(req: NextRequest) {
       warmup_start_limit: input.warmup_start_limit,
       warmup_daily_increment: input.warmup_daily_increment,
       warmup_max_limit: input.warmup_max_limit,
+      workspace_tier: input.workspace_tier,
+      user_daily_limit: input.user_daily_limit,
     });
     return NextResponse.json({ data: account }, { status: 201 });
   } catch (err: any) {

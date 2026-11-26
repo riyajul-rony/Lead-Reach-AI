@@ -2,6 +2,81 @@ import { localDevStore, ensureDevAdminUser } from "./local-store";
 
 // In-memory demo store for when PostgreSQL is not running locally
 class LocalDevMockDb {
+  account_limit_history = {
+    findMany: async ({ where, take, skip, orderBy }: any = {}) => {
+      let items = localDevStore.getLimitHistory((h) => {
+        if (where?.id && h.id !== where.id) return false;
+        if (where?.account_id && h.account_id !== where.account_id) return false;
+        if (where?.user_id && h.user_id !== where.user_id) return false;
+        if (where?.date?.gte && new Date(h.date).getTime() < new Date(where.date.gte).getTime()) return false;
+        if (where?.date?.lte && new Date(h.date).getTime() > new Date(where.date.lte).getTime()) return false;
+        return true;
+      });
+      if (orderBy?.date === "desc" || orderBy?.created_at === "desc") {
+        items = [...items].sort(
+          (a, b) => new Date(b.date || b.created_at || 0).getTime() - new Date(a.date || a.created_at || 0).getTime()
+        );
+      }
+      if (skip && typeof skip === "number") items = items.slice(skip);
+      if (take && typeof take === "number") items = items.slice(0, take);
+      return items;
+    },
+    create: async ({ data }: any) => localDevStore.saveLimitHistory(data),
+    deleteMany: async ({ where }: any = {}) =>
+      localDevStore.deleteWhere("account_limit_history", (h) => {
+        if (where?.id && h.id !== where.id) return false;
+        if (where?.account_id && h.account_id !== where.account_id) return false;
+        if (where?.user_id && h.user_id !== where.user_id) return false;
+        return true;
+      }),
+    count: async ({ where }: any = {}) =>
+      localDevStore.getLimitHistory((h) => {
+        if (where?.id && h.id !== where.id) return false;
+        if (where?.account_id && h.account_id !== where.account_id) return false;
+        if (where?.user_id && h.user_id !== where.user_id) return false;
+        return true;
+      }).length,
+  };
+
+  admin_actions = {
+    findUnique: async ({ where }: any = {}) =>
+      localDevStore.getAdminActions((a) => a.id === where?.id)[0] || null,
+    findMany: async ({ where, take, skip, orderBy }: any = {}) => {
+      let items = localDevStore.getAdminActions((a) => {
+        if (where?.id && a.id !== where.id) return false;
+        if (where?.action && a.action !== where.action) return false;
+        if (where?.admin_id && a.admin_id !== where.admin_id) return false;
+        if (where?.target_user_id && a.target_user_id !== where.target_user_id) return false;
+        if (where?.workspace_id && a.workspace_id !== where.workspace_id) return false;
+        if (where?.account_id && a.account_id !== where.account_id) return false;
+        return true;
+      });
+      if (orderBy?.created_at === "desc" || !orderBy) {
+        items = [...items].sort(
+          (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+        );
+      }
+      if (skip && typeof skip === "number") items = items.slice(skip);
+      if (take && typeof take === "number") items = items.slice(0, take);
+      return items;
+    },
+    create: async ({ data }: any) => localDevStore.saveAdminAction(data),
+    updateMany: async ({ where, data }: any = {}) =>
+      localDevStore.updateManyAdminActions((a) => {
+        if (where?.target_user_id && a.target_user_id !== where.target_user_id) return false;
+        if (where?.admin_id && a.admin_id !== where.admin_id) return false;
+        if (where?.workspace_id && a.workspace_id !== where.workspace_id) return false;
+        return true;
+      }, data),
+    count: async ({ where }: any = {}) =>
+      localDevStore.getAdminActions((a) => {
+        if (where?.action && a.action !== where.action) return false;
+        if (where?.workspace_id && a.workspace_id !== where.workspace_id) return false;
+        if (where?.account_id && a.account_id !== where.account_id) return false;
+        return true;
+      }).length,
+  };
+
   workspace_legal_acknowledgements = {
     findMany: async ({ where, take, skip, orderBy }: any = {}) => {
       let items = localDevStore.getLegalAcknowledgements((a) => {
@@ -618,11 +693,25 @@ class LocalDevMockDb {
         if (where?.id && m.id !== where.id) return false;
         if (where?.user_id && m.user_id !== where.user_id) return false;
         if (where?.direction && m.direction !== where.direction) return false;
-        if (where?.kind && m.kind !== where.kind) return false;
+        if (where?.kind) {
+          if (where.kind?.in && Array.isArray(where.kind.in)) {
+            if (!where.kind.in.includes(m.kind)) return false;
+          } else if (typeof where.kind === "string" && m.kind !== where.kind) {
+            return false;
+          }
+        }
         if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
         if (where?.status && m.status !== where.status) return false;
         if (where?.reply_category && m.reply_category !== where.reply_category) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
+        if (where?.sent_at?.gte) {
+          const since = new Date(where.sent_at.gte).getTime();
+          if (new Date(m.sent_at || m.created_at).getTime() < since) return false;
+        }
+        if (where?.sent_at?.lte) {
+          const until = new Date(where.sent_at.lte).getTime();
+          if (new Date(m.sent_at || m.created_at).getTime() > until) return false;
+        }
         if (where?.variant_id !== undefined) {
           if (where.variant_id?.not === null && (m.variant_id === null || m.variant_id === undefined)) return false;
           else if (typeof where.variant_id === "string" && m.variant_id !== where.variant_id) return false;
@@ -669,13 +758,25 @@ class LocalDevMockDb {
       return localDevStore.getEmailMessages((m) => {
         if (where?.user_id && m.user_id !== where.user_id) return false;
         if (where?.direction && m.direction !== where.direction) return false;
+        if (where?.kind) {
+          if (where.kind?.in && Array.isArray(where.kind.in)) {
+            if (!where.kind.in.includes(m.kind)) return false;
+          } else if (typeof where.kind === "string" && m.kind !== where.kind) {
+            return false;
+          }
+        }
         if (where?.reply_category && m.reply_category !== where.reply_category) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
         if (where?.status && m.status !== where.status) return false;
         if (where?.sent_at?.gte) {
           const since = new Date(where.sent_at.gte).getTime();
-          const sent = new Date(m.sent_at).getTime();
+          const sent = new Date(m.sent_at || m.created_at).getTime();
           if (sent < since) return false;
+        }
+        if (where?.sent_at?.lte) {
+          const until = new Date(where.sent_at.lte).getTime();
+          const sent = new Date(m.sent_at || m.created_at).getTime();
+          if (sent > until) return false;
         }
         return true;
       }).length;

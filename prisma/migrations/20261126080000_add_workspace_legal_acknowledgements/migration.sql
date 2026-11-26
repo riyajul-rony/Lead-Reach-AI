@@ -21,3 +21,4 @@ CREATE INDEX IF NOT EXISTS "workspace_legal_acknowledgements_user_id_idx"
 
 CREATE INDEX IF NOT EXISTS "workspace_legal_acknowledgements_workspace_id_idx"
   ON "workspace_legal_acknowledgements"("workspace_id");
+
