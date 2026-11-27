@@ -62,6 +62,7 @@ const DISPLAY_NAMES: Record<string, string> = {
   [QUEUE_NAMES.EMAIL_DISPATCH]: "Campaign Email Dispatch",
   [QUEUE_NAMES.EMAIL_SEND]: "SMTP / Gmail Sending",
   [QUEUE_NAMES.REPLY_POLL]: "IMAP Reply Poller",
+  [QUEUE_NAMES.WARMUP]: "Self Warm-up Pool",
   [QUEUE_NAMES.MAINTENANCE]: "System Maintenance & Cleanup",
 };
 

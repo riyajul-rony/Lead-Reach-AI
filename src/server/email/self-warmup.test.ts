@@ -27,6 +27,7 @@ import {
   WARMUP_HEADER,
   WARMUP_ID_HEADER,
   WARMUP_REPLY_HEADER,
+  WARMUP_ACCOUNT_SELECT,
   handleIncomingWarmupEmail,
   runSelfWarmupTick,
 } from "@/server/email/warmup-pool-service";
@@ -268,5 +269,57 @@ describe("Phase 3 Step 5: Self Warm-up Pool", () => {
   it("5. Strips whitespace from pasted Gmail App Passwords before testing/saving", () => {
     expect(stripAppPasswordSpaces("abcd efgh ijkl mnop")).toBe("abcdefghijklmnop");
     expect(stripAppPasswordSpaces(" abcd\tefgh\nijkl mnop ")).toBe("abcdefghijklmnop");
+  });
+
+  it("6. Selects all adaptive limit fields and surfaces warm-up transport errors on email_accounts.last_error", async () => {
+    expect(WARMUP_ACCOUNT_SELECT.account_type).toBe(true);
+    expect(WARMUP_ACCOUNT_SELECT.workspace_tier).toBe(true);
+    expect(WARMUP_ACCOUNT_SELECT.detected_age_days).toBe(true);
+    expect(WARMUP_ACCOUNT_SELECT.ramp_started_at).toBe(true);
+    expect(WARMUP_ACCOUNT_SELECT.healthy_weeks_completed).toBe(true);
+    expect(WARMUP_ACCOUNT_SELECT.user_daily_limit).toBe(true);
+    expect(WARMUP_ACCOUNT_SELECT.admin_daily_limit_override).toBe(true);
+
+    const uid = `u-wu-err-${Date.now()}`;
+    const fromAcc = await db.email_accounts.create({
+      data: {
+        id: `acc-err-1-${Date.now()}`,
+        user_id: uid,
+        provider: "smtp",
+        label: "Err Sender",
+        from_email: `err1-${Date.now()}@domain.com`,
+        status: "active",
+        warmup_enabled: true,
+        warmup_day: 1,
+        warmup_start_limit: 5,
+        hourly_limit: 25,
+      },
+    });
+    await db.email_accounts.create({
+      data: {
+        id: `acc-err-2-${Date.now()}`,
+        user_id: uid,
+        provider: "smtp",
+        label: "Err Receiver",
+        from_email: `err2-${Date.now()}@domain.com`,
+        status: "active",
+        warmup_enabled: true,
+        warmup_day: 1,
+        warmup_start_limit: 5,
+        hourly_limit: 25,
+        imap_host: "imap.domain.com",
+        imap_password_enc: "enc",
+      },
+    });
+
+    const failingSpy = vi.fn(async () => {
+      throw new Error("SMTP connection refused");
+    });
+
+    const res = await runSelfWarmupTick(failingSpy);
+    expect(res.failed).toBeGreaterThanOrEqual(1);
+
+    const updatedFrom = await db.email_accounts.findUnique({ where: { id: fromAcc.id } });
+    expect(updatedFrom?.last_error).toContain("SMTP connection refused");
   });
 });

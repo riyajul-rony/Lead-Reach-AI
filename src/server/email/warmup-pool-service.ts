@@ -1,8 +1,14 @@
 import crypto from "node:crypto";
+import type { Prisma } from "@/generated/prisma/client";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { getEffectiveAccountDailyLimit } from "@/server/email/account-service";
 import { getAdaptiveLimitConfig, normalizeAccountPlanType } from "@/server/email/adaptive-limit-config";
+import {
+  commitAccountDailyCapacity,
+  releaseAccountDailyCapacity,
+  reserveAccountDailyCapacity,
+} from "@/server/email/daily-capacity";
 import { dispatchEmailTransport } from "@/server/email/sending-engine";
 import { getPausedUserIdsSet } from "@/server/workspace/sending-control";
 
@@ -121,6 +127,34 @@ export interface SelfWarmupTickResult {
   failed: number;
 }
 
+export const WARMUP_ACCOUNT_SELECT = {
+  id: true,
+  user_id: true,
+  provider: true,
+  from_name: true,
+  from_email: true,
+  hourly_limit: true,
+  daily_limit: true,
+  warmup_enabled: true,
+  warmup_day: true,
+  warmup_start_limit: true,
+  warmup_daily_increment: true,
+  warmup_max_limit: true,
+  imap_host: true,
+  imap_username: true,
+  imap_password_enc: true,
+  account_type: true,
+  workspace_tier: true,
+  detected_age_days: true,
+  ramp_started_at: true,
+  healthy_weeks_completed: true,
+  user_daily_limit: true,
+  admin_daily_limit_override: true,
+  rate_limited_until: true,
+  health_status: true,
+  consecutive_smtp_auth_failures: true,
+} satisfies Prisma.email_accountsSelect;
+
 export async function runSelfWarmupTick(
   transportFn: typeof dispatchEmailTransport = dispatchEmailTransport,
   now: Date = new Date()
@@ -135,23 +169,7 @@ export async function runSelfWarmupTick(
       status: "active",
       warmup_enabled: true,
     },
-    select: {
-      id: true,
-      user_id: true,
-      provider: true,
-      from_name: true,
-      from_email: true,
-      hourly_limit: true,
-      daily_limit: true,
-      warmup_enabled: true,
-      warmup_day: true,
-      warmup_start_limit: true,
-      warmup_daily_increment: true,
-      warmup_max_limit: true,
-      imap_host: true,
-      imap_username: true,
-      imap_password_enc: true,
-    },
+    select: WARMUP_ACCOUNT_SELECT,
   });
 
   // Group strictly per user_id — accounts ONLY warm up within the same user's own pool
@@ -206,6 +224,12 @@ export async function runSelfWarmupTick(
         continue;
       }
 
+      const capReservation = await reserveAccountDailyCapacity(fromAccount, now);
+      if (!capReservation.allowed) {
+        throttled++;
+        continue;
+      }
+
       const logId = crypto.randomUUID();
       const tpl = WARMUP_TEMPLATES[(i + now.getDate() + now.getHours()) % WARMUP_TEMPLATES.length];
       const senderDomain = fromAccount.from_email.split("@")[1] || "leadreach.ai";
@@ -243,29 +267,40 @@ export async function runSelfWarmupTick(
           },
         });
 
+        commitAccountDailyCapacity(capReservation.reservation);
         emailsSent++;
         userTickSends++;
       } catch (err: any) {
+        await releaseAccountDailyCapacity(capReservation.reservation);
         failed++;
+        const errMessage = err?.message || "Warm-up transport failed";
         logger.warn(
-          { userId, fromAccountId: fromAccount.id, toAccountId: toAccount.id, err: err?.message },
+          { userId, fromAccountId: fromAccount.id, toAccountId: toAccount.id, err: errMessage },
           "Self warm-up send failed"
         );
-        await db.warmup_logs
-          .create({
-            data: {
-              id: logId,
-              user_id: userId,
-              from_account_id: fromAccount.id,
-              to_account_id: toAccount.id,
-              message_id: explicitMessageId,
-              subject,
-              status: "failed",
-              error: err?.message || "Warm-up transport failed",
-              sent_at: now,
-            },
-          })
-          .catch(() => null);
+        await Promise.all([
+          db.warmup_logs
+            .create({
+              data: {
+                id: logId,
+                user_id: userId,
+                from_account_id: fromAccount.id,
+                to_account_id: toAccount.id,
+                message_id: explicitMessageId,
+                subject,
+                status: "failed",
+                error: errMessage,
+                sent_at: now,
+              },
+            })
+            .catch(() => null),
+          db.email_accounts
+            .update({
+              where: { id: fromAccount.id },
+              data: { last_error: `Warm-up send failed: ${errMessage}` },
+            })
+            .catch(() => null),
+        ]);
       }
     }
   }
