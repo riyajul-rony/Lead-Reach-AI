@@ -103,6 +103,13 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
     db.sessions.findMany({
       where: { user_id: userId, expires_at: { gt: new Date() } },
       orderBy: { created_at: "desc" },
+      select: {
+        id: true,
+        user_agent: true,
+        ip: true,
+        expires_at: true,
+        created_at: true,
+      },
     }).catch(() => []),
     db.plans.findMany({ where: { is_active: true }, orderBy: { monthly_price: "asc" } }).catch(() => []),
     db.user_limit_overrides.findUnique({ where: { user_id: userId } }).catch(() => null),

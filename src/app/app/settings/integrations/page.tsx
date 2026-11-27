@@ -19,8 +19,14 @@ export default async function IntegrationsSettingsPage() {
   const userId = user.id;
 
   const [socialAccounts, emailAccounts] = await Promise.all([
-    db.social_accounts.findMany({ where: { user_id: userId } }),
-    db.email_accounts.findMany({ where: { user_id: userId } }),
+    db.social_accounts.findMany({
+      where: { user_id: userId },
+      select: { id: true, provider: true, status: true },
+    }),
+    db.email_accounts.findMany({
+      where: { user_id: userId },
+      select: { id: true, provider: true, status: true },
+    }),
   ]);
 
   const hasMeta = socialAccounts.some((a: any) => a.provider === "facebook" || a.provider === "instagram");

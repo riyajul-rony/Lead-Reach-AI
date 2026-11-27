@@ -14,14 +14,39 @@ export async function GET(req: NextRequest) {
 
   let campaigns = await db.social_campaigns.findMany({
     where: scoped(session.user.id),
-    include: { social_account: true },
+    include: {
+      social_account: {
+        select: {
+          id: true,
+          provider: true,
+          external_id: true,
+          display_name: true,
+          picture_url: true,
+          status: true,
+        },
+      },
+    },
   });
 
   if (provider) {
     campaigns = campaigns.filter((c: any) => c.social_account?.provider === provider);
   }
 
-  return NextResponse.json({ data: campaigns });
+  const sanitized = campaigns.map((c: any) => ({
+    ...c,
+    social_account: c.social_account
+      ? {
+          id: c.social_account.id,
+          provider: c.social_account.provider,
+          external_id: c.social_account.external_id,
+          display_name: c.social_account.display_name,
+          picture_url: c.social_account.picture_url,
+          status: c.social_account.status,
+        }
+      : null,
+  }));
+
+  return NextResponse.json({ data: sanitized });
 }
 
 export async function POST(req: NextRequest) {
