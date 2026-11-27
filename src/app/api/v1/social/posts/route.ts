@@ -166,7 +166,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const initialStatus = campaign?.approval_mode === "auto" ? "pending_approval" : "pending_approval";
+  const initialStatus = campaign?.approval_mode === "auto" ? "scheduled" : "pending_approval";
 
   const newPost = await db.post_runs.create({
     data: {
@@ -177,7 +177,8 @@ export async function POST(req: NextRequest) {
       caption: generatedCaption,
       hashtags: generatedHashtags,
       image_prompt: imagePrompt,
-      external_url: imageUrl,
+      image_url: imageUrl,
+      external_url: null,
       created_at: new Date(),
     },
   });

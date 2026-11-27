@@ -49,33 +49,76 @@ export async function POST(
     );
   }
 
+  const isDevOrTest =
+    process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
   const providerId = socialAccount.provider || "facebook";
-  const externalId = socialAccount.external_id || "demo_page_id";
-  let token = "mock_access_token";
+  const externalId = socialAccount.external_id || (isDevOrTest ? "demo_page_id" : "");
 
+  if (!externalId) {
+    const errMsg = "Social account is missing a valid external page/profile ID. Please reconnect your account.";
+    await db.post_runs.update({
+      where: scoped(session.user.id, { id }),
+      data: { status: "failed", error_message: errMsg },
+    });
+    return NextResponse.json({ error: errMsg }, { status: 400 });
+  }
+
+  let token = "";
   if (socialAccount.access_token_enc) {
     try {
       token = decrypt(socialAccount.access_token_enc);
     } catch {
+      if (!isDevOrTest) {
+        const errMsg = "Failed to decrypt social account token. Please reconnect your social account.";
+        await db.post_runs.update({
+          where: scoped(session.user.id, { id }),
+          data: { status: "failed", error_message: errMsg },
+        });
+        return NextResponse.json({ error: errMsg }, { status: 500 });
+      }
       token = "mock_access_token";
     }
+  } else if (isDevOrTest) {
+    token = "mock_access_token";
+  }
+
+  const isPlaceholderMockToken =
+    !token ||
+    token === "mock_token_dev" ||
+    token === "mock_dev_token" ||
+    token === "mock_access_token" ||
+    /^token_\d+$/.test(token);
+
+  if (!isDevOrTest && isPlaceholderMockToken) {
+    const errMsg =
+      "Social account does not have a valid access token. Please reconnect your account via OAuth.";
+    await db.post_runs.update({
+      where: scoped(session.user.id, { id }),
+      data: { status: "failed", error_message: errMsg },
+    });
+    return NextResponse.json({ error: errMsg }, { status: 400 });
   }
 
   try {
     const provider = getSocialProvider(providerId);
     const fullCaption = `${postRun.caption || ""}\n\n${(postRun.hashtags || []).join(" ")}`.trim();
+    const resolvedImageUrl =
+      postRun.image_url ||
+      (postRun.status !== "published" && !postRun.external_post_id ? postRun.external_url : null) ||
+      undefined;
 
     const publishResult = await provider.publish(token, externalId, {
       caption: fullCaption,
-      imageUrl: postRun.external_url || undefined,
+      imageUrl: resolvedImageUrl,
     });
 
     const updated = await db.post_runs.update({
       where: scoped(session.user.id, { id }),
       data: {
         status: "published",
+        image_url: resolvedImageUrl || null,
         external_post_id: publishResult.externalId,
-        external_url: publishResult.url || postRun.external_url,
+        external_url: publishResult.url || null,
         approved_at: new Date(),
         finished_at: new Date(),
       },

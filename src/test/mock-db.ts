@@ -596,15 +596,49 @@ class LocalDevMockDb {
 
   campaign_recipients = {
     findMany: async ({ where, take, orderBy }: any = {}) => {
-      let items = localDevStore.getRecipients(
-        (r) =>
-          (!where?.user_id || r.user_id === where.user_id) &&
-          (!where?.campaign_id || r.campaign_id === where.campaign_id) &&
-          (!where?.id || (where.id?.in ? where.id.in.includes(r.id) : r.id === where.id)) &&
-          (!where?.status || (where.status?.in ? where.status.in.includes(r.status) : r.status === where.status)) &&
-          (!where?.assigned_account_id || r.assigned_account_id === where.assigned_account_id) &&
-          (!where?.sending_started_at?.lt || (r.sending_started_at && new Date(r.sending_started_at) < new Date(where.sending_started_at.lt)))
-      );
+      let items = localDevStore.getRecipients((r) => {
+        if (where?.user_id && r.user_id !== where.user_id) return false;
+        if (where?.campaign_id && r.campaign_id !== where.campaign_id) return false;
+        if (where?.id) {
+          if (where.id?.in && Array.isArray(where.id.in)) {
+            if (!where.id.in.includes(r.id)) return false;
+          } else if (r.id !== where.id) {
+            return false;
+          }
+        }
+        if (where?.status) {
+          if (where.status?.in && Array.isArray(where.status.in)) {
+            if (!where.status.in.includes(r.status)) return false;
+          } else if (r.status !== where.status) {
+            return false;
+          }
+        }
+        if (where?.assigned_account_id && r.assigned_account_id !== where.assigned_account_id) return false;
+        if (where?.sending_started_at?.lt) {
+          if (!r.sending_started_at || new Date(r.sending_started_at) >= new Date(where.sending_started_at.lt)) return false;
+        }
+        if (where?.replied_at === null && r.replied_at !== null && r.replied_at !== undefined) return false;
+        if (where?.current_step?.lt !== undefined && (r.current_step || 0) >= where.current_step.lt) return false;
+        if (where?.next_followup_at) {
+          if (where.next_followup_at === null) {
+            if (r.next_followup_at !== null && r.next_followup_at !== undefined) return false;
+          } else {
+            if (where.next_followup_at.not === null && !r.next_followup_at) return false;
+            if (where.next_followup_at.lte) {
+              if (!r.next_followup_at || new Date(r.next_followup_at) > new Date(where.next_followup_at.lte)) return false;
+            }
+            if (where.next_followup_at.gte) {
+              if (!r.next_followup_at || new Date(r.next_followup_at) < new Date(where.next_followup_at.gte)) return false;
+            }
+          }
+        }
+        return true;
+      });
+      if (orderBy?.next_followup_at === "asc") {
+        items = [...items].sort(
+          (a, b) => new Date(a.next_followup_at || 0).getTime() - new Date(b.next_followup_at || 0).getTime()
+        );
+      }
       if (take && typeof take === "number") {
         items = items.slice(0, take);
       }
@@ -796,6 +830,14 @@ class LocalDevMockDb {
         }
         if (where?.reply_category && m.reply_category !== where.reply_category) return false;
         if (where?.email_account_id && m.email_account_id !== where.email_account_id) return false;
+        if (where?.recipient_id) {
+          if (where.recipient_id?.in && Array.isArray(where.recipient_id.in)) {
+            if (!where.recipient_id.in.includes(m.recipient_id)) return false;
+          } else if (m.recipient_id !== where.recipient_id) {
+            return false;
+          }
+        }
+        if (where?.step_no !== undefined && m.step_no !== where.step_no) return false;
         if (where?.status && m.status !== where.status) return false;
         if (where?.sent_at?.gte) {
           const since = new Date(where.sent_at.gte).getTime();
@@ -868,14 +910,34 @@ class LocalDevMockDb {
       });
     },
     create: async ({ data }: any) => localDevStore.saveCampaignStep(data),
+    upsert: async ({ where, create, update }: any) => {
+      const cid = where?.campaign_id_step_no?.campaign_id ?? create?.campaign_id;
+      const stepNo = where?.campaign_id_step_no?.step_no ?? create?.step_no;
+      const existing = localDevStore.findCampaignStep((s: any) => s.campaign_id === cid && s.step_no === stepNo);
+      if (existing) {
+        return localDevStore.saveCampaignStep({ ...existing, ...update });
+      }
+      return localDevStore.saveCampaignStep(create);
+    },
     createMany: async ({ data }: any) => {
       if (Array.isArray(data)) {
         data.forEach((d) => localDevStore.saveCampaignStep(d));
       }
       return { count: Array.isArray(data) ? data.length : 0 };
     },
+    delete: async ({ where }: any) => {
+      localDevStore.deleteCampaignSteps((s: any) => s.id === where?.id);
+      return { id: where?.id };
+    },
     deleteMany: async ({ where }: any = {}) => {
       return localDevStore.deleteCampaignSteps((s: any) => !where?.campaign_id || s.campaign_id === where.campaign_id);
+    },
+    count: async ({ where }: any = {}) => {
+      return localDevStore.getCampaignSteps((s: any) => {
+        if (where?.campaign_id && s.campaign_id !== where.campaign_id) return false;
+        if (where?.step_no !== undefined && s.step_no !== where.step_no) return false;
+        return true;
+      }).length;
     },
   };
 
@@ -956,6 +1018,13 @@ class LocalDevMockDb {
     count: async ({ where }: any = {}) => {
       return localDevStore.getTrackingEvents((e: any) => {
         if (where?.campaign_id && e.campaign_id !== where.campaign_id) return false;
+        if (where?.recipient_id) {
+          if (where.recipient_id?.in && Array.isArray(where.recipient_id.in)) {
+            if (!where.recipient_id.in.includes(e.recipient_id)) return false;
+          } else if (e.recipient_id !== where.recipient_id) {
+            return false;
+          }
+        }
         if (where?.variant_id && e.variant_id !== where.variant_id) return false;
         if (where?.event_type && e.event_type !== where.event_type) return false;
         return true;
@@ -1131,6 +1200,27 @@ class LocalDevMockDb {
       const existing = localDevStore.findLeadSearch((s) => s.id === where.id);
       return localDevStore.saveLeadSearch({ ...existing, ...data });
     },
+    updateMany: async ({ where, data }: any = {}) => {
+      const items = localDevStore.getLeadSearches((s) => {
+        if (where?.id && s.id !== where.id) return false;
+        if (where?.user_id && s.user_id !== where.user_id) return false;
+        if (where?.status) {
+          if (where.status?.in && Array.isArray(where.status.in)) {
+            if (!where.status.in.includes(s.status)) return false;
+          } else if (s.status !== where.status) {
+            return false;
+          }
+        }
+        if (where?.started_at?.lt) {
+          if (!s.started_at || new Date(s.started_at) >= new Date(where.started_at.lt)) return false;
+        }
+        return true;
+      });
+      for (const item of items) {
+        localDevStore.saveLeadSearch({ ...item, ...data });
+      }
+      return { count: items.length };
+    },
     findMany: async ({ where, orderBy }: any = {}) => {
       const items = localDevStore.getLeadSearches((s) => !where?.user_id || s.user_id === where.user_id);
       return items;
@@ -1171,6 +1261,7 @@ class LocalDevMockDb {
         if (where?.user_id && l.user_id !== where.user_id) return false;
         if (where?.search_id && l.search_id !== where.search_id) return false;
         if (where?.status && l.status !== where.status) return false;
+        if (where?.email?.not === null && (l.email === null || l.email === undefined)) return false;
         if (where?.id?.in && Array.isArray(where.id.in) && !where.id.in.includes(l.id)) return false;
         return true;
       });

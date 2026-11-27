@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import type { Prisma } from "@/generated/prisma/client";
 import { ShieldCheck } from "lucide-react";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/guards";
@@ -9,6 +11,8 @@ export const metadata = {
   description: "Automated multi-step followup email sequence with stop-on-reply.",
 };
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export default async function FollowupSequenceBuilderPage({
   params,
 }: {
@@ -17,12 +21,44 @@ export default async function FollowupSequenceBuilderPage({
   const { campaignId } = await params;
   const user = await requireUser();
 
-  const seq = await db.followup_sequences.findFirst({
-    where: { campaign_id: campaignId, user_id: user.id },
+  if (!UUID_REGEX.test(campaignId)) {
+    notFound();
+  }
+
+  const campaign = await db.outreach_campaigns.findFirst({
+    where: { id: campaignId, user_id: user.id },
+    select: {
+      id: true,
+      name: true,
+    } satisfies Prisma.outreach_campaignsSelect,
   });
 
-  const initialSteps: FollowupStep[] = seq && Array.isArray((seq as any).steps) ? (seq as any).steps : [];
-  const initialName = (seq as any)?.name || "Campaign Followup Sequence";
+  if (!campaign) {
+    notFound();
+  }
+
+  const stepRows = await db.campaign_steps.findMany({
+    where: { campaign_id: campaignId },
+    orderBy: { step_no: "asc" },
+    select: {
+      step_no: true,
+      delay_days: true,
+      mode: true,
+      subject_template: true,
+      body_template: true,
+      ai_instruction: true,
+    } satisfies Prisma.campaign_stepsSelect,
+  });
+
+  const initialSteps: FollowupStep[] = (stepRows || []).map((s: any) => ({
+    step_no: s.step_no,
+    delay_days: s.delay_days,
+    mode: s.mode === "ai" ? "ai" : "custom",
+    subject_template: s.subject_template || "Re: {{previous_subject}}",
+    body_template: s.body_template || "",
+    ai_instruction: s.ai_instruction || undefined,
+  }));
+  const initialName = `${campaign.name} Sequence`;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 pb-16">

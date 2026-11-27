@@ -135,22 +135,25 @@ describe("CRIT-02: Repeatable Job Schedulers & Catch-Up Protection", () => {
         },
       });
 
-      await db.followup_sequences.create({
-        data: {
-          id: "seq-stale-test",
-          campaign_id: campaign.id,
-          user_id: "user-stale-1",
-          status: "active",
-          steps: [
-            {
-              step_no: 2,
-              delay_days: 1,
-              subject: "Step 2",
-              body: "Body 2",
-              same_thread: true,
-            },
-          ],
-        },
+      await db.campaign_steps.createMany({
+        data: [
+          {
+            campaign_id: campaign.id,
+            step_no: 1,
+            delay_days: 1,
+            mode: "custom",
+            subject_template: "Step 1",
+            body_template: "Body 1",
+          },
+          {
+            campaign_id: campaign.id,
+            step_no: 2,
+            delay_days: 1,
+            mode: "custom",
+            subject_template: "Step 2",
+            body_template: "Body 2",
+          },
+        ],
       });
 
       // Recipient A: 3 days overdue (stale)

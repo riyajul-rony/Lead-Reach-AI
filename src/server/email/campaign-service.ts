@@ -242,43 +242,22 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
     logger.warn({ err }, "Could not bulk-insert campaign accounts (continuing)");
   }
 
-  // Save follow-up sequence steps if provided
+  // Save follow-up sequence steps to canonical campaign_steps via saveCampaignSequence
   if (input.steps && Array.isArray(input.steps) && input.steps.length > 0) {
-    try {
-      await saveCampaignSequence(
-        userId,
-        campaign.id,
-        `${input.name} Sequence`,
-        input.steps.map((s, idx) => ({
-          step_no: s.step_no || idx + 1,
-          delay_days: s.delay_days || 3,
-          mode: input.mode,
-          subject_template: s.same_thread ? "Re: {{previous_subject}}" : (s.subject || "Re: {{previous_subject}}"),
-          body_template: s.body,
-          tracking_open: Boolean(s.trackingOpen ?? s.tracking_open),
-          tracking_click: Boolean(s.trackingClick ?? s.tracking_click),
-        }))
-      );
-    } catch (seqErr) {
-      logger.warn({ seqErr, campaignId: campaign.id }, "Could not save sequence via saveCampaignSequence");
-    }
-
-    try {
-      if (db.campaign_steps?.createMany) {
-        await db.campaign_steps.createMany({
-          data: input.steps.map((s, idx) => ({
-            campaign_id: campaign.id,
-            step_no: s.step_no || idx + 1,
-            delay_days: s.delay_days || 3,
-            mode: input.mode,
-            subject_template: s.same_thread ? "Re: {{previous_subject}}" : (s.subject || "Re: {{previous_subject}}"),
-            body_template: s.body,
-            tracking_open: Boolean(s.trackingOpen ?? s.tracking_open),
-            tracking_click: Boolean(s.trackingClick ?? s.tracking_click),
-          })),
-        });
-      }
-    } catch {}
+    await saveCampaignSequence(
+      userId,
+      campaign.id,
+      `${input.name} Sequence`,
+      input.steps.map((s, idx) => ({
+        step_no: s.step_no || idx + 1,
+        delay_days: s.delay_days || 3,
+        mode: input.mode,
+        subject_template: s.same_thread ? "Re: {{previous_subject}}" : (s.subject || "Re: {{previous_subject}}"),
+        body_template: s.body,
+        tracking_open: Boolean(s.trackingOpen ?? s.tracking_open),
+        tracking_click: Boolean(s.trackingClick ?? s.tracking_click),
+      }))
+    );
   }
 
   // Save A/B test variants if provided (supports step 0 and/or follow-up steps)
@@ -527,29 +506,23 @@ export async function updateCampaignStatus(
 
   if (status === "running") {
     // Check if campaign has sequence steps and assigned accounts have working reply detection
-    try {
-      const stepsCount = await db.campaign_sequence_steps.count({
+    const stepsCount = await db.campaign_steps.count({
+      where: { campaign_id: campaignId },
+    });
+    if (stepsCount > 0) {
+      const campaignAccounts = await db.outreach_campaign_accounts.findMany({
         where: { campaign_id: campaignId },
+        include: { email_account: true },
       });
-      if (stepsCount > 0) {
-        const campaignAccounts = await db.outreach_campaign_accounts.findMany({
-          where: { campaign_id: campaignId },
-          include: { email_account: true },
-        });
-        for (const ca of campaignAccounts) {
-          if (ca.email_account) {
-            const check = accountHasWorkingReplyDetection(ca.email_account);
-            if (!check.capable) {
-              throw new Error(
-                `Cannot launch campaign with follow-up steps: sender account (${ca.email_account.from_email}) does not support reply detection. For follow-ups and stop-on-reply, connect with App Password + IMAP.`
-              );
-            }
+      for (const ca of campaignAccounts) {
+        if (ca.email_account) {
+          const check = accountHasWorkingReplyDetection(ca.email_account);
+          if (!check.capable) {
+            throw new Error(
+              `Cannot launch campaign with follow-up steps: sender account (${ca.email_account.from_email}) does not support reply detection. For follow-ups and stop-on-reply, connect with App Password + IMAP.`
+            );
           }
         }
-      }
-    } catch (err: any) {
-      if (err?.message?.includes("does not support reply detection")) {
-        throw err;
       }
     }
 

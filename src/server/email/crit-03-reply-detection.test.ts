@@ -106,22 +106,25 @@ describe("CRIT-03: Reply Detection & Threading Guarantees", () => {
         },
       });
 
-      await db.followup_sequences.create({
-        data: {
-          id: "seq-crit03-guard",
-          campaign_id: campaign.id,
-          user_id: mockUser.id,
-          status: "active",
-          steps: [
-            {
-              step_no: 2,
-              delay_days: 1,
-              subject: "Followup on previous note",
-              body: "Checking in to see if you had time to review.",
-              same_thread: true,
-            },
-          ],
-        },
+      await db.campaign_steps.createMany({
+        data: [
+          {
+            campaign_id: campaign.id,
+            step_no: 1,
+            delay_days: 1,
+            mode: "custom",
+            subject_template: "Step 1",
+            body_template: "Step 1 body",
+          },
+          {
+            campaign_id: campaign.id,
+            step_no: 2,
+            delay_days: 1,
+            mode: "custom",
+            subject_template: "Followup on previous note",
+            body_template: "Checking in to see if you had time to review.",
+          },
+        ],
       });
 
       const recipient = await db.campaign_recipients.create({

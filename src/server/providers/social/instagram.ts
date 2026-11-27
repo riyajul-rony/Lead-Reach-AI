@@ -98,8 +98,25 @@ export class InstagramProvider implements SocialProvider {
   }
 
   async publish(accountToken: string, externalId: string, post: PostContent): Promise<PublishResult> {
+    const isDevOrTest =
+      process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+    const canMockInDevOrTest =
+      isDevOrTest &&
+      (process.env.NODE_ENV === "test" ||
+        accountToken.includes("mock") ||
+        accountToken.includes("test") ||
+        !accountToken.includes("EAA"));
+
     try {
-      const imageUrl = post.imageUrl || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1080&q=80";
+      const imageUrl =
+        post.imageUrl ||
+        (isDevOrTest
+          ? "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1080&q=80"
+          : "");
+
+      if (!imageUrl) {
+        throw new Error("Instagram requires an image URL to publish a post.");
+      }
 
       // Step 1: Create media container
       const containerUrl = `${GRAPH_BASE}/${externalId}/media`;
@@ -113,10 +130,9 @@ export class InstagramProvider implements SocialProvider {
         }),
       });
 
-      const containerData = await containerRes.json();
+      const containerData = await containerRes.json().catch(() => ({}));
       if (!containerRes.ok || !containerData.id) {
-        // If simulated or test token
-        if (process.env.NODE_ENV === "test" || accountToken.includes("mock") || accountToken.includes("test") || !accountToken.includes("EAA")) {
+        if (canMockInDevOrTest) {
           const fakeId = `ig_${Date.now()}`;
           return {
             externalId: fakeId,
@@ -139,7 +155,7 @@ export class InstagramProvider implements SocialProvider {
         }),
       });
 
-      const publishData = await publishRes.json();
+      const publishData = await publishRes.json().catch(() => ({}));
       if (!publishRes.ok || !publishData.id) {
         throw new Error(publishData.error?.message || "Failed to publish Instagram container");
       }
@@ -150,7 +166,7 @@ export class InstagramProvider implements SocialProvider {
       };
     } catch (err: any) {
       logger.error({ err }, "Instagram publish error");
-      if (process.env.NODE_ENV === "test" || accountToken.includes("mock") || accountToken.includes("test") || !accountToken.includes("EAA")) {
+      if (canMockInDevOrTest) {
         const fakeId = `ig_${Date.now()}`;
         return {
           externalId: fakeId,

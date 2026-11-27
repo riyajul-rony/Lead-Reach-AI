@@ -67,7 +67,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const cleanToken = access_token ? String(access_token).trim() : `token_${Date.now()}`;
+  const isDevOrTest =
+    process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+  const rawToken = typeof access_token === "string" ? access_token.trim() : "";
+
+  if (
+    !isDevOrTest &&
+    (!rawToken ||
+      rawToken === "mock_token_dev" ||
+      rawToken === "mock_dev_token" ||
+      rawToken === "mock_access_token")
+  ) {
+    return NextResponse.json(
+      { error: "A valid Access Token is required. Please connect via Official OAuth or enter a valid token." },
+      { status: 400 }
+    );
+  }
+
+  const cleanToken = rawToken || `token_${Date.now()}`;
   const encryptedToken = encrypt(cleanToken);
 
   const saved = await db.social_accounts.upsert({

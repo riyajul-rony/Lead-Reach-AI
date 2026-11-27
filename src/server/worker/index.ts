@@ -8,7 +8,7 @@ import { generateSocialPost } from "@/server/ai/social-generator";
 import { getSocialProvider } from "@/server/providers/social/registry";
 import { logger } from "@/server/logger";
 import { dispatchRunningCampaigns, sendSingleRecipientEmail } from "@/server/email/sending-engine";
-import { dispatchDueFollowups } from "@/server/email/sequence-service";
+import { dispatchDueFollowups, sendSingleRecipientFollowup } from "@/server/email/sequence-service";
 import { pollInboxesForReplies } from "@/server/worker/reply-poller";
 import { trackUsageIncrement, resetOrArchiveOldUsageCounters } from "@/server/billing/usage-tracker";
 import { processSubscriptionLifecycles } from "@/server/billing/lifecycle";
@@ -17,6 +17,7 @@ import { cleanupOldLogs } from "@/server/logging/cleaner";
 import { incrementWarmupDayForActiveAccounts } from "@/server/email/account-service";
 import { evaluateDailyAccountHealth } from "@/server/email/adaptive-limit-service";
 import { runSelfWarmupTick } from "@/server/email/warmup-pool-service";
+import { recoverStuckLeadSearches } from "@/server/worker/lead-search-worker";
 
 /**
  * 1. PLANNER WORKER: runs every minute, computes scheduled runs from DB campaigns
@@ -98,6 +99,9 @@ export function startPlannerWorker() {
       } catch (err) {
         logger.error({ err }, "Failed to apply catch-up protection to overdue post runs");
       }
+
+      // Recover lead searches stuck in running/enriching beyond threshold
+      await recoverStuckLeadSearches(now);
 
       // Enqueue any runs that are currently due within the safe window (max 10 to prevent burst)
       try {
@@ -182,7 +186,10 @@ export function startSocialPublishWorker() {
         let fullCaption = postRun.caption || "";
         let hashtags = postRun.hashtags || [];
         let imagePrompt = postRun.image_prompt || "";
-        let imageUrl = postRun.external_url || undefined;
+        let imageUrl =
+          postRun.image_url ||
+          (postRun.status !== "published" && !postRun.external_post_id ? postRun.external_url : null) ||
+          undefined;
 
         // 1. Generate post content if not already generated
         if (!fullCaption) {
@@ -240,7 +247,7 @@ export function startSocialPublishWorker() {
               caption: fullCaption,
               hashtags,
               image_prompt: imagePrompt,
-              external_url: imageUrl,
+              image_url: imageUrl ?? null,
             },
           });
           logger.info({ postRunId }, "Post generated and queued for user approval");
@@ -255,6 +262,20 @@ export function startSocialPublishWorker() {
 
         const provider = getSocialProvider(account.provider);
         const accountToken = account.access_token_enc ? decrypt(account.access_token_enc) : "";
+        const isDevOrTest =
+          process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+        if (
+          !isDevOrTest &&
+          (!accountToken ||
+            accountToken === "mock_token_dev" ||
+            accountToken === "mock_dev_token" ||
+            accountToken === "mock_access_token" ||
+            /^token_\d+$/.test(accountToken))
+        ) {
+          throw new Error(
+            "Social account is missing a valid access token. Please reconnect your social account."
+          );
+        }
 
         const result = await provider.publish(accountToken, account.external_id, {
           caption: fullCaption,
@@ -268,8 +289,9 @@ export function startSocialPublishWorker() {
             caption: fullCaption,
             hashtags,
             image_prompt: imagePrompt,
+            image_url: imageUrl ?? postRun.image_url ?? null,
             external_post_id: result.externalId,
-            external_url: result.url || imageUrl,
+            external_url: result.url || null,
             finished_at: new Date(),
           },
         });
@@ -348,9 +370,16 @@ export function startEmailSendWorker() {
   return new Worker(
     QUEUE_NAMES.EMAIL_SEND,
     async (job) => {
-      const { recipientId } = job.data as { recipientId: string };
-      logger.info({ recipientId }, "Processing email send job");
+      const { recipientId, kind } = job.data as {
+        recipientId: string;
+        stepNo?: number;
+        kind?: "initial" | "followup";
+      };
+      logger.info({ recipientId, kind: kind || "initial" }, "Processing email send job");
       try {
+        if (kind === "followup") {
+          return await sendSingleRecipientFollowup(recipientId);
+        }
         return await sendSingleRecipientEmail(recipientId);
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : "Email send failed";
@@ -358,7 +387,7 @@ export function startEmailSendWorker() {
           source: "worker:email_send",
           message: errorMsg,
           stack: err instanceof Error ? err.stack : undefined,
-          context: { recipientId, jobId: job.id },
+          context: { recipientId, jobId: job.id, kind: kind || "initial" },
         }).catch(() => null);
         throw err;
       }

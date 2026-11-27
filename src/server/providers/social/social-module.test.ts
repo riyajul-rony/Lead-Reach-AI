@@ -215,6 +215,39 @@ describe("Phase 5: Social Media Auto Post (Facebook, Instagram, LinkedIn)", () =
       expect(json.data.campaign_id).toBe(campaign.id);
       expect(json.data.status).toBe("pending_approval");
       expect(json.data.caption).toBeTruthy();
+      expect(json.data.image_url).toBeTruthy();
+      expect(json.data.external_url).toBeNull();
+    });
+
+    it("creates a scheduled post (not pending_approval) when campaign approval_mode is auto (BUG-023)", async () => {
+      mockSession.mockResolvedValue(user1);
+      const user1Account = await db.social_accounts.findFirst({
+        where: { user_id: user1.user.id },
+      });
+      const autoCamp = await db.social_campaigns.create({
+        data: {
+          user_id: user1.user.id,
+          social_account_id: user1Account.id,
+          name: "Auto Publish Campaign",
+          status: "active",
+          timezone: "UTC",
+          approval_mode: "auto",
+        },
+      });
+
+      const req = new NextRequest("http://localhost:3000/api/v1/social/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaign_id: autoCamp.id }),
+      });
+
+      const res = await PostsRoute.POST(req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.data.status).toBe("scheduled");
+      expect(json.data.image_url).toBeTruthy();
+      expect(json.data.external_url).toBeNull();
     });
   });
 
@@ -252,7 +285,9 @@ describe("Phase 5: Social Media Auto Post (Facebook, Instagram, LinkedIn)", () =
       expect(json.success).toBe(true);
       expect(json.data.status).toBe("published");
       expect(json.data.external_post_id).toBeTruthy();
-      expect(json.data.external_url).toBeTruthy();
+      expect(json.data.external_url).toContain("facebook.com");
+      expect(json.data.image_url).toBeTruthy();
+      expect(json.data.image_url).not.toBe(json.data.external_url);
     });
   });
 
@@ -289,6 +324,103 @@ describe("Phase 5: Social Media Auto Post (Facebook, Instagram, LinkedIn)", () =
 
       expect(result.externalId).toMatch(/^fb_/);
       expect(result.url).toContain("facebook.com");
+    });
+
+    it("fails closed without fake success in production for Facebook, Instagram, LinkedIn, accounts, and publish route (BUG-022)", async () => {
+      const origEnv = process.env.NODE_ENV;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ error: { message: "Invalid OAuth access token" } }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("APP_ENCRYPTION_KEY", "0".repeat(64));
+      try {
+        await expect(
+          facebookProvider.publish("mock_fb_token", "page_123", { caption: "Prod test" })
+        ).rejects.toThrow(/Invalid OAuth access token|Facebook publish request failed/);
+
+        await expect(
+          instagramProvider.publish("mock_ig_token", "ig_123", { caption: "No image in prod" })
+        ).rejects.toThrow(/requires an image URL/i);
+
+        await expect(
+          instagramProvider.publish("mock_ig_token", "ig_123", {
+            caption: "Prod test",
+            imageUrl: "https://example.com/img.png",
+          })
+        ).rejects.toThrow(/Invalid OAuth access token|Instagram/);
+
+        await expect(
+          linkedinProvider.publish("mock_li_token", "person_123", { caption: "Prod test" })
+        ).rejects.toThrow(/Failed to publish post to LinkedIn|Invalid OAuth/);
+
+        // Rejects mock/empty tokens when creating social accounts in production
+        mockSession.mockResolvedValue(user1);
+        const badAccRes = await AccountsRoute.POST(
+          new NextRequest("http://localhost:3000/api/v1/social/accounts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              provider: "facebook",
+              display_name: "Prod Page",
+              external_id: "page_prod_1",
+              access_token: "mock_token_dev",
+            }),
+          })
+        );
+        expect(badAccRes.status).toBe(400);
+
+        // Publish route marks post_run as failed when account has a mock token in production
+        const mockAcc = await db.social_accounts.create({
+          data: {
+            id: "acc-prod-mock-1",
+            user_id: user1.user.id,
+            provider: "facebook",
+            external_id: "page_prod_mock",
+            display_name: "Legacy Mock Page",
+            access_token_enc: encrypt("mock_token_dev"),
+            status: "active",
+          },
+        });
+        const prodCamp = await db.social_campaigns.create({
+          data: {
+            id: "camp-prod-mock-1",
+            user_id: user1.user.id,
+            social_account_id: mockAcc.id,
+            name: "Prod Mock Camp",
+            status: "active",
+            timezone: "UTC",
+          },
+        });
+        const prodPost = await db.post_runs.create({
+          data: {
+            id: "post-prod-mock-1",
+            user_id: user1.user.id,
+            campaign_id: prodCamp.id,
+            scheduled_for: new Date(),
+            status: "pending_approval",
+            caption: "Hello prod",
+          },
+        });
+
+        const pubRes = await PublishRoute.POST(
+          new NextRequest(`http://localhost:3000/api/v1/social/posts/${prodPost.id}/publish`, {
+            method: "POST",
+          }),
+          { params: Promise.resolve({ id: prodPost.id }) }
+        );
+        expect(pubRes.status).toBeGreaterThanOrEqual(400);
+        const updatedPost = await db.post_runs.findUnique({ where: { id: prodPost.id } });
+        expect(updatedPost?.status).toBe("failed");
+        expect(updatedPost?.error_message).toBeTruthy();
+      } finally {
+        vi.unstubAllEnvs();
+        vi.stubEnv("NODE_ENV", origEnv || "test");
+        fetchSpy.mockRestore();
+      }
     });
   });
 

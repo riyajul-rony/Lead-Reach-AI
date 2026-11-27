@@ -145,7 +145,7 @@ export function SocialHubManager() {
 
   const handleConnectSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!modalProvider || !displayName || !externalId) return;
+    if (!modalProvider || !displayName || !externalId || !accessToken.trim()) return;
 
     setSubmitting(true);
     setErrorMessage("");
@@ -158,7 +158,7 @@ export function SocialHubManager() {
           provider: modalProvider,
           display_name: displayName,
           external_id: externalId,
-          access_token: accessToken || "mock_dev_token",
+          access_token: accessToken.trim(),
         }),
       });
 
@@ -391,14 +391,14 @@ export function SocialHubManager() {
               </div>
 
               <div>
-                <label className="text-xs font-medium text-fg flex items-center justify-between mb-1">
-                  <span>Access Token (Optional in Dev)</span>
-                  <span className="text-[10px] text-muted font-normal">Auto-mocked in dev</span>
+                <label className="text-xs font-medium text-fg block mb-1">
+                  Access Token *
                 </label>
                 <input
                   type="password"
                   className="input text-xs font-mono h-9 w-full"
-                  placeholder="e.g. EAAB..."
+                  required
+                  placeholder="Paste page or profile access token"
                   value={accessToken}
                   onChange={(e) => setAccessToken(e.target.value)}
                 />
