@@ -29,7 +29,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SendingSpeedCard } from "@/components/outreach/sending-speed-card";
+import { Switch } from "@/components/ui/switch";
 import { InfoTooltip } from "@/components/outreach/info-tooltip";
+import {
+  getWarmupStatusPillLabel,
+  getWarmupStateKey,
+  getActiveAccountsWithWarmupOff,
+} from "@/lib/warmup-ui";
 import {
   GmailAppPasswordGuide,
   stripAppPasswordSpaces,
@@ -242,6 +248,10 @@ export function EmailAccountsManager({
   } | null>(null);
   const [loadingWarmup, setLoadingWarmup] = useState(true);
   const [warmupError, setWarmupError] = useState<string | null>(null);
+  const [togglingWarmupId, setTogglingWarmupId] = useState<string | null>(null);
+  const [enablingPoolWarmup, setEnablingPoolWarmup] = useState(false);
+
+  const warmupStateKey = getWarmupStateKey(accounts);
 
   useEffect(() => {
     setLoadingWarmup(true);
@@ -255,7 +265,7 @@ export function EmailAccountsManager({
       })
       .catch((e: any) => setWarmupError(e?.message || "Failed to load warm-up logs"))
       .finally(() => setLoadingWarmup(false));
-  }, [accounts.length]);
+  }, [warmupStateKey]);
 
   // Banner notification from OAuth redirect
   const [bannerNotice, setBannerNotice] = useState<{
@@ -418,6 +428,65 @@ export function EmailAccountsManager({
       }
     } catch {
       alert("Failed to toggle account status");
+    }
+  };
+
+  /* ──── Toggle warm-up directly on an inbox row ──── */
+  const handleToggleWarmup = async (account: EmailAccount) => {
+    const nextEnabled = !account.warmup_enabled;
+    setTogglingWarmupId(account.id);
+    try {
+      const res = await fetch(`/api/v1/email-accounts/${account.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ warmup_enabled: nextEnabled }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || "Failed to toggle warm-up");
+      }
+      await fetchAccounts();
+    } catch (err: any) {
+      setBannerNotice({
+        type: "error",
+        text: err?.message || "Failed to toggle warm-up for inbox",
+      });
+    } finally {
+      setTogglingWarmupId(null);
+    }
+  };
+
+  /* ──── One-click Enable Warm-up on active inboxes ──── */
+  const handleEnablePoolWarmup = async () => {
+    const targets = accounts.filter((a) => a.status === "active" && !a.warmup_enabled);
+    if (targets.length === 0) return;
+    setEnablingPoolWarmup(true);
+    try {
+      await Promise.all(
+        targets.map(async (acc) => {
+          const res = await fetch(`/api/v1/email-accounts/${acc.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ warmup_enabled: true }),
+          });
+          if (!res.ok) {
+            const json = await res.json().catch(() => ({}));
+            throw new Error(json.error || `Failed to enable warm-up for ${acc.from_email}`);
+          }
+        })
+      );
+      await fetchAccounts();
+      setBannerNotice({
+        type: "success",
+        text: `Warm-up enabled on ${targets.length} active inbox${targets.length > 1 ? "es" : ""}.`,
+      });
+    } catch (err: any) {
+      setBannerNotice({
+        type: "error",
+        text: err?.message || "Failed to enable warm-up on active inboxes",
+      });
+    } finally {
+      setEnablingPoolWarmup(false);
     }
   };
 
@@ -868,8 +937,28 @@ export function EmailAccountsManager({
         ) : warmupError ? (
           <div className="text-[11px] text-rose-600 dark:text-rose-400">{warmupError}</div>
         ) : warmupLogs.length === 0 ? (
-          <div className="text-[11px] text-muted border border-dashed border-border rounded-lg p-2.5">
-            No self warm-up activity yet. Enable Warm-up in Settings on at least 2 active inboxes to start internal warm-up rotations.
+          <div className="text-[11px] text-muted border border-dashed border-border rounded-lg p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <span>
+              {(warmupSummary?.poolCount ?? accounts.filter((a) => a.status === "active" && a.warmup_enabled).length) < 2
+                ? "Enable Warm-up on at least 2 active inboxes to start internal warm-up rotations."
+                : "No self warm-up activity yet. Your pool is ready and will rotate on the next worker tick."}
+            </span>
+            {(warmupSummary?.poolCount ?? accounts.filter((a) => a.status === "active" && a.warmup_enabled).length) < 2 &&
+              getActiveAccountsWithWarmupOff(accounts).length > 0 && (
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  disabled={enablingPoolWarmup}
+                  onClick={handleEnablePoolWarmup}
+                  icon={<Flame size={13} />}
+                  className="shrink-0"
+                >
+                  {enablingPoolWarmup
+                    ? "Enabling..."
+                    : `Enable Warm-up (${getActiveAccountsWithWarmupOff(accounts).length} Active)`}
+                </Button>
+              )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -992,11 +1081,9 @@ export function EmailAccountsManager({
                             Reply via: {account.reply_inbox?.from_email || "Linked Inbox"}
                           </Badge>
                         )}
-                        {account.warmup_enabled && (
-                          <Badge variant="warning" size="sm">
-                            <Flame size={10} className="mr-0.5" /> Warm-up Day {account.warmup_day || 1}
-                          </Badge>
-                        )}
+                        <Badge variant={account.warmup_enabled ? "warning" : "neutral"} size="sm">
+                          <Flame size={10} className="mr-0.5" /> {getWarmupStatusPillLabel(account)}
+                        </Badge>
                       </div>
                       <div className="text-[11px] text-muted flex items-center gap-3 mt-0.5 flex-wrap">
                         <span>{account.label || "Inbox"}</span>
@@ -1106,7 +1193,23 @@ export function EmailAccountsManager({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                    <div
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-bgSubtle"
+                      title={
+                        account.warmup_enabled
+                          ? "Warm-up is ON for this inbox"
+                          : "Warm-up is OFF — toggle on to join the Self Warm-up Pool"
+                      }
+                    >
+                      <span className="text-[11px] font-medium text-muted">Warm-up</span>
+                      <Switch
+                        checked={Boolean(account.warmup_enabled)}
+                        disabled={togglingWarmupId === account.id}
+                        onChange={() => handleToggleWarmup(account)}
+                        aria-label={`Toggle warm-up for ${account.from_email}`}
+                      />
+                    </div>
                     <button
                       onClick={() => handleTestExisting(account.id)}
                       disabled={testingId === account.id}

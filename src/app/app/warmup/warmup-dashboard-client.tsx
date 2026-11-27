@@ -18,8 +18,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
+import { Switch } from "@/components/ui/switch";
 import { GmailAppPasswordGuide } from "@/components/warmup/gmail-app-password-guide";
 import { GmailAppPasswordModal } from "@/components/warmup/gmail-app-password-modal";
+import { getWarmupStatusPillLabel, getActiveAccountsWithWarmupOff } from "@/lib/warmup-ui";
 
 export interface WarmupAccountItem {
   id: string;
@@ -92,6 +94,7 @@ export function WarmupDashboardClient({
   const [logsError, setLogsError] = useState<string | null>(null);
 
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [enablingPool, setEnablingPool] = useState(false);
   const [savingLimitsId, setSavingLimitsId] = useState<string | null>(null);
   const [savedNoticeId, setSavedNoticeId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, WarmupDraftValues>>({});
@@ -180,6 +183,33 @@ export function WarmupDashboardClient({
         [field]: Number.isFinite(value) ? value : current[field],
       },
     }));
+  };
+
+  const handleEnablePoolWarmup = async () => {
+    const targets = getActiveAccountsWithWarmupOff(accounts);
+    if (targets.length === 0) return;
+    setEnablingPool(true);
+    setErrorMsg(null);
+    try {
+      await Promise.all(
+        targets.map(async (acc) => {
+          const res = await fetch(`/api/v1/email-accounts/${acc.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ warmup_enabled: true }),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(json.error || `Failed to enable warm-up for ${acc.from_email}.`);
+          }
+        })
+      );
+      await refreshAll();
+    } catch (err: any) {
+      setErrorMsg(err?.message || "Failed to enable warm-up on active accounts.");
+    } finally {
+      setEnablingPool(false);
+    }
   };
 
   const handleToggleWarmup = async (acc: WarmupAccountItem) => {
@@ -343,6 +373,22 @@ export function WarmupDashboardClient({
               <p className="text-xs text-muted leading-relaxed">
                 This is a private <strong className="text-fg">Self Warm-up Pool</strong> operating strictly between your own connected active accounts (not an external third-party warm-up network). Automated replies require <strong className="text-fg">App Password + IMAP</strong> configured on receiving accounts.
               </p>
+              {!poolReady && getActiveAccountsWithWarmupOff(accounts).length > 0 && (
+                <div className="pt-1">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    disabled={enablingPool}
+                    onClick={handleEnablePoolWarmup}
+                    icon={<Flame size={13} />}
+                  >
+                    {enablingPool
+                      ? "Enabling Warm-up..."
+                      : `Enable Warm-up on ${getActiveAccountsWithWarmupOff(accounts).length} Active Inbox${getActiveAccountsWithWarmupOff(accounts).length > 1 ? "es" : ""}`}
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -444,6 +490,9 @@ export function WarmupDashboardClient({
                         >
                           {acc.status === "active" ? "Active" : acc.status}
                         </Badge>
+                        <Badge variant={isEnabled ? "warning" : "neutral"} size="sm">
+                          <Flame size={10} className="mr-0.5" /> {getWarmupStatusPillLabel(acc)}
+                        </Badge>
                         {imapReady ? (
                           <Badge variant="success" size="sm">
                             <span className="inline-flex items-center gap-1">
@@ -491,22 +540,17 @@ export function WarmupDashboardClient({
                         </Button>
                       )}
 
-                      <Button
-                        type="button"
-                        variant={isEnabled ? "primary" : "secondary"}
-                        size="sm"
-                        disabled={togglingId === acc.id}
-                        onClick={() => handleToggleWarmup(acc)}
-                        icon={
-                          togglingId === acc.id ? (
-                            <Loader2 size={13} className="animate-spin" />
-                          ) : (
-                            <Flame size={13} />
-                          )
-                        }
-                      >
-                        {isEnabled ? "Warm-up: ON" : "Warm-up: OFF"}
-                      </Button>
+                      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border bg-bgSubtle">
+                        <span className="text-xs font-medium text-fg">
+                          {isEnabled ? "Warm-up ON" : "Warm-up Off"}
+                        </span>
+                        <Switch
+                          checked={isEnabled}
+                          disabled={togglingId === acc.id}
+                          onChange={() => handleToggleWarmup(acc)}
+                          aria-label={`Toggle warm-up for ${acc.from_email}`}
+                        />
+                      </div>
                     </div>
                   </div>
 
