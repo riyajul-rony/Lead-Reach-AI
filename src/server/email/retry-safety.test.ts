@@ -37,7 +37,12 @@ vi.mock("nodemailer", () => ({
 
 vi.mock("@/server/queues", () => ({
   queueEmailDispatch: vi.fn().mockResolvedValue(true),
-  queueEmailSend: vi.fn().mockResolvedValue(true),
+  queueEmailSend: vi.fn().mockImplementation(async (recipientId: string, _delayMs?: number, _stepNo?: number, kind?: string) => {
+    if (kind === "followup") {
+      await sendSingleRecipientFollowup(recipientId, new Date());
+    }
+    return true;
+  }),
 }));
 
 vi.mock("@/server/auth/session", () => ({

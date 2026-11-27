@@ -1095,6 +1095,7 @@ model tracking_events {
   @@index([created_at(sort: Desc)])
 }
 
+/// @deprecated Canonical follow-up step storage is `campaign_steps`. Retained for backward data compatibility; do not drop without data verification.
 model followup_sequences {
   id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id          String             @db.Uuid
@@ -1117,6 +1118,7 @@ model followup_sequences {
   @@index([campaign_id, status])
 }
 
+/// @deprecated Canonical follow-up step storage is `campaign_steps`. Retained for backward data compatibility; do not drop without data verification.
 model followup_steps {
   id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   sequence_id      String       @db.Uuid

@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { Plus, ArrowRight, Mail, Layers } from "lucide-react";
+import type { Prisma } from "@/generated/prisma/client";
+import { Plus, ArrowRight, Mail } from "lucide-react";
 import { requireUser } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { Pagination } from "@/components/pagination";
@@ -21,11 +22,12 @@ export default async function FollowupOverviewPage({
   const user = await requireUser();
 
   const sp = searchParams ? await searchParams : {};
-  const currentPage = Math.max(1, parseInt(sp.page || "1", 10));
+  const parsedPage = parseInt(sp.page || "1", 10);
+  const currentPage = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const pageSize = 50;
   const skip = (currentPage - 1) * pageSize;
 
-  const [userCampaigns, totalCampaignsCount, rawSequences] = await Promise.all([
+  const [userCampaigns, totalCampaignsCount] = await Promise.all([
     db.outreach_campaigns.findMany({
       where: { user_id: user.id },
       take: pageSize,
@@ -37,28 +39,26 @@ export default async function FollowupOverviewPage({
         status: true,
         mode: true,
         created_at: true,
-      },
+      } satisfies Prisma.outreach_campaignsSelect,
     }),
     db.outreach_campaigns.count({ where: { user_id: user.id } }),
-    db.followup_sequences.findMany({
-      where: { user_id: user.id },
-      select: {
-        id: true,
-        campaign_id: true,
-        name: true,
-        status: true,
-        steps: {
-          select: { id: true },
-        },
-      },
-    }),
   ]);
 
-  const sequenceMap = new Map<string, any>();
-  for (const seq of rawSequences) {
-    if (seq.campaign_id) {
-      sequenceMap.set(seq.campaign_id, seq);
-    }
+  const campaignIds = userCampaigns.map((c: { id: string }) => c.id);
+  const stepRows =
+    campaignIds.length > 0
+      ? await db.campaign_steps.findMany({
+          where: { campaign_id: { in: campaignIds } },
+          select: {
+            campaign_id: true,
+            step_no: true,
+          } satisfies Prisma.campaign_stepsSelect,
+        })
+      : [];
+
+  const stepCountMap = new Map<string, number>();
+  for (const row of stepRows) {
+    stepCountMap.set(row.campaign_id, (stepCountMap.get(row.campaign_id) || 0) + 1);
   }
 
   return (
@@ -90,9 +90,8 @@ export default async function FollowupOverviewPage({
         <div className="rounded-[8px] border border-border bg-surface p-5 space-y-4 transition-colors duration-150 hover:border-borderStrong">
           <div className="divide-y divide-border">
             {userCampaigns.map((c: any) => {
-              const seq = sequenceMap.get(c.id);
-              const stepCount = seq?.steps?.length || 2;
-              const seqStatus = seq?.status || "active";
+              const stepCount = stepCountMap.get(c.id) || 0;
+              const hasSteps = stepCount > 0;
 
               return (
                 <div
@@ -102,18 +101,22 @@ export default async function FollowupOverviewPage({
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm text-fg">
-                        {seq?.name || `${c.name} Sequence`}
+                        {`${c.name} Sequence`}
                       </span>
-                      <Badge
-                        variant={seqStatus === "active" ? "success" : "neutral"}
-                        size="sm"
-                        dot
-                      >
-                        {seqStatus}
-                      </Badge>
-                      <Badge variant="neutral" size="sm">
-                        {stepCount} Steps
-                      </Badge>
+                      {hasSteps ? (
+                        <>
+                          <Badge variant="success" size="sm" dot>
+                            active
+                          </Badge>
+                          <Badge variant="neutral" size="sm">
+                            {stepCount} {stepCount === 1 ? "Step" : "Steps"}
+                          </Badge>
+                        </>
+                      ) : (
+                        <Badge variant="neutral" size="sm">
+                          No follow-up sequence (0 steps)
+                        </Badge>
+                      )}
                       <Badge variant="neutral" size="sm" className="text-[10px] uppercase font-mono">
                         {c.mode}
                       </Badge>
@@ -125,8 +128,8 @@ export default async function FollowupOverviewPage({
 
                   <div className="flex items-center gap-2">
                     <Link href={`/app/followup/${c.id}`}>
-                      <Button variant="secondary" size="sm" icon={<ArrowRight size={13} />}>
-                        Configure Steps
+                      <Button variant={hasSteps ? "secondary" : "primary"} size="sm" icon={hasSteps ? <ArrowRight size={13} /> : <Plus size={13} />}>
+                        {hasSteps ? "Configure Steps" : "Add Follow-ups"}
                       </Button>
                     </Link>
                   </div>

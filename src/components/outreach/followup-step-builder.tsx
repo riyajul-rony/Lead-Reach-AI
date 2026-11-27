@@ -24,19 +24,19 @@ const PRESET_TEMPLATES = [
     label: "Quick Bump (3 Days)",
     delay: 3,
     sameThread: true,
-    body: "Hi {{first_name|there}},\n\nJust bumping this to the top of your inbox in case it got buried.\n\nWould love to know your thoughts on this when you have a moment!\n\nBest,\nAlex",
+    body: "Hi {{first_name|there}},\n\nJust bumping this to the top of your inbox in case it got buried.\n\nWould love to know your thoughts on this when you have a moment!\n\nBest,\n{{sender_first_name}}",
   },
   {
     label: "Value Add / Proof (5 Days)",
     delay: 5,
     sameThread: true,
-    body: "Hi {{first_name|there}},\n\nWanted to share a quick case study: We helped a team similar to {{company_name|yours}} increase their appointment bookings by 35% in 30 days using automated outreach.\n\nAre you free for 5 minutes this Thursday or Friday to see how we did it?\n\nBest,\nAlex",
+    body: "Hi {{first_name|there}},\n\nWanted to share a quick case study: We helped a team similar to {{company_name|yours}} increase their appointment bookings by 35% in 30 days using automated outreach.\n\nAre you free for 5 minutes this Thursday or Friday to see how we did it?\n\nBest,\n{{sender_first_name}}",
   },
   {
     label: "Polite Break-up (7 Days)",
     delay: 7,
     sameThread: true,
-    body: "Hi {{first_name|there}},\n\nI haven't heard back, so I assume this isn't a priority for {{company_name|your team}} right now. Completely understand!\n\nI won't reach out again, but feel free to keep my contact info handy if your goals change down the line.\n\nWishing you all the best,\nAlex",
+    body: "Hi {{first_name|there}},\n\nI haven't heard back, so I assume this isn't a priority for {{company_name|your team}} right now. Completely understand!\n\nI won't reach out again, but feel free to keep my contact info handy if your goals change down the line.\n\nWishing you all the best,\n{{sender_first_name}}",
   },
 ];
 
@@ -69,7 +69,7 @@ export function FollowupStepBuilder({ steps, onChange, originalSubject = "" }: F
       subject: preset?.sameThread ? `Re: ${originalSubject || "Our chat"}` : `Quick followup for {{company_name}}`,
       body:
         preset?.body ||
-        "Hi {{first_name|there}},\n\nJust following up on my previous message. Would you have 5 minutes for a quick chat this week?\n\nBest,\nAlex",
+        "Hi {{first_name|there}},\n\nJust following up on my previous message. Would you have 5 minutes for a quick chat this week?\n\nBest,\n{{sender_first_name}}",
       tracking_open: false,
       tracking_click: false,
     };

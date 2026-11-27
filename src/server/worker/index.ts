@@ -8,7 +8,7 @@ import { generateSocialPost } from "@/server/ai/social-generator";
 import { getSocialProvider } from "@/server/providers/social/registry";
 import { logger } from "@/server/logger";
 import { dispatchRunningCampaigns, sendSingleRecipientEmail } from "@/server/email/sending-engine";
-import { dispatchDueFollowups } from "@/server/email/sequence-service";
+import { dispatchDueFollowups, sendSingleRecipientFollowup } from "@/server/email/sequence-service";
 import { pollInboxesForReplies } from "@/server/worker/reply-poller";
 import { trackUsageIncrement, resetOrArchiveOldUsageCounters } from "@/server/billing/usage-tracker";
 import { processSubscriptionLifecycles } from "@/server/billing/lifecycle";
@@ -348,9 +348,16 @@ export function startEmailSendWorker() {
   return new Worker(
     QUEUE_NAMES.EMAIL_SEND,
     async (job) => {
-      const { recipientId } = job.data as { recipientId: string };
-      logger.info({ recipientId }, "Processing email send job");
+      const { recipientId, kind } = job.data as {
+        recipientId: string;
+        stepNo?: number;
+        kind?: "initial" | "followup";
+      };
+      logger.info({ recipientId, kind: kind || "initial" }, "Processing email send job");
       try {
+        if (kind === "followup") {
+          return await sendSingleRecipientFollowup(recipientId);
+        }
         return await sendSingleRecipientEmail(recipientId);
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : "Email send failed";
@@ -358,7 +365,7 @@ export function startEmailSendWorker() {
           source: "worker:email_send",
           message: errorMsg,
           stack: err instanceof Error ? err.stack : undefined,
-          context: { recipientId, jobId: job.id },
+          context: { recipientId, jobId: job.id, kind: kind || "initial" },
         }).catch(() => null);
         throw err;
       }

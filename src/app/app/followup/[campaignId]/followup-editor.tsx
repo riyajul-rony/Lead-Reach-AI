@@ -52,7 +52,7 @@ export function FollowupEditor({
         mode: "custom",
         subject_template: "Re: {{previous_subject}}",
         body_template:
-          "Hi {{first_name|there}},\n\nWanted to check back in regarding {{company_name|your business}}. Did you have any questions?\n\nBest,\nAlex",
+          "Hi {{first_name|there}},\n\nWanted to check back in regarding {{company_name|your business}}. Did you have any questions?\n\nBest,\n{{sender_first_name}}",
       },
     ]);
   };
