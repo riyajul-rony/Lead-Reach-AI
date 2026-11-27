@@ -472,6 +472,17 @@ export async function createEmailAccount(userId: string, input: CreateEmailAccou
     input.workspace_tier
   );
 
+  const trimmedReplyInboxId = input.reply_inbox_account_id?.trim() || null;
+  if (trimmedReplyInboxId) {
+    const ownedReplyInbox = await db.email_accounts.findFirst({
+      where: { id: trimmedReplyInboxId, user_id: userId },
+      select: { id: true },
+    });
+    if (!ownedReplyInbox) {
+      throw new Error("Selected reply inbox account not found");
+    }
+  }
+
   const created = await db.email_accounts.create({
     data: {
       user_id: userId,
@@ -490,7 +501,7 @@ export async function createEmailAccount(userId: string, input: CreateEmailAccou
           ? Math.max(5, Math.floor(Number(input.user_daily_limit)))
           : null,
       reply_to: input.reply_to?.toLowerCase().trim() || null,
-      reply_inbox_account_id: input.reply_inbox_account_id?.trim() || null,
+      reply_inbox_account_id: trimmedReplyInboxId,
       signature: input.signature?.trim() || null,
       smtp_host: input.smtp_host ? input.smtp_host.trim() : null,
       smtp_port: input.smtp_port ? Number(input.smtp_port) : null,
@@ -555,7 +566,19 @@ export async function updateEmailAccount(
   }
   if (updates.reply_to !== undefined) dataPayload.reply_to = updates.reply_to ? updates.reply_to.toLowerCase().trim() : null;
   if (updates.reply_inbox_account_id !== undefined) {
-    dataPayload.reply_inbox_account_id = updates.reply_inbox_account_id ? updates.reply_inbox_account_id.trim() : null;
+    const trimmedReplyInboxId = updates.reply_inbox_account_id
+      ? updates.reply_inbox_account_id.trim()
+      : null;
+    if (trimmedReplyInboxId) {
+      const ownedReplyInbox = await db.email_accounts.findFirst({
+        where: { id: trimmedReplyInboxId, user_id: userId },
+        select: { id: true },
+      });
+      if (!ownedReplyInbox) {
+        throw new Error("Selected reply inbox account not found");
+      }
+    }
+    dataPayload.reply_inbox_account_id = trimmedReplyInboxId;
   }
   if (updates.signature !== undefined) dataPayload.signature = updates.signature;
   if (updates.smtp_host !== undefined) dataPayload.smtp_host = updates.smtp_host ? updates.smtp_host.trim() : null;

@@ -259,6 +259,7 @@ export async function selectAvailableAccountForCampaign(campaignId: string, user
 export interface DispatchTransportInput {
   account: {
     id: string;
+    user_id?: string;
     provider: string;
     from_name?: string | null;
     senderName?: string | null;
@@ -299,8 +300,10 @@ export async function dispatchEmailTransport(
   let effectiveReplyTo = account.reply_to?.trim() || "";
   if (!effectiveReplyTo && account.reply_inbox_account_id) {
     try {
-      const linkedInbox = await db.email_accounts.findUnique({
-        where: { id: account.reply_inbox_account_id },
+      const linkedInbox = await db.email_accounts.findFirst({
+        where: account.user_id
+          ? { id: account.reply_inbox_account_id, user_id: account.user_id }
+          : { id: account.reply_inbox_account_id },
         select: { from_email: true },
       });
       if (linkedInbox?.from_email) {

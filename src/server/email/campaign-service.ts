@@ -4,7 +4,7 @@ import { logger } from "@/server/logger";
 import { assertLimit } from "@/server/billing/limits";
 import { saveCampaignSequence } from "@/server/email/sequence-service";
 import { queueEmailDispatch } from "@/server/queues";
-import { accountHasWorkingReplyDetection } from "@/server/email/account-service";
+import { accountHasWorkingReplyDetection, sanitizeAccount } from "@/server/email/account-service";
 import { assertWorkspaceLegalAcknowledgement } from "@/server/legal/acknowledgement";
 import { assertUserWorkspaceSendingActive } from "@/server/workspace/sending-control";
 import {
@@ -296,10 +296,14 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
     });
   }
 
-  // Update email accounts sending limits if provided in allocations
+  // Update email accounts sending limits if provided in allocations (strictly scoped to user's valid accounts)
   if (input.accountAllocations && Array.isArray(input.accountAllocations)) {
     for (const alloc of input.accountAllocations) {
-      if (alloc.accountId && (alloc.dailyLimit || alloc.minWaitMinutes || alloc.maxWaitMinutes)) {
+      if (
+        alloc.accountId &&
+        validAccountIds.includes(alloc.accountId) &&
+        (alloc.dailyLimit || alloc.minWaitMinutes || alloc.maxWaitMinutes)
+      ) {
         try {
           const updateData: any = {};
           if (alloc.dailyLimit) updateData.daily_limit = Math.min(Math.max(alloc.dailyLimit, 5), 500);
@@ -314,7 +318,7 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
             );
           }
           await db.email_accounts.update({
-            where: { id: alloc.accountId },
+            where: { id: alloc.accountId, user_id: userId },
             data: updateData,
           });
         } catch {}
@@ -414,13 +418,14 @@ export async function getCampaignDetails(userId: string, campaignId: string) {
   const opened = await db.campaign_recipients.count({ where: { campaign_id: campaignId, open_count: { gt: 0 } } });
   const clicked = await db.campaign_recipients.count({ where: { campaign_id: campaignId, click_count: { gt: 0 } } });
 
-  // Load sender accounts
+  // Load sender accounts (strictly scoped and sanitized to strip encrypted credentials)
   const senderAccountIds: string[] = campaign.source_ref?.sender_account_ids || [];
-  const senderAccounts = senderAccountIds.length > 0
+  const rawSenderAccounts = senderAccountIds.length > 0
     ? await db.email_accounts.findMany({
-        where: { id: { in: senderAccountIds } },
+        where: { id: { in: senderAccountIds }, user_id: userId },
       })
     : [];
+  const senderAccounts = rawSenderAccounts.map(sanitizeAccount);
 
   // Load campaign steps
   let steps: any[] = [];
