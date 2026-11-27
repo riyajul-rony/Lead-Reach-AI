@@ -19,9 +19,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Switch } from "@/components/ui/switch";
+import { InfoTooltip } from "@/components/outreach/info-tooltip";
 import { GmailAppPasswordGuide } from "@/components/warmup/gmail-app-password-guide";
 import { GmailAppPasswordModal } from "@/components/warmup/gmail-app-password-modal";
-import { getWarmupStatusPillLabel, getActiveAccountsWithWarmupOff } from "@/lib/warmup-ui";
+import {
+  getWarmupStatusPillLabel,
+  getActiveAccountsWithWarmupOff,
+  getReplyCapabilityInfo,
+} from "@/lib/warmup-ui";
 
 export interface WarmupAccountItem {
   id: string;
@@ -493,19 +498,27 @@ export function WarmupDashboardClient({
                         <Badge variant={isEnabled ? "warning" : "neutral"} size="sm">
                           <Flame size={10} className="mr-0.5" /> {getWarmupStatusPillLabel(acc)}
                         </Badge>
-                        {imapReady ? (
-                          <Badge variant="success" size="sm">
+                        {(() => {
+                          const replyCap = getReplyCapabilityInfo(acc);
+                          return (
                             <span className="inline-flex items-center gap-1">
-                              <ShieldCheck size={11} /> IMAP Ready (Auto-Reply Enabled)
+                              <Badge variant={replyCap.capable ? "success" : "warning"} size="sm">
+                                <span className="inline-flex items-center gap-1">
+                                  {replyCap.capable ? (
+                                    <ShieldCheck size={11} />
+                                  ) : (
+                                    <AlertTriangle size={11} />
+                                  )}
+                                  {replyCap.badgeLabel}
+                                </span>
+                              </Badge>
+                              <InfoTooltip
+                                title={replyCap.tooltipTitle}
+                                content={replyCap.tooltipContent}
+                              />
                             </span>
-                          </Badge>
-                        ) : (
-                          <Badge variant="warning" size="sm">
-                            <span className="inline-flex items-center gap-1">
-                              <AlertTriangle size={11} /> Send-Only OAuth (Connect with App Password + IMAP for Auto-Replies)
-                            </span>
-                          </Badge>
-                        )}
+                          );
+                        })()}
                       </div>
 
                       <div className="text-xs text-muted flex items-center gap-3 flex-wrap">

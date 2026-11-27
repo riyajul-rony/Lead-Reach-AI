@@ -4,6 +4,7 @@ import {
   getWarmupStatusPillLabel,
   getWarmupStateKey,
   getActiveAccountsWithWarmupOff,
+  getReplyCapabilityInfo,
 } from "./warmup-ui";
 
 describe("warmup-ui helpers", () => {
@@ -62,5 +63,25 @@ describe("warmup-ui helpers", () => {
     ];
     const targets = getActiveAccountsWithWarmupOff(accounts);
     expect(targets.map((a) => a.id)).toEqual(["2"]);
+  });
+
+  it("returns clear reply detection capability badge and IMAP tooltip explanation", () => {
+    const working = getReplyCapabilityInfo({
+      id: "1",
+      status: "active",
+      has_reply_detection: true,
+    });
+    expect(working.capable).toBe(true);
+    expect(working.badgeLabel).toBe("SMTP + IMAP reply detection working");
+    expect(working.tooltipContent).toContain("IMAP");
+
+    const missingImap = getReplyCapabilityInfo({
+      id: "2",
+      status: "active",
+      has_reply_detection: false,
+    });
+    expect(missingImap.capable).toBe(false);
+    expect(missingImap.badgeLabel).toBe("Reply detection unavailable (IMAP not configured)");
+    expect(missingImap.tooltipContent).toContain("Warm-up replies and stop-on-reply need IMAP");
   });
 });

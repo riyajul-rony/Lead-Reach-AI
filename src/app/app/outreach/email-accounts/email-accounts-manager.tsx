@@ -35,6 +35,7 @@ import {
   getWarmupStatusPillLabel,
   getWarmupStateKey,
   getActiveAccountsWithWarmupOff,
+  getReplyCapabilityInfo,
 } from "@/lib/warmup-ui";
 import {
   GmailAppPasswordGuide,
@@ -1067,15 +1068,23 @@ export function EmailAccountsManager({
                               ? "Paused (Deliverability)"
                               : account.status}
                         </Badge>
-                        {hasWorkingReply ? (
-                          <Badge variant="success" size="sm">
-                            Reply detection: Active
-                          </Badge>
-                        ) : (
-                          <Badge variant="warning" size="sm">
-                            Reply detection: Off
-                          </Badge>
-                        )}
+                        {(() => {
+                          const replyCap = getReplyCapabilityInfo({
+                            ...account,
+                            has_reply_detection: hasWorkingReply,
+                          });
+                          return (
+                            <span className="inline-flex items-center gap-1">
+                              <Badge variant={replyCap.capable ? "success" : "warning"} size="sm">
+                                {replyCap.badgeLabel}
+                              </Badge>
+                              <InfoTooltip
+                                title={replyCap.tooltipTitle}
+                                content={replyCap.tooltipContent}
+                              />
+                            </span>
+                          );
+                        })()}
                         {!hasDirectImap && hasReplyInbox && (
                           <Badge variant="neutral" size="sm">
                             Reply via: {account.reply_inbox?.from_email || "Linked Inbox"}

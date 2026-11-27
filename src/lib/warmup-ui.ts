@@ -1,6 +1,11 @@
 export interface WarmupUiAccountLike {
   id: string;
   status: string;
+  imap_host?: string | null;
+  has_imap_password?: boolean;
+  reply_inbox_account_id?: string | null;
+  has_reply_detection?: boolean;
+  reply_detection_reason?: string | null;
   warmup_enabled?: boolean | null;
   warmup_day?: number | null;
   warmup_start_limit?: number | null;
@@ -43,4 +48,38 @@ export function getWarmupStateKey(accounts: WarmupUiAccountLike[]): string {
  */
 export function getActiveAccountsWithWarmupOff<T extends WarmupUiAccountLike>(accounts: T[]): T[] {
   return accounts.filter((a) => a.status === "active" && !a.warmup_enabled);
+}
+
+/**
+ * Returns clear capability badge text and tooltip explanation for reply detection
+ * (warm-up replies and stop-on-reply require IMAP).
+ */
+export function getReplyCapabilityInfo(acc: WarmupUiAccountLike): {
+  capable: boolean;
+  badgeLabel: string;
+  tooltipTitle: string;
+  tooltipContent: string;
+} {
+  const capable =
+    acc.has_reply_detection ??
+    Boolean((acc.imap_host && acc.has_imap_password) || acc.reply_inbox_account_id);
+
+  if (capable) {
+    return {
+      capable: true,
+      badgeLabel: "SMTP + IMAP reply detection working",
+      tooltipTitle: "Reply Detection Active",
+      tooltipContent:
+        "Warm-up replies and campaign stop-on-reply are active because IMAP is configured on this inbox (or its linked reply inbox).",
+    };
+  }
+
+  return {
+    capable: false,
+    badgeLabel: "Reply detection unavailable (IMAP not configured)",
+    tooltipTitle: "IMAP Required for Replies",
+    tooltipContent:
+      acc.reply_detection_reason ||
+      "Warm-up replies and stop-on-reply need IMAP on this inbox. Connect via App Password + IMAP or link an IMAP reply inbox.",
+  };
 }
