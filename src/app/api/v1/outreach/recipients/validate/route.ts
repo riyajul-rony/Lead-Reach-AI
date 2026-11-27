@@ -1,8 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@/generated/prisma/client";
 import { getSessionUser } from "@/server/auth/session";
 import { db, scoped } from "@/server/db";
 import { validateAndNormalizeRecipients, ColumnMapping } from "@/server/email/recipient-importer";
 import { z } from "zod";
+
+const LEAD_VALIDATE_SELECT = {
+  id: true,
+  email: true,
+  company_name: true,
+  phone: true,
+  phone_raw: true,
+  website: true,
+  city: true,
+  country: true,
+  timezone: true,
+  extra: true,
+} satisfies Prisma.leadsSelect;
 
 const validateRequestSchema = z.object({
   source: z.enum(["leads", "sheet", "csv"]),
@@ -54,52 +68,59 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "searchId is required for leads source" }, { status: 400 });
     }
 
-    const whereClause: any = scoped(session.user.id, { search_id: searchId });
-    if (onlyWithEmail) {
+    const whereClause: Prisma.leadsWhereInput = scoped(session.user.id, { search_id: searchId });
+    if (onlyWithEmail || onlyEnriched) {
       whereClause.email = { not: null };
-    }
-    if (onlyEnriched) {
-      whereClause.status = { not: "new" };
     }
 
     const leads = await db.leads.findMany({
       where: whereClause,
-      select: {
-        id: true,
-        email: true,
-        first_name: true,
-        last_name: true,
-        full_name: true,
-        company_name: true,
-        website: true,
-        phone_raw: true,
-        phone_e164: true,
-        timezone: true,
-      },
+      select: LEAD_VALIDATE_SELECT,
       take: 2000,
     });
 
-    const leadRows = leads.map((l: any) => ({
-      email: l.email || "",
-      first_name: l.first_name || "",
-      last_name: l.last_name || "",
-      full_name: l.full_name || "",
-      company: l.company_name || "",
-      website: l.website || "",
-      phone: l.phone_e164 || l.phone_raw || "",
-      timezone: l.timezone || undefined,
-      lead_id: l.id,
-    }));
+    const filteredLeads = onlyWithEmail || onlyEnriched
+      ? leads.filter((l: any) => typeof l.email === "string" && l.email.trim().length > 0)
+      : leads;
 
-    const result = await validateAndNormalizeRecipients(session.user.id, leadRows, {
+    const leadRows = filteredLeads.map((l: any) => {
+      const extra = l.extra && typeof l.extra === "object" ? l.extra : {};
+      return {
+        email: l.email || "",
+        first_name: typeof extra.first_name === "string" ? extra.first_name : "",
+        last_name: typeof extra.last_name === "string" ? extra.last_name : "",
+        full_name:
+          typeof extra.full_name === "string"
+            ? extra.full_name
+            : typeof extra.founder_name === "string"
+              ? extra.founder_name
+              : typeof extra.manager_name === "string"
+                ? extra.manager_name
+                : "",
+        job_title: typeof extra.job_title === "string" ? extra.job_title : "",
+        company: l.company_name || "",
+        website: l.website || "",
+        phone: l.phone || l.phone_raw || "",
+        city: l.city || "",
+        country: l.country || "",
+        timezone: l.timezone || undefined,
+        lead_id: l.id,
+      };
+    });
+
+    const leadMapping: ColumnMapping = {
       email: "email",
       first_name: "first_name",
       last_name: "last_name",
       full_name: "full_name",
       company: "company",
       website: "website",
+      job_title: "job_title",
       phone: "phone",
-    });
+      timezone: "timezone",
+    };
+
+    const result = await validateAndNormalizeRecipients(session.user.id, leadRows, leadMapping);
 
     return NextResponse.json({ data: result });
   }

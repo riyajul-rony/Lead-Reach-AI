@@ -1240,6 +1240,7 @@ class LocalDevMockDb {
         if (where?.user_id && l.user_id !== where.user_id) return false;
         if (where?.search_id && l.search_id !== where.search_id) return false;
         if (where?.status && l.status !== where.status) return false;
+        if (where?.email?.not === null && (l.email === null || l.email === undefined)) return false;
         if (where?.id?.in && Array.isArray(where.id.in) && !where.id.in.includes(l.id)) return false;
         return true;
       });
