@@ -527,6 +527,42 @@ describe("Phase 5: Sending Engine & BullMQ Scheduler", () => {
       expect(bodies.text).toBe("Hello John,\n\nChecking in.");
     });
 
+    it("strips HTML tags from text/plain and preserves user HTML unescaped when tracking is off or on", () => {
+      const htmlInput =
+        '<div class="msg"><p>Hi Sarah,</p><p>See <a href="https://acme.io/demo">our demo</a> or <a href="https://example.com/u/tok-html">opt out</a>.</p></div>';
+
+      const noTrack = buildEmailMultipartBodies({
+        bodyText: htmlInput,
+        unsubscribeUrl: "https://example.com/u/tok-html",
+        trackingOpen: false,
+        trackingClick: false,
+        unsubscribeToken: "tok-html",
+        baseUrl: "https://example.com",
+      });
+
+      expect(noTrack.text).not.toContain("<div");
+      expect(noTrack.text).not.toContain("<p>");
+      expect(noTrack.text).toContain("Hi Sarah,");
+      expect(noTrack.html).toBe(htmlInput);
+
+      const withTrack = buildEmailMultipartBodies({
+        bodyText: htmlInput,
+        unsubscribeUrl: "https://example.com/u/tok-html",
+        trackingOpen: true,
+        trackingClick: true,
+        unsubscribeToken: "tok-html",
+        baseUrl: "https://example.com",
+      });
+
+      expect(withTrack.text).not.toContain("<div");
+      expect(withTrack.text).not.toContain("<p>");
+      expect(withTrack.html).toContain('<div class="msg"><p>Hi Sarah,</p>');
+      expect(withTrack.html).not.toContain("&lt;div");
+      expect(withTrack.html).toContain("https://example.com/api/v1/track/click/");
+      expect(withTrack.html).toContain('href="https://example.com/u/tok-html"');
+      expect(withTrack.html).toContain('src="https://example.com/api/v1/track/open/tok-html"');
+    });
+
     it("releases reserved daily capacity when sendSingleRecipientEmail skips an already-sent recipient", async () => {
       const { getAccountDailyCapacitySnapshot } = await import("./daily-capacity");
       const uid = `u-cap-rel-${Date.now()}`;

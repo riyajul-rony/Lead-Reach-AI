@@ -67,6 +67,42 @@ const BASE_URL = process.env.NEXTAUTH_URL || process.env.APP_URL || "http://loca
  * - Preserves plain-text messages as text/plain ONLY (`html: undefined`) unless
  *   tracking (open pixel / click wrapping) or explicit HTML markup requires HTML.
  */
+function stripHtmlToPlainText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|tr|li|h[1-6])>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function isUnsubscribeTrackingUrl(
+  rawUrl: string,
+  unsubscribeUrl: string,
+  unsubscribeToken: string
+): boolean {
+  return (
+    rawUrl === unsubscribeUrl ||
+    rawUrl.includes("/api/v1/unsubscribe/") ||
+    rawUrl.includes("/unsubscribe/") ||
+    (unsubscribeToken ? rawUrl.includes(`/u/${unsubscribeToken}`) : false)
+  );
+}
+
+/**
+ * Pure Message Mode body builder:
+ * - Plain text without tracking sends text/plain ONLY (no HTML part).
+ * - HTML input strips tags for text/plain and preserves user HTML unescaped.
+ * - Never appends footers, signatures, addresses, or unsubscribe text.
+ */
 export function buildEmailMultipartBodies(opts: {
   bodyText: string;
   legalAddress?: string;
@@ -76,17 +112,44 @@ export function buildEmailMultipartBodies(opts: {
   unsubscribeToken: string;
   baseUrl: string;
 }): { text: string; html?: string } {
-  const text = opts.bodyText;
   const looksLikeHtml = /<(?:html|body|p|div|br|table|a|span)\b/i.test(opts.bodyText);
   const needsTrackingHtml = Boolean(opts.trackingOpen) || Boolean(opts.trackingClick);
 
   if (!looksLikeHtml && !needsTrackingHtml) {
-    return { text };
+    return { text: opts.bodyText };
   }
 
-  if (looksLikeHtml && !needsTrackingHtml) {
-    return { text, html: opts.bodyText };
+  if (looksLikeHtml) {
+    const plainText = stripHtmlToPlainText(opts.bodyText);
+    let htmlOut = opts.bodyText;
+
+    if (opts.trackingClick) {
+      htmlOut = htmlOut.replace(
+        /<a\b([^>]*?)href=(["'])(https?:\/\/[^"']+)\2([^>]*)>/gi,
+        (full, before: string, quote: string, rawUrl: string, after: string) => {
+          if (isUnsubscribeTrackingUrl(rawUrl, opts.unsubscribeUrl, opts.unsubscribeToken)) {
+            return full;
+          }
+          const signedToken = createSignedTrackingToken(opts.unsubscribeToken, rawUrl);
+          const clickUrl = `${opts.baseUrl}/api/v1/track/click/${signedToken}`;
+          return `<a${before}href=${quote}${clickUrl}${quote}${after}>`;
+        }
+      );
+    }
+
+    if (opts.trackingOpen) {
+      const pixel = `<img src="${opts.baseUrl}/api/v1/track/open/${opts.unsubscribeToken}" width="1" height="1" style="display:none !important;" alt="" />`;
+      if (/<\/body>/i.test(htmlOut)) {
+        htmlOut = htmlOut.replace(/<\/body>/i, `  ${pixel}\n</body>`);
+      } else {
+        htmlOut = `${htmlOut}\n${pixel}`;
+      }
+    }
+
+    return { text: plainText, html: htmlOut };
   }
+
+  const text = opts.bodyText;
 
   const escapeHtml = (str: string) =>
     str
