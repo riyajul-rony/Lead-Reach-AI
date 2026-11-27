@@ -38,7 +38,7 @@ export async function getGoogleOutreachClientCredentials() {
  */
 export async function getGoogleOutreachAuthUrl(
   userId: string,
-  statePayload: { returnTo?: string; includeReadScope?: boolean } = {}
+  statePayload: { returnTo?: string; includeReadScope?: boolean; state?: string } = {}
 ): Promise<{ url?: string; error?: string }> {
   const creds = await getGoogleOutreachClientCredentials();
   if (!creds.configured) {
@@ -60,14 +60,16 @@ export async function getGoogleOutreachAuthUrl(
     scopes.push("https://www.googleapis.com/auth/gmail.readonly");
   }
 
-  const stateString = Buffer.from(
-    JSON.stringify({
-      userId,
-      returnTo: statePayload.returnTo || "/app/outreach/email-accounts",
-      includeReadScope: Boolean(statePayload.includeReadScope),
-      ts: Date.now(),
-    })
-  ).toString("base64");
+  const stateString =
+    statePayload.state ||
+    Buffer.from(
+      JSON.stringify({
+        userId,
+        returnTo: statePayload.returnTo || "/app/outreach/email-accounts",
+        includeReadScope: Boolean(statePayload.includeReadScope),
+        ts: Date.now(),
+      })
+    ).toString("base64");
 
   const params = new URLSearchParams({
     client_id: creds.clientId,

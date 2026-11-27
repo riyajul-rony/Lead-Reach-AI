@@ -90,12 +90,16 @@ export async function exchangeGoogleCode(code: string) {
   });
   const profile = await userRes.json();
 
+  if (!profile.email || profile.verified_email !== true) {
+    throw new Error("Google account email is missing or not verified");
+  }
+
   return {
     accessToken: tokens.access_token as string,
     refreshToken: tokens.refresh_token as string | undefined,
     expiresIn: (tokens.expires_in as number) || 3600,
     scope: (tokens.scope as string) || "",
-    email: (profile.email as string) || "user@gmail.com",
+    email: (profile.email as string).toLowerCase().trim(),
     name: profile.name as string | undefined,
   };
 }
@@ -113,51 +117,26 @@ export async function saveGoogleConnection(
   const expiresAt = new Date(Date.now() + data.expiresIn * 1000);
   const scopesList = data.scope.split(" ").filter(Boolean);
 
-  // 1. Try DB
-  try {
-    await db.google_connections.upsert({
-      where: { user_id_google_email: { user_id: userId, google_email: data.email } },
-      create: {
-        user_id: userId,
-        google_email: data.email,
-        access_token_enc: encrypt(data.accessToken, encKey()),
-        refresh_token_enc: data.refreshToken ? encrypt(data.refreshToken, encKey()) : null,
-        expires_at: expiresAt,
-        scopes: scopesList,
-        status: "active",
-      },
-      update: {
-        access_token_enc: encrypt(data.accessToken, encKey()),
-        refresh_token_enc: data.refreshToken ? encrypt(data.refreshToken, encKey()) : undefined,
-        expires_at: expiresAt,
-        scopes: scopesList,
-        status: "active",
-      },
-    });
-  } catch (err) {
-    logger.warn({ err }, "Could not save Google connection to DB, relying on session cookie");
-  }
-
-  // 2. Cookie fallback for local development
-  try {
-    const jar = await cookies();
-    const payload = JSON.stringify({
-      email: data.email,
-      accessToken: data.accessToken,
-      refreshToken: data.refreshToken,
-      expiresAt: expiresAt.toISOString(),
+  // Persist strictly per-user in google_connections DB table (no shared cookie fallback)
+  await db.google_connections.upsert({
+    where: { user_id_google_email: { user_id: userId, google_email: data.email } },
+    create: {
+      user_id: userId,
+      google_email: data.email,
+      access_token_enc: encrypt(data.accessToken, encKey()),
+      refresh_token_enc: data.refreshToken ? encrypt(data.refreshToken, encKey()) : null,
+      expires_at: expiresAt,
       scopes: scopesList,
-    });
-    jar.set(COOKIE_NAME, encrypt(payload, encKey()), {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 30, // 30 days
-    });
-  } catch {
-    // Cookie store not writable in some contexts
-  }
+      status: "active",
+    },
+    update: {
+      access_token_enc: encrypt(data.accessToken, encKey()),
+      refresh_token_enc: data.refreshToken ? encrypt(data.refreshToken, encKey()) : undefined,
+      expires_at: expiresAt,
+      scopes: scopesList,
+      status: "active",
+    },
+  });
 }
 
 export async function getGoogleConnectionStatus(userId: string): Promise<GoogleConnectionInfo> {
@@ -182,24 +161,6 @@ export async function getGoogleConnectionStatus(userId: string): Promise<GoogleC
     // DB not ready
   }
 
-  // Try Cookie
-  try {
-    const jar = await cookies();
-    const raw = jar.get(COOKIE_NAME)?.value;
-    if (raw) {
-      const decrypted = JSON.parse(decrypt(raw, encKey()));
-      const hasSheets = (decrypted.scopes || []).some((s: string) => s.includes("spreadsheets") || s.includes("drive"));
-      return {
-        connected: true,
-        email: decrypted.email,
-        hasSheetsScope: hasSheets,
-        clientConfigured: creds.configured,
-      };
-    }
-  } catch {
-    // Cookie invalid
-  }
-
   return {
     connected: false,
     clientConfigured: creds.configured,
@@ -212,7 +173,7 @@ export async function getValidGoogleAccessToken(userId: string): Promise<{ acces
   let expiresAt: Date | undefined;
   let email: string | undefined;
 
-  // 1. Try DB
+  // Try DB
   try {
     const row = await db.google_connections.findFirst({
       where: { user_id: userId, status: "active" },
@@ -226,23 +187,6 @@ export async function getValidGoogleAccessToken(userId: string): Promise<{ acces
     }
   } catch {
     // DB error
-  }
-
-  // 2. Try Cookie if DB didn't find anything
-  if (!accessToken) {
-    try {
-      const jar = await cookies();
-      const raw = jar.get(COOKIE_NAME)?.value;
-      if (raw) {
-        const decrypted = JSON.parse(decrypt(raw, encKey()));
-        accessToken = decrypted.accessToken;
-        refreshToken = decrypted.refreshToken;
-        expiresAt = decrypted.expiresAt ? new Date(decrypted.expiresAt) : undefined;
-        email = decrypted.email;
-      }
-    } catch {
-      // Cookie error
-    }
   }
 
   if (!accessToken) return {};

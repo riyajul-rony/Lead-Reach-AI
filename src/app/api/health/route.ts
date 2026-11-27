@@ -1,8 +1,38 @@
-import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
 import { getRedisConnection } from "@/server/queues";
+import { getSessionUser } from "@/server/auth/session";
+import { hasPermission } from "@/server/auth/permissions";
 
-export async function GET() {
+function safeCompareSecret(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+async function isDetailedHealthAuthorized(req: NextRequest): Promise<boolean> {
+  const configuredSecret =
+    process.env.HEALTH_CHECK_SECRET?.trim() || process.env.CTD_TLS_ASK_SECRET?.trim();
+  const providedSecret = req.headers.get("x-internal-health-secret")?.trim();
+  if (configuredSecret && providedSecret && safeCompareSecret(providedSecret, configuredSecret)) {
+    return true;
+  }
+
+  try {
+    const session = await getSessionUser();
+    if (session?.user?.role && hasPermission(session.user.role, "logs.read")) {
+      return true;
+    }
+  } catch {
+    // Ignore session lookup errors on healthcheck
+  }
+
+  return false;
+}
+
+export async function GET(req: NextRequest) {
   let dbOk = false;
   let redisOk = false;
   let dbLatency = 0;
@@ -52,6 +82,14 @@ export async function GET() {
   }
 
   const allHealthy = dbOk && redisOk;
+  const includeDetails = await isDetailedHealthAuthorized(req);
+
+  if (!includeDetails) {
+    return NextResponse.json(
+      { ok: allHealthy },
+      { status: allHealthy ? 200 : 503 }
+    );
+  }
 
   return NextResponse.json(
     {

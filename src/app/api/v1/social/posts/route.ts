@@ -16,14 +16,44 @@ export async function GET() {
     where: scoped(session.user.id),
     include: {
       campaign: {
-        include: { social_account: true },
+        include: {
+          social_account: {
+            select: {
+              id: true,
+              provider: true,
+              external_id: true,
+              display_name: true,
+              picture_url: true,
+              status: true,
+            },
+          },
+        },
       },
     },
     orderBy: { created_at: "desc" },
     take: 50,
   });
 
-  return NextResponse.json({ data: posts });
+  const sanitized = posts.map((p: any) => ({
+    ...p,
+    campaign: p.campaign
+      ? {
+          ...p.campaign,
+          social_account: p.campaign.social_account
+            ? {
+                id: p.campaign.social_account.id,
+                provider: p.campaign.social_account.provider,
+                external_id: p.campaign.social_account.external_id,
+                display_name: p.campaign.social_account.display_name,
+                picture_url: p.campaign.social_account.picture_url,
+                status: p.campaign.social_account.status,
+              }
+            : null,
+        }
+      : null,
+  }));
+
+  return NextResponse.json({ data: sanitized });
 }
 
 export async function POST(req: NextRequest) {

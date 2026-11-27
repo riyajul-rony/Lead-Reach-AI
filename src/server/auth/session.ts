@@ -226,6 +226,7 @@ export async function destroySession() {
       await db.sessions.deleteMany({ where: { token_hash: tokenHash } });
     }
     jar.delete(SESSION_COOKIE);
+    jar.delete("leadreach_google_conn");
   } catch {
     // Ignore context error
   }
@@ -235,7 +236,9 @@ export async function destroySession() {
 export async function destroyAllSessions(userId: string) {
   await invalidateUserSessions(userId);
   try {
-    (await cookies()).delete(SESSION_COOKIE);
+    const jar = await cookies();
+    jar.delete(SESSION_COOKIE);
+    jar.delete("leadreach_google_conn");
   } catch {
     // Ignore context error
   }

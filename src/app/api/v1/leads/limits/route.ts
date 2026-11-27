@@ -9,6 +9,10 @@ export const MAX_SAFETY_CEILING = 1000;
 
 export async function GET() {
   const session = await getSessionUser();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const settings = await getApifySettings();
 
   const adminLimits = {

@@ -6,39 +6,50 @@ import { encrypt } from "@/server/crypto";
 import { assertLimit } from "@/server/billing/limits";
 import { logger } from "@/server/logger";
 import { getAppUrl } from "@/server/config";
+import {
+  OAUTH_STATE_COOKIE,
+  sanitizeReturnTo,
+  verifyOAuthState,
+} from "@/server/auth/oauth-state";
 
 export async function GET(req: NextRequest) {
   const appUrl = await getAppUrl();
   const code = req.nextUrl.searchParams.get("code");
   const error = req.nextUrl.searchParams.get("error");
   const stateRaw = req.nextUrl.searchParams.get("state");
+  const cookieNonce = req.cookies.get(OAUTH_STATE_COOKIE)?.value;
 
-  let userId = "";
-  let returnTo = "/app/outreach/email-accounts";
+  const clearStateCookie = (res: NextResponse) => {
+    res.cookies.delete(OAUTH_STATE_COOKIE);
+    return res;
+  };
 
-  if (stateRaw) {
-    try {
-      const parsed = JSON.parse(Buffer.from(stateRaw, "base64").toString("utf8"));
-      if (parsed.userId) userId = parsed.userId;
-      if (parsed.returnTo) returnTo = parsed.returnTo;
-    } catch {
-      // Ignore state parse issue
-    }
+  const verified = verifyOAuthState(stateRaw, cookieNonce);
+  if (!verified.valid || !verified.userId) {
+    logger.warn({ reason: verified.error }, "Google outreach OAuth callback rejected invalid state");
+    return clearStateCookie(
+      NextResponse.redirect(new URL("/login?error=invalid_oauth_state", appUrl))
+    );
   }
 
   const session = await getSessionUser();
-  const effectiveUserId = session?.user?.id || userId;
-
-  if (!effectiveUserId) {
-    return NextResponse.redirect(new URL("/login?error=unauthorized", appUrl));
+  if (!session || session.user.id !== verified.userId) {
+    return clearStateCookie(
+      NextResponse.redirect(new URL("/login?error=unauthorized", appUrl))
+    );
   }
+
+  const effectiveUserId = session.user.id;
+  const returnTo = sanitizeReturnTo(verified.returnTo, "/app/outreach/email-accounts");
 
   if (error || !code) {
     logger.warn({ error }, "Google outreach OAuth callback error or user denied access");
-    return NextResponse.redirect(
-      new URL(
-        `${returnTo}?error=${encodeURIComponent(error || "Google authorization was cancelled")}`,
-        appUrl
+    return clearStateCookie(
+      NextResponse.redirect(
+        new URL(
+          `${returnTo}?error=${encodeURIComponent(error || "Google authorization was cancelled")}`,
+          appUrl
+        )
       )
     );
   }

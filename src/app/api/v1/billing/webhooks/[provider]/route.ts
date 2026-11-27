@@ -9,6 +9,15 @@ export async function POST(
 ) {
   const { provider: providerParam } = await params;
   const providerKey = (providerParam || "manual").toLowerCase();
+
+  // SEC-001: Manual billing cannot be triggered via public unauthenticated webhooks
+  if (providerKey === "manual") {
+    return NextResponse.json(
+      { error: "Manual webhook endpoint is disabled. Use authenticated billing endpoints." },
+      { status: 403 }
+    );
+  }
+
   const provider = getPaymentProvider(providerKey);
 
   // 1. Read raw body as text for cryptographic signature check
@@ -91,24 +100,36 @@ export async function POST(
           });
 
           if (sub) {
+            const methodDetails =
+              payment.method_details && typeof payment.method_details === "object"
+                ? (payment.method_details as Record<string, any>)
+                : {};
+            const targetPlanId =
+              typeof methodDetails.plan_id === "string" && methodDetails.plan_id
+                ? methodDetails.plan_id
+                : sub.plan_id;
+            const durationDays = methodDetails.interval === "yearly" ? 365 : 30;
+            const durationMs = durationDays * 24 * 60 * 60 * 1000;
+
             const now = new Date();
             const nextPeriodEnd = new Date(sub.current_period_end || now);
             if (nextPeriodEnd < now) {
-              nextPeriodEnd.setTime(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+              nextPeriodEnd.setTime(now.getTime() + durationMs);
             } else {
-              nextPeriodEnd.setTime(nextPeriodEnd.getTime() + 30 * 24 * 60 * 60 * 1000);
+              nextPeriodEnd.setTime(nextPeriodEnd.getTime() + durationMs);
             }
 
             await db.subscriptions.update({
               where: { id: sub.id },
               data: {
+                plan_id: targetPlanId,
                 status: "active",
                 current_period_end: nextPeriodEnd,
               },
             });
 
             // Update user's active plan
-            const plan = await db.plans.findUnique({ where: { id: sub.plan_id } });
+            const plan = await db.plans.findUnique({ where: { id: targetPlanId } });
             if (plan) {
               await db.users.update({
                 where: { id: sub.user_id },

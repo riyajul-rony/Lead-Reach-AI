@@ -54,6 +54,8 @@ export class ManualPaymentProvider implements PaymentProvider {
         provider_payment_id: `manual_pay_${Date.now()}`,
         invoice_number: invoiceNumber,
         method_details: {
+          plan_id: options.planId,
+          plan_slug: options.planSlug,
           plan_name: options.planName,
           interval: options.interval,
           note: "Pending manual verification by admin",
@@ -76,23 +78,12 @@ export class ManualPaymentProvider implements PaymentProvider {
     };
   }
 
-  async handleWebhook(rawBody: string, headers: Record<string, string>): Promise<WebhookResult> {
-    try {
-      const payload = typeof rawBody === "string" ? JSON.parse(rawBody) : rawBody;
-      return {
-        handled: true,
-        eventType: payload.type || "manual.payment.event",
-        eventId: payload.id || `manual_evt_${Date.now()}`,
-        paymentId: payload.payment_id,
-        status: payload.status,
-      };
-    } catch {
-      return {
-        handled: false,
-        eventType: "manual.unknown",
-        eventId: `manual_err_${Date.now()}`,
-      };
-    }
+  async handleWebhook(_rawBody: string, _headers: Record<string, string>): Promise<WebhookResult> {
+    return {
+      handled: false,
+      eventType: "manual.disabled",
+      eventId: `manual_disabled_${Date.now()}`,
+    };
   }
 
   async cancelSubscription(providerSubscriptionId: string): Promise<boolean> {

@@ -88,13 +88,11 @@ export function BillingClient({
 
     setCanceling(true);
     try {
-      const res = await fetch(`/api/v1/billing/webhooks/manual`, {
+      const res = await fetch("/api/v1/billing/cancel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          type: "subscription.canceled",
-          id: `evt_cancel_${Date.now()}`,
-          subscription_id: activeSubscriptionId,
+          subscriptionId: activeSubscriptionId,
         }),
       });
 
