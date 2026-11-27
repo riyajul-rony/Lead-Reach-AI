@@ -25,7 +25,12 @@ function isAuthorizedInternalCaller(req: NextRequest): boolean {
     return Boolean(provided) && safeCompareSecret(provided, configuredSecret);
   }
 
-  // Without an explicit shared secret, reject proxied public internet traffic
+  // SEC-013: Fail closed in production when CTD_TLS_ASK_SECRET is not configured
+  if (process.env.NODE_ENV === "production") {
+    return false;
+  }
+
+  // Without an explicit shared secret in non-production, reject proxied public internet traffic
   // and allow only direct container/local calls (e.g. Caddy calling http://web:3000/api/internal/tls-ask).
   if (req.headers.get("x-forwarded-for") || req.headers.get("x-forwarded-host")) {
     return false;
