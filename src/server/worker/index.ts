@@ -259,6 +259,20 @@ export function startSocialPublishWorker() {
 
         const provider = getSocialProvider(account.provider);
         const accountToken = account.access_token_enc ? decrypt(account.access_token_enc) : "";
+        const isDevOrTest =
+          process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+        if (
+          !isDevOrTest &&
+          (!accountToken ||
+            accountToken === "mock_token_dev" ||
+            accountToken === "mock_dev_token" ||
+            accountToken === "mock_access_token" ||
+            /^token_\d+$/.test(accountToken))
+        ) {
+          throw new Error(
+            "Social account is missing a valid access token. Please reconnect your social account."
+          );
+        }
 
         const result = await provider.publish(accountToken, account.external_id, {
           caption: fullCaption,

@@ -104,11 +104,14 @@ export class FacebookProvider implements SocialProvider {
 
     const result = await res.json().catch(() => ({}));
     if (!res.ok || result.error) {
+      const isDevOrTest =
+        process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
       if (
-        process.env.NODE_ENV === "test" ||
-        accountToken.includes("mock") ||
-        accountToken.includes("test") ||
-        !accountToken.includes("EA")
+        isDevOrTest &&
+        (process.env.NODE_ENV === "test" ||
+          accountToken.includes("mock") ||
+          accountToken.includes("test") ||
+          !accountToken.includes("EA"))
       ) {
         const fakeId = `fb_${Date.now()}`;
         return {
@@ -120,7 +123,10 @@ export class FacebookProvider implements SocialProvider {
       throw new Error(result.error?.message || "Facebook publish request failed");
     }
 
-    const postId = result.post_id || result.id || `fb_${Date.now()}`;
+    const postId = result.post_id || result.id;
+    if (!postId) {
+      throw new Error("Facebook API did not return a published post ID");
+    }
     return {
       externalId: postId,
       url: `https://facebook.com/${postId}`,

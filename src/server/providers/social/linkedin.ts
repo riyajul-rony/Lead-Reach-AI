@@ -91,6 +91,15 @@ export class LinkedInProvider implements SocialProvider {
   }
 
   async publish(accountToken: string, externalId: string, post: PostContent): Promise<PublishResult> {
+    const isDevOrTest =
+      process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+    const canMockInDevOrTest =
+      isDevOrTest &&
+      (process.env.NODE_ENV === "test" ||
+        accountToken.includes("mock") ||
+        accountToken.includes("test") ||
+        !accountToken.includes("AQ"));
+
     try {
       // Clean author URN
       const authorUrn = externalId.startsWith("urn:li:")
@@ -126,7 +135,7 @@ export class LinkedInProvider implements SocialProvider {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        if (process.env.NODE_ENV === "test" || accountToken.includes("mock") || accountToken.includes("test") || !accountToken.includes("AQ")) {
+        if (canMockInDevOrTest) {
           const fakeId = `urn:li:share:${Date.now()}`;
           return {
             externalId: fakeId,
@@ -136,14 +145,17 @@ export class LinkedInProvider implements SocialProvider {
         throw new Error(data.message || "Failed to publish post to LinkedIn");
       }
 
-      const postUrn = data.id || res.headers.get("x-restli-id") || `urn:li:share:${Date.now()}`;
+      const postUrn = data.id || res.headers.get("x-restli-id");
+      if (!postUrn) {
+        throw new Error("LinkedIn API did not return a published post URN");
+      }
       return {
         externalId: postUrn,
         url: `https://www.linkedin.com/feed/update/${postUrn}/`,
       };
     } catch (err: any) {
       logger.error({ err }, "LinkedIn publish error");
-      if (process.env.NODE_ENV === "test" || accountToken.includes("mock") || accountToken.includes("test") || !accountToken.includes("AQ")) {
+      if (canMockInDevOrTest) {
         const fakeId = `urn:li:share:${Date.now()}`;
         return {
           externalId: fakeId,

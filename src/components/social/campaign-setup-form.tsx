@@ -36,9 +36,10 @@ export function CampaignSetupForm({ provider }: { provider: string }) {
   const [postTime, setPostTime] = useState("10:00");
   const [approvalMode, setApprovalMode] = useState<"auto" | "approve">("auto");
 
-  // Inline fallback account for quick testing if user hasn't connected a page yet
-  const [customPageName, setCustomPageName] = useState("My Brand Page");
-  const [customPageId, setCustomPageId] = useState("page_1001");
+  // Inline account connection fields if user hasn't connected a page yet
+  const [customPageName, setCustomPageName] = useState("");
+  const [customPageId, setCustomPageId] = useState("");
+  const [customAccessToken, setCustomAccessToken] = useState("");
 
   // Preview state
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -123,22 +124,28 @@ export function CampaignSetupForm({ provider }: { provider: string }) {
     try {
       let finalAccountId = selectedAccountId;
 
-      // If user has no accounts connected yet, create an inline fallback account automatically
+      // If user has no accounts connected yet, require valid inline credentials and save account first
       if (!finalAccountId && accounts.length === 0) {
+        if (!customPageName.trim() || !customPageId.trim() || !customAccessToken.trim()) {
+          throw new Error(
+            `Please connect a ${provider.toUpperCase()} account in Social Hub or provide Page Name, Page ID, and Access Token.`
+          );
+        }
         const createAccRes = await fetch("/api/v1/social/accounts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             provider,
-            display_name: customPageName,
-            external_id: customPageId,
-            access_token: "mock_token_dev",
+            display_name: customPageName.trim(),
+            external_id: customPageId.trim(),
+            access_token: customAccessToken.trim(),
           }),
         });
         const accData = await createAccRes.json();
-        if (accData.data?.id) {
-          finalAccountId = accData.data.id;
+        if (!createAccRes.ok || !accData.data?.id) {
+          throw new Error(accData.error || "Failed to connect social account");
         }
+        finalAccountId = accData.data.id;
       }
 
       const res = await fetch("/api/v1/social/campaigns", {
@@ -223,23 +230,38 @@ export function CampaignSetupForm({ provider }: { provider: string }) {
                   </select>
                 ) : (
                   <div className="space-y-2">
-                    <div className="p-2.5 rounded-lg bg-bgSubtle border border-border text-xs text-muted space-y-0.5">
+                    <div className="p-2.5 rounded-lg bg-bgSubtle border border-border text-xs text-muted space-y-1">
                       <span className="font-medium text-fg block">No accounts linked yet</span>
-                      <p className="text-[11px]">Enter details below to link automatically:</p>
+                      <p className="text-[11px]">
+                        <Link href="/app/social" className="text-fg underline">
+                          Connect via Official OAuth in Social Hub
+                        </Link>{" "}
+                        or enter credentials below:
+                      </p>
                     </div>
                     <input
                       type="text"
                       className="input text-xs h-9 w-full"
-                      placeholder="Page Name (e.g. Dhaka Real Estate)"
+                      placeholder="Page Name (e.g. Brand Studio)"
                       value={customPageName}
                       onChange={(e) => setCustomPageName(e.target.value)}
+                      required
                     />
                     <input
                       type="text"
                       className="input text-xs font-mono h-9 w-full"
-                      placeholder="Page ID (e.g. 109283746)"
+                      placeholder="Page ID / Account ID"
                       value={customPageId}
                       onChange={(e) => setCustomPageId(e.target.value)}
+                      required
+                    />
+                    <input
+                      type="password"
+                      className="input text-xs font-mono h-9 w-full"
+                      placeholder="Access Token *"
+                      value={customAccessToken}
+                      onChange={(e) => setCustomAccessToken(e.target.value)}
+                      required
                     />
                   </div>
                 )}
