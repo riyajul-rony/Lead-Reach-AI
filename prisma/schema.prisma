@@ -700,6 +700,7 @@ model post_runs {
   caption          String?
   hashtags         String[]
   image_prompt     String?
+  image_url        String?
   image_asset_id   String?       @db.Uuid
   external_post_id String?
   external_url     String?

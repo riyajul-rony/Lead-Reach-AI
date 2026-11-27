@@ -215,6 +215,39 @@ describe("Phase 5: Social Media Auto Post (Facebook, Instagram, LinkedIn)", () =
       expect(json.data.campaign_id).toBe(campaign.id);
       expect(json.data.status).toBe("pending_approval");
       expect(json.data.caption).toBeTruthy();
+      expect(json.data.image_url).toBeTruthy();
+      expect(json.data.external_url).toBeNull();
+    });
+
+    it("creates a scheduled post (not pending_approval) when campaign approval_mode is auto (BUG-023)", async () => {
+      mockSession.mockResolvedValue(user1);
+      const user1Account = await db.social_accounts.findFirst({
+        where: { user_id: user1.user.id },
+      });
+      const autoCamp = await db.social_campaigns.create({
+        data: {
+          user_id: user1.user.id,
+          social_account_id: user1Account.id,
+          name: "Auto Publish Campaign",
+          status: "active",
+          timezone: "UTC",
+          approval_mode: "auto",
+        },
+      });
+
+      const req = new NextRequest("http://localhost:3000/api/v1/social/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaign_id: autoCamp.id }),
+      });
+
+      const res = await PostsRoute.POST(req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.data.status).toBe("scheduled");
+      expect(json.data.image_url).toBeTruthy();
+      expect(json.data.external_url).toBeNull();
     });
   });
 
@@ -252,7 +285,9 @@ describe("Phase 5: Social Media Auto Post (Facebook, Instagram, LinkedIn)", () =
       expect(json.success).toBe(true);
       expect(json.data.status).toBe("published");
       expect(json.data.external_post_id).toBeTruthy();
-      expect(json.data.external_url).toBeTruthy();
+      expect(json.data.external_url).toContain("facebook.com");
+      expect(json.data.image_url).toBeTruthy();
+      expect(json.data.image_url).not.toBe(json.data.external_url);
     });
   });
 

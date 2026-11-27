@@ -186,7 +186,10 @@ export function startSocialPublishWorker() {
         let fullCaption = postRun.caption || "";
         let hashtags = postRun.hashtags || [];
         let imagePrompt = postRun.image_prompt || "";
-        let imageUrl = postRun.external_url || undefined;
+        let imageUrl =
+          postRun.image_url ||
+          (postRun.status !== "published" && !postRun.external_post_id ? postRun.external_url : null) ||
+          undefined;
 
         // 1. Generate post content if not already generated
         if (!fullCaption) {
@@ -244,7 +247,7 @@ export function startSocialPublishWorker() {
               caption: fullCaption,
               hashtags,
               image_prompt: imagePrompt,
-              external_url: imageUrl,
+              image_url: imageUrl ?? null,
             },
           });
           logger.info({ postRunId }, "Post generated and queued for user approval");
@@ -286,8 +289,9 @@ export function startSocialPublishWorker() {
             caption: fullCaption,
             hashtags,
             image_prompt: imagePrompt,
+            image_url: imageUrl ?? postRun.image_url ?? null,
             external_post_id: result.externalId,
-            external_url: result.url || imageUrl,
+            external_url: result.url || null,
             finished_at: new Date(),
           },
         });

@@ -17,10 +17,20 @@ import { Button } from "@/components/ui/button";
 interface PostRun {
   id: string;
   campaign_id: string;
-  status: "scheduled" | "pending_approval" | "published" | "failed" | "rejected" | "needs_review";
+  status:
+    | "scheduled"
+    | "generating"
+    | "pending_approval"
+    | "publishing"
+    | "published"
+    | "failed"
+    | "skipped"
+    | "needs_review"
+    | "rejected";
   caption?: string;
   hashtags?: string[];
-  external_url?: string;
+  image_url?: string | null;
+  external_url?: string | null;
   external_post_id?: string;
   error_message?: string;
   created_at: string;
@@ -148,6 +158,7 @@ export function PostHistoryManager() {
         <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto">
           {[
             { id: "all", label: "All Posts" },
+            { id: "scheduled", label: "Scheduled" },
             { id: "pending_approval", label: "Pending Approval" },
             { id: "needs_review", label: "⚠ Needs Review" },
             { id: "published", label: "Published" },
@@ -246,10 +257,10 @@ export function PostHistoryManager() {
               >
                 {/* Left Side: Details & Preview */}
                 <div className="flex flex-col sm:flex-row items-start gap-4 flex-1 min-w-0">
-                  {p.external_url && (
+                  {p.image_url && (
                     <div className="w-20 h-20 rounded-lg overflow-hidden shrink-0 border border-border bg-bgSubtle relative">
                       <img
-                        src={p.external_url}
+                        src={p.image_url}
                         alt="Post Visual"
                         className="w-full h-full object-cover"
                       />
@@ -265,6 +276,14 @@ export function PostHistoryManager() {
                       {p.status === "published" ? (
                         <Badge variant="success" size="sm" className="flex items-center gap-1">
                           <CheckCircle2 size={11} /> Published
+                        </Badge>
+                      ) : p.status === "scheduled" ? (
+                        <Badge variant="accent" size="sm" className="flex items-center gap-1">
+                          <Clock size={11} /> Scheduled
+                        </Badge>
+                      ) : p.status === "generating" || p.status === "publishing" ? (
+                        <Badge variant="accent" size="sm" className="flex items-center gap-1">
+                          <RefreshCw size={11} className="animate-spin" /> {p.status === "generating" ? "Generating" : "Publishing"}
                         </Badge>
                       ) : p.status === "failed" ? (
                         <Badge variant="danger" size="sm" className="flex items-center gap-1">
@@ -335,7 +354,7 @@ export function PostHistoryManager() {
                         {reschedulingId === p.id ? "Rescheduling..." : "Reschedule / Approve"}
                       </Button>
                     </>
-                  ) : p.status === "pending_approval" || p.status === "failed" ? (
+                  ) : p.status === "pending_approval" || p.status === "scheduled" || p.status === "failed" ? (
                     <>
                       <Button
                         variant="secondary"
@@ -351,7 +370,13 @@ export function PostHistoryManager() {
                         disabled={publishingId === p.id}
                         icon={<Send size={13} className={publishingId === p.id ? "animate-pulse" : ""} />}
                       >
-                        {publishingId === p.id ? "Publishing..." : p.status === "failed" ? "Retry Publish" : "Approve & Post"}
+                        {publishingId === p.id
+                          ? "Publishing..."
+                          : p.status === "failed"
+                            ? "Retry Publish"
+                            : p.status === "scheduled"
+                              ? "Publish Now"
+                              : "Approve & Post"}
                       </Button>
                     </>
                   ) : p.status === "published" ? (

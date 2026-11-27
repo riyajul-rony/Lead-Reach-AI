@@ -102,18 +102,23 @@ export async function POST(
   try {
     const provider = getSocialProvider(providerId);
     const fullCaption = `${postRun.caption || ""}\n\n${(postRun.hashtags || []).join(" ")}`.trim();
+    const resolvedImageUrl =
+      postRun.image_url ||
+      (postRun.status !== "published" && !postRun.external_post_id ? postRun.external_url : null) ||
+      undefined;
 
     const publishResult = await provider.publish(token, externalId, {
       caption: fullCaption,
-      imageUrl: postRun.external_url || undefined,
+      imageUrl: resolvedImageUrl,
     });
 
     const updated = await db.post_runs.update({
       where: scoped(session.user.id, { id }),
       data: {
         status: "published",
+        image_url: resolvedImageUrl || null,
         external_post_id: publishResult.externalId,
-        external_url: publishResult.url || postRun.external_url,
+        external_url: publishResult.url || null,
         approved_at: new Date(),
         finished_at: new Date(),
       },
