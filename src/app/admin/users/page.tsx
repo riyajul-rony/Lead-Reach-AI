@@ -1,6 +1,7 @@
 import { requirePermission } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { UsersTable, UserRow } from "./users-table";
+import { resolveAdminUsersSort } from "./sort";
 import { Users, UserCheck, UserX, AlertTriangle } from "lucide-react";
 import { StatCard } from "@/components/admin/stat-card";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +29,7 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
   const search = (sp.search || "").trim();
   const status = sp.status || "all";
   const role = sp.role || "all";
-  const sort = sp.sort || "created_at";
+  const sort = resolveAdminUsersSort(sp.sort);
   const order = sp.order === "asc" ? "asc" : "desc";
   const page = Math.max(1, parseInt(sp.page || "1", 10) || 1);
   const pageSize = 25;
