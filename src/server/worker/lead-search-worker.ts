@@ -24,18 +24,115 @@ async function isSearchCancelled(searchId: string): Promise<boolean> {
   return record?.status === "cancelled";
 }
 
+const DEFAULT_STUCK_SEARCH_MINUTES = 30;
+
+function getStuckSearchMinutes(): number {
+  const raw = Number(process.env.STUCK_LEAD_SEARCH_MINUTES);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_STUCK_SEARCH_MINUTES;
+}
+
+/**
+ * Recovers lead searches left stuck in 'running' or 'enriching' beyond the stale threshold
+ * (e.g., after a worker crash) so they never remain stuck indefinitely.
+ */
+export async function recoverStuckLeadSearches(now: Date = new Date()): Promise<number> {
+  const stuckMinutes = getStuckSearchMinutes();
+  const staleCutoff = new Date(now.getTime() - stuckMinutes * 60 * 1000);
+
+  try {
+    const res = await db.lead_searches.updateMany({
+      where: {
+        status: { in: ["running", "enriching"] },
+        started_at: { lt: staleCutoff },
+      },
+      data: {
+        status: "failed",
+        progress_pct: 100,
+        current_step: `Timed out after ${stuckMinutes} minutes`,
+        error: `Lead search stayed in progress for over ${stuckMinutes} minutes without completing (worker crash or timeout). Please retry.`,
+        finished_at: now,
+      },
+    });
+    if (res.count > 0) {
+      logger.warn(
+        { count: res.count, stuckMinutes, staleCutoff: staleCutoff.toISOString() },
+        "Recovered stuck lead searches"
+      );
+    }
+    return res.count;
+  } catch (err) {
+    logger.error({ err }, "Failed to recover stuck lead searches");
+    return 0;
+  }
+}
+
 /**
  * Core search execution engine for Apify lead generation:
  * handles Google Maps, Meta Ads, and B2B Leads scraping,
  * deduplication, deep website enrichment, progress updates, and graceful cancellation.
  */
-export async function executeLeadSearch(searchId: string): Promise<void> {
+export async function executeLeadSearch(
+  searchId: string,
+  opts?: { allowRetryReclaim?: boolean; willRetry?: boolean }
+): Promise<void> {
+  const now = new Date();
+  const stuckMinutes = getStuckSearchMinutes();
+  const staleCutoff = new Date(now.getTime() - stuckMinutes * 60 * 1000);
+
+  // Atomically claim queued search ('queued' -> 'running') so concurrent triggers never execute twice
+  let claimed = await db.lead_searches.updateMany({
+    where: { id: searchId, status: "queued" },
+    data: {
+      status: "running",
+      progress_pct: 10,
+      current_step: "Verifying lead search engine...",
+      started_at: now,
+      error: null,
+    },
+  });
+
+  if (!claimed || claimed.count === 0) {
+    // Allow reclaim ONLY for BullMQ stalled/retried jobs or searches stuck past the stale threshold
+    if (opts?.allowRetryReclaim) {
+      claimed = await db.lead_searches.updateMany({
+        where: { id: searchId, status: { in: ["running", "enriching"] } },
+        data: {
+          status: "running",
+          progress_pct: 10,
+          current_step: "Resuming retried lead search...",
+          started_at: now,
+          error: null,
+        },
+      });
+    } else {
+      claimed = await db.lead_searches.updateMany({
+        where: {
+          id: searchId,
+          status: { in: ["running", "enriching"] },
+          started_at: { lt: staleCutoff },
+        },
+        data: {
+          status: "running",
+          progress_pct: 10,
+          current_step: "Recovering stalled lead search...",
+          started_at: now,
+          error: null,
+        },
+      });
+    }
+  }
+
+  if (!claimed || claimed.count === 0) {
+    logger.info({ searchId }, "Lead search already claimed, completed, or cancelled; skipping duplicate execution");
+    return;
+  }
+
   const searchRecord = await db.lead_searches.findUnique({
     where: { id: searchId },
   });
 
   if (!searchRecord) {
-    logger.warn({ searchId }, "Lead search record not found for execution");
+    logger.warn({ searchId }, "Lead search record not found after claim");
     return;
   }
 
@@ -74,17 +171,7 @@ export async function executeLeadSearch(searchId: string): Promise<void> {
   const findEmails = source === "google_maps" ? Boolean(params.find_emails ?? params.findEmails ?? true) : false;
 
   try {
-    // Step 1: Initialize (10%)
-    await db.lead_searches.update({
-      where: { id: searchId },
-      data: {
-        status: "running",
-        progress_pct: 10,
-        current_step: "Verifying lead search engine...",
-        started_at: new Date(),
-      },
-    });
-
+    // Step 1: Verify provider configuration (status already claimed atomically as 'running')
     const configured = await isApifyConfigured();
     if (!configured) {
       throw new Error(
@@ -429,7 +516,14 @@ export async function executeLeadSearch(searchId: string): Promise<void> {
     }
 
     if (savedLeads.length > 0) {
-      trackUsageIncrement(userId, "monthly_leads", savedLeads.length).catch(() => {});
+      try {
+        await trackUsageIncrement(userId, "monthly_leads", savedLeads.length);
+      } catch (usageErr) {
+        logger.error(
+          { err: usageErr, userId, searchId, count: savedLeads.length },
+          "Failed to increment monthly_leads usage counter"
+        );
+      }
     }
 
     // Step 6: Final Completion (100%)
@@ -449,6 +543,19 @@ export async function executeLeadSearch(searchId: string): Promise<void> {
   } catch (err: any) {
     logger.error({ err, searchId }, "Lead search job failed");
     const userSafeError = sanitizeUserFacingLeadError(err?.message);
+    if (opts?.willRetry) {
+      await db.lead_searches.update({
+        where: { id: searchId },
+        data: {
+          status: "queued",
+          current_step: "Retrying lead search after transient error...",
+          error: userSafeError,
+        },
+      }).catch((updateErr: unknown) => {
+        logger.error({ err: updateErr, searchId }, "Failed to reset lead search status for BullMQ retry");
+      });
+      throw err;
+    }
     await db.lead_searches.update({
       where: { id: searchId },
       data: {
@@ -489,7 +596,10 @@ export function startLeadSearchWorker() {
     async (job) => {
       const { searchId } = job.data;
       if (!searchId) return;
-      await executeLeadSearch(searchId);
+      const maxAttempts = job.opts?.attempts ?? 1;
+      const allowRetryReclaim = job.attemptsMade > 0;
+      const willRetry = job.attemptsMade + 1 < maxAttempts;
+      await executeLeadSearch(searchId, { allowRetryReclaim, willRetry });
     },
     {
       connection: getRedisConnection(),

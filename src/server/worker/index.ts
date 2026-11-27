@@ -17,6 +17,7 @@ import { cleanupOldLogs } from "@/server/logging/cleaner";
 import { incrementWarmupDayForActiveAccounts } from "@/server/email/account-service";
 import { evaluateDailyAccountHealth } from "@/server/email/adaptive-limit-service";
 import { runSelfWarmupTick } from "@/server/email/warmup-pool-service";
+import { recoverStuckLeadSearches } from "@/server/worker/lead-search-worker";
 
 /**
  * 1. PLANNER WORKER: runs every minute, computes scheduled runs from DB campaigns
@@ -98,6 +99,9 @@ export function startPlannerWorker() {
       } catch (err) {
         logger.error({ err }, "Failed to apply catch-up protection to overdue post runs");
       }
+
+      // Recover lead searches stuck in running/enriching beyond threshold
+      await recoverStuckLeadSearches(now);
 
       // Enqueue any runs that are currently due within the safe window (max 10 to prevent burst)
       try {

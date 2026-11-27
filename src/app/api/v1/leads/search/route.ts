@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
+import { logger } from "@/server/logger";
 import { assertLimit } from "@/server/billing/limits";
 import { queueLeadSearch } from "@/server/queues";
 import { executeLeadSearch } from "@/server/worker/lead-search-worker";
@@ -176,9 +177,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Unsupported lead source: ${source}` }, { status: 400 });
   }
 
-  // Enforce tenant monthly lead quota
+  // Enforce tenant monthly lead quota against the real requested amount
   try {
-    await assertLimit(session.user.id, "monthly_leads", 1);
+    await assertLimit(session.user.id, "monthly_leads", clampedMax);
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 429 });
   }
@@ -197,9 +198,20 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // Dispatch to BullMQ Queue & Trigger Async Execution
-  queueLeadSearch(searchRecord.id).catch(() => {});
-  executeLeadSearch(searchRecord.id).catch(() => {});
+  // Dispatch to BullMQ queue; fall back to direct execution ONLY if enqueueing fails
+  let enqueued = false;
+  try {
+    enqueued = await queueLeadSearch(searchRecord.id);
+  } catch (err) {
+    logger.warn({ err, searchId: searchRecord.id }, "Failed to enqueue lead search job; falling back to direct execution");
+    enqueued = false;
+  }
+
+  if (!enqueued) {
+    executeLeadSearch(searchRecord.id).catch((err) => {
+      logger.error({ err, searchId: searchRecord.id }, "Fallback direct lead search execution failed");
+    });
+  }
 
   return NextResponse.json({
     data: {

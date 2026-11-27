@@ -1200,6 +1200,27 @@ class LocalDevMockDb {
       const existing = localDevStore.findLeadSearch((s) => s.id === where.id);
       return localDevStore.saveLeadSearch({ ...existing, ...data });
     },
+    updateMany: async ({ where, data }: any = {}) => {
+      const items = localDevStore.getLeadSearches((s) => {
+        if (where?.id && s.id !== where.id) return false;
+        if (where?.user_id && s.user_id !== where.user_id) return false;
+        if (where?.status) {
+          if (where.status?.in && Array.isArray(where.status.in)) {
+            if (!where.status.in.includes(s.status)) return false;
+          } else if (s.status !== where.status) {
+            return false;
+          }
+        }
+        if (where?.started_at?.lt) {
+          if (!s.started_at || new Date(s.started_at) >= new Date(where.started_at.lt)) return false;
+        }
+        return true;
+      });
+      for (const item of items) {
+        localDevStore.saveLeadSearch({ ...item, ...data });
+      }
+      return { count: items.length };
+    },
     findMany: async ({ where, orderBy }: any = {}) => {
       const items = localDevStore.getLeadSearches((s) => !where?.user_id || s.user_id === where.user_id);
       return items;
