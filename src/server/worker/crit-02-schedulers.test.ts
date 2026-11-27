@@ -198,8 +198,8 @@ describe("CRIT-02: Repeatable Job Schedulers & Catch-Up Protection", () => {
     });
   });
 
-  describe("4. Catch-Up Protection for Queued Campaign Emails", () => {
-    it("marks queued recipients older than 24h as needs_review before dispatch", async () => {
+  describe("4. Multi-Day Campaign Queued Recipients & Stuck Sending Recovery", () => {
+    it("keeps normally queued recipients older than 24h running and only recovers stuck 'sending' recipients", async () => {
       process.env.STALE_THRESHOLD_HOURS = "24";
       const now = new Date();
       const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
@@ -207,9 +207,9 @@ describe("CRIT-02: Repeatable Job Schedulers & Catch-Up Protection", () => {
 
       const campaign = await db.outreach_campaigns.create({
         data: {
-          id: "camp-queued-stale",
-          user_id: "user-queued-stale",
-          name: "Queued Stale Test",
+          id: "camp-queued-multiday",
+          user_id: "user-queued-multiday",
+          name: "Multi-Day Campaign Test",
           status: "running",
           recipient_source: "manual",
           timezone: "UTC",
@@ -218,42 +218,51 @@ describe("CRIT-02: Repeatable Job Schedulers & Catch-Up Protection", () => {
         },
       });
 
-      const staleQueuedRec = await db.campaign_recipients.create({
+      const oldQueuedRec = await db.campaign_recipients.create({
         data: {
-          id: "rec-queued-stale",
+          id: "rec-queued-3days",
           campaign_id: campaign.id,
-          user_id: "user-queued-stale",
-          email: "stale_queued@target.com",
+          user_id: "user-queued-multiday",
+          email: "multiday_queued@target.com",
           status: "queued",
           created_at: threeDaysAgo,
-          unsubscribe_token: "tok_queued_stale_1234567890123",
+          unsubscribe_token: "tok_queued_3days_1234567890123",
         },
       });
 
-      const freshQueuedRec = await db.campaign_recipients.create({
+      const stuckSendingRec = await db.campaign_recipients.create({
         data: {
-          id: "rec-queued-fresh",
+          id: "rec-stuck-sending",
           campaign_id: campaign.id,
-          user_id: "user-queued-stale",
-          email: "fresh_queued@target.com",
-          status: "queued",
-          created_at: oneHourAgo,
-          unsubscribe_token: "tok_queued_fresh_1234567890123",
+          user_id: "user-queued-multiday",
+          email: "stuck_sending@target.com",
+          status: "sending",
+          sending_started_at: oneHourAgo,
+          created_at: threeDaysAgo,
+          unsubscribe_token: "tok_stuck_sending_123456789012",
         },
       });
 
-      await dispatchRunningCampaigns();
+      await dispatchRunningCampaigns(now);
 
-      const updatedStale = await db.campaign_recipients.findUnique({
-        where: { id: staleQueuedRec.id },
+      // Multi-day queued recipient must NOT be marked needs_review
+      const updatedQueued = await db.campaign_recipients.findUnique({
+        where: { id: oldQueuedRec.id },
       });
-      expect(updatedStale?.status).toBe("needs_review");
-      expect(updatedStale?.error).toContain("stale threshold");
+      expect(updatedQueued?.status).not.toBe("needs_review");
 
-      const updatedFresh = await db.campaign_recipients.findUnique({
-        where: { id: freshQueuedRec.id },
+      // Stuck 'sending' recipient (>15m) must be recovered to needs_review
+      const updatedStuck = await db.campaign_recipients.findUnique({
+        where: { id: stuckSendingRec.id },
       });
-      expect(updatedFresh?.status).not.toBe("needs_review");
+      expect(updatedStuck?.status).toBe("needs_review");
+      expect(updatedStuck?.error).toContain("needs_review");
+
+      // Campaign must remain running
+      const updatedCampaign = await db.outreach_campaigns.findUnique({
+        where: { id: campaign.id },
+      });
+      expect(updatedCampaign?.status).toBe("running");
     });
   });
 
