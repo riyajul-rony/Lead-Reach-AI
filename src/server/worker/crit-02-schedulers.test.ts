@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { areSchedulersEnabled, getStaleThresholdHours } from "@/server/env";
-import { registerRepeatableSchedulers, removeRepeatableSchedulers } from "@/server/queues";
+import { registerRepeatableSchedulers, removeRepeatableSchedulers, queueEmailSend } from "@/server/queues";
 import { db } from "@/server/db";
 import { dispatchDueFollowups } from "@/server/email/sequence-service";
 import { dispatchRunningCampaigns } from "@/server/email/sending-engine";
@@ -307,6 +307,20 @@ describe("CRIT-02: Repeatable Job Schedulers & Catch-Up Protection", () => {
         where: { id: freshPost.id },
       });
       expect(updatedFresh?.status).toBe("scheduled");
+    });
+  });
+
+  describe("6. Deterministic BullMQ jobId for Email Send", () => {
+    it("enqueues send jobs with deterministic jobId per recipient and step to avoid duplicate jobs", async () => {
+      mockAdd.mockClear();
+      await queueEmailSend("rec-det-1", 5000, 0);
+      await queueEmailSend("rec-det-1", 7000, 0);
+      await queueEmailSend("rec-det-1", 1000, 1);
+
+      expect(mockAdd).toHaveBeenCalledTimes(3);
+      expect(mockAdd.mock.calls[0][2]?.jobId).toBe("send_rec-det-1_step_0");
+      expect(mockAdd.mock.calls[1][2]?.jobId).toBe("send_rec-det-1_step_0");
+      expect(mockAdd.mock.calls[2][2]?.jobId).toBe("send_rec-det-1_step_1");
     });
   });
 });

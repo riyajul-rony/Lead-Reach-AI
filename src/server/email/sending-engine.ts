@@ -513,6 +513,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
 
   // Never resend initial email if recipient already has sent metadata
   if (currentStep === 0 && (recipient.sent_at || recipient.last_sent_at || recipient.thread_message_id)) {
+    await releaseAccountDailyCapacity(reservedSlot);
     await db.campaign_recipients.update({
       where: { id: recipient.id },
       data: { status: "sent" },
@@ -532,6 +533,7 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       },
     });
     if (alreadySentStep) {
+      await releaseAccountDailyCapacity(reservedSlot);
       await db.campaign_recipients.update({
         where: { id: recipient.id },
         data: { status: "sent" },
@@ -1100,7 +1102,7 @@ export async function dispatchRunningCampaigns(
         perAccountNextSlotMs.set(accountKey, totalDelayMs + jitterSec * 1000);
 
         // Queue in BullMQ if available
-        const enqueued = await queueEmailSend(rec.id, totalDelayMs);
+        const enqueued = await queueEmailSend(rec.id, totalDelayMs, rec.current_step ?? 0);
         if (enqueued) {
           totalScheduled++;
         } else {

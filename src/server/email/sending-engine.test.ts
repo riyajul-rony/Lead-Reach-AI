@@ -526,5 +526,57 @@ describe("Phase 5: Sending Engine & BullMQ Scheduler", () => {
       expect(bodies.html).toBeUndefined();
       expect(bodies.text).toBe("Hello John,\n\nChecking in.");
     });
+
+    it("releases reserved daily capacity when sendSingleRecipientEmail skips an already-sent recipient", async () => {
+      const { getAccountDailyCapacitySnapshot } = await import("./daily-capacity");
+      const uid = `u-cap-rel-${Date.now()}`;
+      const acc = await db.email_accounts.create({
+        data: {
+          id: `acc-cap-rel-${Date.now()}`,
+          user_id: uid,
+          provider: "smtp",
+          label: "Cap Release",
+          from_email: `cap-${Date.now()}@domain.com`,
+          status: "active",
+          smtp_host: "smtp.domain.com",
+          smtp_port: 587,
+          smtp_username: "cap@domain.com",
+          smtp_password_enc: "enc",
+          hourly_limit: 25,
+          daily_limit: 50,
+          user_daily_limit: 5,
+        },
+      });
+      const camp = await db.outreach_campaigns.create({
+        data: {
+          id: `camp-cap-rel-${Date.now()}`,
+          user_id: uid,
+          name: "Cap Release Campaign",
+          status: "running",
+          recipient_source: "manual",
+          subject_template: "Hi",
+          body_template: "Body",
+        },
+      });
+      const rec = await db.campaign_recipients.create({
+        data: {
+          id: `rec-cap-rel-${Date.now()}`,
+          campaign_id: camp.id,
+          user_id: uid,
+          email: "lead@target.com",
+          status: "queued",
+          assigned_account_id: acc.id,
+          current_step: 0,
+          sent_at: new Date(), // Already sent -> early return
+          unsubscribe_token: `tok_cap_${Date.now()}`,
+        },
+      });
+
+      const res = await sendSingleRecipientEmail(rec.id);
+      expect(res.skipped).toBe(true);
+
+      const snapshotAfter = await getAccountDailyCapacitySnapshot(acc);
+      expect(snapshotAfter.reservedInFlight).toBe(0);
+    });
   });
 });

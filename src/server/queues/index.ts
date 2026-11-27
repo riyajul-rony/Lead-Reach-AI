@@ -131,14 +131,18 @@ export function getEmailSendQueue(): Queue {
   return emailSendQueue;
 }
 
-export async function queueEmailSend(recipientId: string, delayMs = 0): Promise<boolean> {
+export async function queueEmailSend(
+  recipientId: string,
+  delayMs = 0,
+  stepNo = 0
+): Promise<boolean> {
   try {
     const queue = getEmailSendQueue();
     await queue.add(
       "send",
-      { recipientId },
+      { recipientId, stepNo },
       {
-        jobId: `send_${recipientId}_${Date.now()}`,
+        jobId: `send_${recipientId}_step_${stepNo}`,
         delay: delayMs,
         attempts: 3,
         backoff: { type: "exponential", delay: 10000 },
@@ -146,7 +150,7 @@ export async function queueEmailSend(recipientId: string, delayMs = 0): Promise<
     );
     return true;
   } catch (err) {
-    logger.warn({ err, recipientId }, "Failed to enqueue email send job to Redis BullMQ");
+    logger.warn({ err, recipientId, stepNo }, "Failed to enqueue email send job to Redis BullMQ");
     return false;
   }
 }
