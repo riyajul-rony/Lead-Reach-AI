@@ -1,7 +1,7 @@
 import { requirePermission } from "@/server/auth/guards";
 import { db } from "@/server/db";
-import { getRedisConnection } from "@/server/queues";
-import { CheckCircle2, XCircle, ShieldCheck, Database, Server } from "lucide-react";
+import { getWorkerSchedulerStatus } from "@/server/worker/status";
+import { AlertTriangle, CheckCircle2, XCircle, ShieldCheck, Database, Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 export const metadata = {
@@ -22,16 +22,11 @@ async function checkDbHealth() {
 export default async function AdminHealthPage() {
   await requirePermission("logs.read");
 
-  const { ok: dbOk, latency: dbLatency } = await checkDbHealth();
-
-  let redisOk = false;
-  try {
-    const redis = getRedisConnection();
-    const pong = await redis.ping();
-    redisOk = pong === "PONG";
-  } catch {
-    redisOk = false;
-  }
+  const [{ ok: dbOk, latency: dbLatency }, workerStatus] = await Promise.all([
+    checkDbHealth(),
+    getWorkerSchedulerStatus(),
+  ]);
+  const redisOk = workerStatus.redisOk;
 
   const [userCount, postRunCount, campaignCount] = await Promise.all([
     db.users.count().catch(() => 0),
@@ -50,6 +45,19 @@ export default async function AdminHealthPage() {
           <p className="text-xs sm:text-sm text-muted">Admin panel monitoring services, databases, and queues.</p>
         </div>
       </div>
+
+      {workerStatus.warningMessage && (
+        <div
+          role="alert"
+          className="rounded-xl p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 flex items-start gap-3 text-xs text-amber-800 dark:text-amber-200"
+        >
+          <AlertTriangle size={18} className="shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+          <div>
+            <div className="font-semibold">Background Worker / Scheduler Warning</div>
+            <div className="mt-0.5">{workerStatus.warningMessage}</div>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="rounded-xl border border-border bg-surface p-6 space-y-3">

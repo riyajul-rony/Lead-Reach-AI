@@ -77,10 +77,12 @@ export function WarmupDashboardClient({
   initialAccounts,
   initialLogs,
   initialError = null,
+  workerWarning = null,
 }: {
   initialAccounts: WarmupAccountItem[];
   initialLogs: WarmupLogsPayload;
   initialError?: string | null;
+  workerWarning?: string | null;
 }) {
   const [accounts, setAccounts] = useState<WarmupAccountItem[]>(initialAccounts);
   const [logsData, setLogsData] = useState<WarmupLogsPayload>(initialLogs);
@@ -301,6 +303,20 @@ export function WarmupDashboardClient({
           </div>
         }
       />
+
+      {/* Worker / Scheduler Warning Banner */}
+      {workerWarning && (
+        <div
+          role="alert"
+          className="rounded-xl p-4 bg-amber-500/10 border border-amber-500/30 flex items-start gap-3 text-xs text-amber-700 dark:text-amber-300"
+        >
+          <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-500" />
+          <div>
+            <div className="font-semibold">Warm-up Schedulers Not Active</div>
+            <div className="mt-0.5">{workerWarning}</div>
+          </div>
+        </div>
+      )}
 
       {/* Readiness & Private Pool Overview Card */}
       <div className="glass rounded-xl p-5 border border-border space-y-4">

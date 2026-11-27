@@ -76,6 +76,7 @@ services:
     environment:
       <<: *app_env
       SERVICE_ROLE: worker
+      SCHEDULERS_ENABLED: ${SCHEDULERS_ENABLED:-true}
     volumes:
       - appdata:/data
     networks:

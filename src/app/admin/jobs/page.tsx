@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { requirePermission } from "@/server/auth/guards";
 import { getAllQueuesOverview, getFailedJobs } from "@/server/queues/manager";
+import { getWorkerSchedulerStatus } from "@/server/worker/status";
 import { StatCard } from "@/components/admin/stat-card";
 import { Button } from "@/components/ui/button";
 import { QueueCard } from "./queue-card";
@@ -35,8 +36,11 @@ export default async function AdminJobsPage({ searchParams }: AdminJobsPageProps
   const resolvedParams = await searchParams;
   const selectedQueue = resolvedParams.queue?.trim() || "";
 
-  const { queues, redisOnline } = await getAllQueuesOverview();
-  const failedJobs = await getFailedJobs(selectedQueue || undefined, 50);
+  const [{ queues, redisOnline }, failedJobs, workerStatus] = await Promise.all([
+    getAllQueuesOverview(),
+    getFailedJobs(selectedQueue || undefined, 50),
+    getWorkerSchedulerStatus(),
+  ]);
 
   // Totals across all queues
   const totalWaiting = queues.reduce((acc, q) => acc + q.waiting, 0);
@@ -84,6 +88,19 @@ export default async function AdminJobsPage({ searchParams }: AdminJobsPageProps
             <div className="text-muted mt-0.5">
               Lead Reach AI is operating with internal fallback workers. Connect a live Redis instance to view production job streams.
             </div>
+          </div>
+        </div>
+      )}
+
+      {redisOnline && workerStatus.warningMessage && (
+        <div
+          role="alert"
+          className="rounded-xl p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 flex items-start gap-3 text-xs text-amber-800 dark:text-amber-200"
+        >
+          <AlertCircle size={18} className="shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+          <div>
+            <div className="font-semibold">Background Worker / Scheduler Warning</div>
+            <div className="mt-0.5">{workerStatus.warningMessage}</div>
           </div>
         </div>
       )}

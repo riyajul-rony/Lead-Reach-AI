@@ -1,6 +1,7 @@
 import { requireUser } from "@/server/auth/guards";
 import { listEmailAccounts } from "@/server/email/account-service";
 import { listUserWarmupLogs } from "@/server/email/warmup-pool-service";
+import { getWorkerSchedulerStatus } from "@/server/worker/status";
 import { WarmupDashboardClient } from "./warmup-dashboard-client";
 
 export const metadata = {
@@ -27,14 +28,17 @@ export default async function WarmupPage() {
     },
   };
   let initialError: string | null = null;
+  let workerWarning: string | null = null;
 
   try {
-    const [accounts, logsData] = await Promise.all([
+    const [accounts, logsData, workerStatus] = await Promise.all([
       listEmailAccounts(user.id),
       listUserWarmupLogs(user.id, { page: 1, limit: 15 }),
+      getWorkerSchedulerStatus(),
     ]);
     initialAccounts = accounts || [];
     if (logsData) initialLogs = logsData;
+    workerWarning = workerStatus.warningMessage;
   } catch (err: any) {
     initialError = err?.message || "Failed to load warm-up dashboard data.";
   }
@@ -45,6 +49,7 @@ export default async function WarmupPage() {
         initialAccounts={initialAccounts}
         initialLogs={initialLogs}
         initialError={initialError}
+        workerWarning={workerWarning}
       />
     </div>
   );
