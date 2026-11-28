@@ -46,11 +46,36 @@ export const Dropdown: React.FC<DropdownProps> = ({
     };
   }, [open]);
 
+  const isNativeOrUiButton =
+    React.isValidElement(trigger) &&
+    (trigger.type === "button" ||
+      (trigger.type as { displayName?: string })?.displayName === "Button");
+
+  const renderedTrigger = isNativeOrUiButton ? (
+    React.cloneElement(trigger as React.ReactElement<Record<string, unknown>>, {
+      "aria-haspopup": "menu",
+      "aria-expanded": open,
+      onClick: (e: React.MouseEvent) => {
+        const prevClick = (trigger.props as { onClick?: (ev: React.MouseEvent) => void })?.onClick;
+        if (typeof prevClick === "function") prevClick(e);
+        setOpen((prev) => !prev);
+      },
+    })
+  ) : (
+    <button
+      type="button"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      onClick={() => setOpen((prev) => !prev)}
+      className="inline-flex items-center cursor-pointer bg-transparent border-0 p-0 text-inherit"
+    >
+      {trigger}
+    </button>
+  );
+
   return (
     <div ref={containerRef} className={`relative inline-block ${className}`}>
-      <div onClick={() => setOpen((prev) => !prev)} className="cursor-pointer">
-        {trigger}
-      </div>
+      {renderedTrigger}
 
       {open ? (
         <div
@@ -62,6 +87,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
           {items.map((item) => (
             <button
               key={item.id}
+              type="button"
               role="menuitem"
               disabled={item.disabled}
               onClick={() => {
