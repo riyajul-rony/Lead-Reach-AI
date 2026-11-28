@@ -11,20 +11,6 @@ import {
   cleanFieldValue,
 } from "@/server/providers/leads/export-helpers";
 
-function formatField(val: any): string {
-  if (Array.isArray(val)) {
-    if (val.length === 0) return "Not Available";
-    const cleaned = val
-      .map((item) => String(item).replace(/^\+/, "").trim())
-      .filter((item) => item && item !== "Not Available" && item !== "—");
-    return cleaned.length > 0 ? cleaned.join("; ") : "Not Available";
-  }
-  if (!val || String(val).trim() === "" || String(val).trim() === "#ERROR!" || String(val).trim() === "—") {
-    return "Not Available";
-  }
-  return String(val).replace(/^\+/, "").trim();
-}
-
 export async function POST(req: NextRequest) {
   const session = await getSessionUser();
 

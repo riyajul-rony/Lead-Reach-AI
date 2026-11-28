@@ -28,25 +28,66 @@ export const metadata = {
   description: "Monitor tenant resource consumption, quotas, and quota alerts.",
 };
 
-function generateTimelineData(
-  totalLeads: number,
-  totalPosts: number,
-  totalEmails: number
-): TimelineDataPoint[] {
+async function getRealUsageTimeline(selectedPeriod: string, now: Date): Promise<TimelineDataPoint[]> {
+  // Determine a 7-day UTC window within the selected YYYY-MM period
+  const [yearStr, monthStr] = selectedPeriod.split("-");
+  const year = Number(yearStr);
+  const monthIdx = Number(monthStr) - 1;
+  const isValidPeriod = Number.isInteger(year) && Number.isInteger(monthIdx) && monthIdx >= 0 && monthIdx <= 11;
+
+  const periodEnd = isValidPeriod
+    ? new Date(Date.UTC(year, monthIdx + 1, 0, 23, 59, 59, 999))
+    : now;
+  const windowEnd = periodEnd.getTime() > now.getTime() ? now : periodEnd;
+  const endDayUtc = new Date(Date.UTC(windowEnd.getUTCFullYear(), windowEnd.getUTCMonth(), windowEnd.getUTCDate(), 23, 59, 59, 999));
+  const startDayUtc = new Date(Date.UTC(windowEnd.getUTCFullYear(), windowEnd.getUTCMonth(), windowEnd.getUTCDate() - 6, 0, 0, 0, 0));
+
+  const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+  const leadCounts = new Map<string, number>();
+  const postCounts = new Map<string, number>();
+  const emailCounts = new Map<string, number>();
+
+  if (typeof (db as any).$queryRaw === "function") {
+    const [leadRows, postRows, emailRows] = await Promise.all([
+      db.$queryRaw<Array<{ day: Date; count: bigint | number }>>`
+        SELECT DATE_TRUNC('day', collected_at AT TIME ZONE 'UTC') AS day, COUNT(*)::bigint AS count
+        FROM leads
+        WHERE collected_at >= ${startDayUtc} AND collected_at <= ${endDayUtc}
+        GROUP BY 1
+      `.catch(() => []),
+      db.$queryRaw<Array<{ day: Date; count: bigint | number }>>`
+        SELECT DATE_TRUNC('day', COALESCE(finished_at, created_at) AT TIME ZONE 'UTC') AS day, COUNT(*)::bigint AS count
+        FROM post_runs
+        WHERE status::text = 'published'
+          AND COALESCE(finished_at, created_at) >= ${startDayUtc}
+          AND COALESCE(finished_at, created_at) <= ${endDayUtc}
+        GROUP BY 1
+      `.catch(() => []),
+      db.$queryRaw<Array<{ day: Date; count: bigint | number }>>`
+        SELECT DATE_TRUNC('day', COALESCE(sent_at, created_at) AT TIME ZONE 'UTC') AS day, COUNT(*)::bigint AS count
+        FROM email_messages
+        WHERE direction::text = 'outbound'
+          AND status::text = 'sent'
+          AND COALESCE(sent_at, created_at) >= ${startDayUtc}
+          AND COALESCE(sent_at, created_at) <= ${endDayUtc}
+        GROUP BY 1
+      `.catch(() => []),
+    ]);
+
+    for (const r of leadRows) leadCounts.set(dayKey(new Date(r.day)), Number(r.count || 0));
+    for (const r of postRows) postCounts.set(dayKey(new Date(r.day)), Number(r.count || 0));
+    for (const r of emailRows) emailCounts.set(dayKey(new Date(r.day)), Number(r.count || 0));
+  }
+
   const timeline: TimelineDataPoint[] = [];
-  const daysInMonth = 7;
-  const currentTs = Date.now();
-  for (let i = daysInMonth - 1; i >= 0; i--) {
-    const dayDate = new Date(currentTs - i * 24 * 60 * 60 * 1000);
-    const dayLabel = dayDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    const leadsSlice = Math.round((totalLeads / daysInMonth) * (0.8 + (i % 3) * 0.2));
-    const postsSlice = Math.round((totalPosts / daysInMonth) * (0.7 + (i % 2) * 0.3));
-    const emailsSlice = Math.round((totalEmails / daysInMonth) * (0.9 + (i % 4) * 0.1));
+  for (let i = 0; i < 7; i++) {
+    const dayDate = new Date(startDayUtc.getTime() + i * 24 * 60 * 60 * 1000);
+    const key = dayKey(dayDate);
     timeline.push({
-      label: dayLabel,
-      leads: leadsSlice,
-      posts: postsSlice,
-      emails: emailsSlice,
+      label: dayDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }),
+      leads: leadCounts.get(key) || 0,
+      posts: postCounts.get(key) || 0,
+      emails: emailCounts.get(key) || 0,
     });
   }
   return timeline;
@@ -155,8 +196,8 @@ export default async function AdminUsagePage({ searchParams }: AdminUsagePagePro
     topUserNameMap.set(u.id, String(u.name || u.email || u.id));
   }
 
-  // Build Timeline (e.g. last 7 days of the period)
-  const timeline = generateTimelineData(totalPeriodLeads, totalPeriodPosts, totalPeriodEmails);
+  // Build real 7-day daily activity timeline from PostgreSQL
+  const timeline = await getRealUsageTimeline(selectedPeriod, now);
 
   // Build query for users list
   const userWhere: any = {};

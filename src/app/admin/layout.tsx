@@ -4,7 +4,7 @@ import { Shield } from "lucide-react";
 import { requireAdmin } from "@/server/auth/guards";
 import { hasPermission, AdminPermission, ROLE_LABELS } from "@/server/auth/permissions";
 import { getSiteBranding } from "@/server/branding";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { AdminSidebar, AdminNavItem } from "@/components/admin/admin-sidebar";
 import { Button } from "@/components/ui/button";
 

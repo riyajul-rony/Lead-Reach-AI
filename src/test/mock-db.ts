@@ -1,4 +1,4 @@
-import { localDevStore, ensureDevAdminUser } from "./local-store";
+import { localDevStore } from "./local-store";
 
 // In-memory demo store for when PostgreSQL is not running locally
 class LocalDevMockDb {
@@ -228,7 +228,6 @@ class LocalDevMockDb {
 
   users = {
     findMany: async ({ where, take, skip, orderBy }: any = {}) => {
-      await ensureDevAdminUser();
       let items = localDevStore.getUsers((u) => {
         if (where?.id) {
           if (where.id.in && Array.isArray(where.id.in)) {
@@ -284,11 +283,9 @@ class LocalDevMockDb {
       return items;
     },
     findUnique: async ({ where }: any = {}) => {
-      await ensureDevAdminUser();
       return localDevStore.findUser((u) => (where?.id && u.id === where.id) || (where?.email && u.email?.toLowerCase() === where.email?.toLowerCase()));
     },
     findFirst: async ({ where }: any = {}) => {
-      await ensureDevAdminUser();
       return localDevStore.findUser((u) => (where?.id && u.id === where.id) || (where?.email && u.email?.toLowerCase() === where.email?.toLowerCase()));
     },
     create: async ({ data }: any) => localDevStore.saveUser(data),
@@ -303,7 +300,6 @@ class LocalDevMockDb {
       return { count: 0 };
     },
     count: async ({ where }: any = {}) => {
-      await ensureDevAdminUser();
       return localDevStore.getUsers((u) => {
         if (where?.role) {
           if (where.role.in && Array.isArray(where.role.in)) {

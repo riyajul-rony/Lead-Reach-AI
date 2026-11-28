@@ -24,10 +24,6 @@ export async function POST(
 
   const plaintextKey = decrypt(keyRecord.key_enc);
   const testRes = await testOpenAiKey(plaintextKey);
-  const updatedMetadata: Record<string, any> =
-    typeof keyRecord.metadata === "object" && keyRecord.metadata !== null
-      ? (keyRecord.metadata as Record<string, any>)
-      : {};
 
   const updated = await db.api_keys.update({
     where: { id: keyRecord.id },
@@ -35,7 +31,6 @@ export async function POST(
       last_tested_at: new Date(),
       last_test_ok: testRes.ok,
       status: testRes.ok ? "active" : "invalid",
-      metadata: updatedMetadata,
     },
     select: {
       id: true,

@@ -24,7 +24,6 @@ export default async function UnsubscribePage({
   });
 
   const email = recipient?.email;
-  let alreadyUnsubscribed = false;
 
   if (recipient) {
     // 1. Mark recipient status as unsubscribed and cancel any scheduled followups
@@ -50,8 +49,6 @@ export default async function UnsubscribePage({
           source_campaign_id: recipient.campaign_id,
         },
       });
-    } else {
-      alreadyUnsubscribed = true;
     }
   }
 

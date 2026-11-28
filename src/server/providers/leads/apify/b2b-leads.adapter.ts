@@ -370,15 +370,6 @@ export interface GroupedCompanyLead {
     profileUrl?: string;
     isVerifiedRole: boolean;
   }>;
-  decisionMakers?: Array<{
-    name: string;
-    title: string;
-    email?: string;
-    emailStatus?: string;
-    phone?: string;
-    profileUrl?: string;
-    isVerifiedRole: boolean;
-  }>;
 }
 
 /**
@@ -444,15 +435,11 @@ export function groupPersonLeadsByCompany(
         companySize: item.employees || item.company_size || item.size || item.employeeCount || fallback?.companySize || undefined,
         companyLinkedinUrl: companyLinkedin ? (companyLinkedin.startsWith("http") ? companyLinkedin : `https://${companyLinkedin}`) : undefined,
         decision_makers: dms,
-        decisionMakers: dms,
       });
     } else {
       const existing = groupedMap.get(groupKey)!;
       if (fullName && !existing.decision_makers.some((dm) => dm.name.toLowerCase() === fullName.toLowerCase())) {
         existing.decision_makers.push(dmRecord);
-        if (existing.decisionMakers && !existing.decisionMakers.includes(dmRecord)) {
-          existing.decisionMakers.push(dmRecord);
-        }
       }
     }
   }
