@@ -312,3 +312,69 @@ export async function getTrialExpiredUserIdsSet(now: Date = new Date()): Promise
   }
   return expiredSet;
 }
+
+/**
+ * Idempotent programmatic backfill for existing free-plan standard users without a subscription.
+ * Gives each eligible user a 14-day trial starting from `now` without touching paid users or staff.
+ */
+export async function backfillFreeUserTrials(now: Date = new Date()): Promise<{
+  createdCount: number;
+  skippedCount: number;
+}> {
+  const freePlan = await ensureFreePlanRecord();
+  if (!freePlan) {
+    return { createdCount: 0, skippedCount: 0 };
+  }
+
+  const freeUsers = await db.users
+    .findMany({
+      where: { role: "user", plan: "free" },
+      select: { id: true, role: true, plan: true, plan_id: true, trial_exempt: true },
+    })
+    .catch(() => []);
+
+  const endsAt = new Date(now.getTime() + 14 * DAY_MS);
+  let createdCount = 0;
+  let skippedCount = 0;
+
+  for (const u of freeUsers) {
+    if (!u || isAdminRole(u.role) || u.trial_exempt || (u.plan && u.plan !== "free")) {
+      skippedCount++;
+      continue;
+    }
+
+    const existingSub = await db.subscriptions
+      .findFirst({ where: { user_id: u.id } })
+      .catch(() => null);
+    if (existingSub) {
+      skippedCount++;
+      continue;
+    }
+
+    await db.subscriptions.create({
+      data: {
+        user_id: u.id,
+        plan_id: freePlan.id,
+        status: "trialing",
+        current_period_start: now,
+        current_period_end: endsAt,
+        cancel_at_period_end: false,
+        provider: "trial",
+        provider_subscription_id: `trial_${u.id}`,
+      },
+    });
+
+    if (!u.plan_id) {
+      await db.users
+        .update({
+          where: { id: u.id },
+          data: { plan_id: freePlan.id },
+        })
+        .catch(() => null);
+    }
+
+    createdCount++;
+  }
+
+  return { createdCount, skippedCount };
+}
