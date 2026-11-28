@@ -4,6 +4,7 @@ import { db } from "@/server/db";
 import { getRedisConnection } from "@/server/queues";
 import { getSessionUser } from "@/server/auth/session";
 import { hasPermission } from "@/server/auth/permissions";
+import { logger } from "@/server/logger";
 
 function safeCompareSecret(provided: string, expected: string): boolean {
   const a = Buffer.from(provided);
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
     dbOk = true;
     dbLatency = Date.now() - dbStart;
   } catch (err: any) {
-    console.error("[Healthcheck] PostgreSQL check failed:", err?.message || err);
+    logger.error({ err: err?.message || err }, "[Healthcheck] PostgreSQL check failed");
     dbOk = false;
   }
 
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
     const pong = await redis.ping();
     redisOk = pong === "PONG";
   } catch (err: any) {
-    console.error("[Healthcheck] Redis check failed:", err?.message || err);
+    logger.error({ err: err?.message || err }, "[Healthcheck] Redis check failed");
     redisOk = false;
   }
 
