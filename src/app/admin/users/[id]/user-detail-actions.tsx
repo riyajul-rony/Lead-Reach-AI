@@ -54,6 +54,9 @@ interface UserDetailActionsProps {
   isEmailVerified: boolean;
   isCurrentAdmin: boolean;
   isSuperAdmin?: boolean;
+  canManageUsers?: boolean;
+  canManagePlans?: boolean;
+  canManageStaff?: boolean;
   availablePlans?: PlanOption[];
   initialOverrides?: UserOverridesData | null;
 }
@@ -67,6 +70,9 @@ export function UserDetailActions({
   isEmailVerified,
   isCurrentAdmin,
   isSuperAdmin = false,
+  canManageUsers = false,
+  canManagePlans = false,
+  canManageStaff = false,
   availablePlans = [],
   initialOverrides,
 }: UserDetailActionsProps) {
@@ -199,156 +205,180 @@ export function UserDetailActions({
             <Shield size={14} className="text-brand" /> Administrative Controls &amp; Actions
           </h3>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Suspend / Activate Button */}
-            {currentStatus === "active" ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                id="user-suspend-btn"
-                disabled={isCurrentAdmin || loadingAction === "suspend"}
-                onClick={() => setShowSuspendDialog(true)}
-                title={isCurrentAdmin ? "You cannot suspend yourself" : "Suspend user and pause campaigns"}
-                className="text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
-              >
-                <UserX size={14} className="mr-1.5" /> Suspend User
-              </Button>
-            ) : (
-              <Button
-                variant="secondary"
-                size="sm"
-                id="user-activate-btn"
-                disabled={loadingAction === "activate"}
-                onClick={() => setShowActivateDialog(true)}
-                className="text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10"
-              >
-                <UserCheck size={14} className="mr-1.5" /> Activate Account
-              </Button>
-            )}
+          {!canManageUsers && !canManagePlans && !canManageStaff ? (
+            <p className="text-xs text-muted">
+              Read-only inspection mode: your staff role does not include user, plan, or role modification permissions.
+            </p>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                {canManageUsers && (
+                  <>
+                    {/* Suspend / Activate Button */}
+                    {currentStatus === "active" ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        id="user-suspend-btn"
+                        disabled={isCurrentAdmin || loadingAction === "suspend"}
+                        onClick={() => setShowSuspendDialog(true)}
+                        title={isCurrentAdmin ? "You cannot suspend yourself" : "Suspend user and pause campaigns"}
+                        className="text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
+                      >
+                        <UserX size={14} className="mr-1.5" /> Suspend User
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        id="user-activate-btn"
+                        disabled={loadingAction === "activate"}
+                        onClick={() => setShowActivateDialog(true)}
+                        className="text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10"
+                      >
+                        <UserCheck size={14} className="mr-1.5" /> Activate Account
+                      </Button>
+                    )}
 
-            {/* Mark Email Verified */}
-            <Button
-              variant="secondary"
-              size="sm"
-              id="user-verify-email-btn"
-              disabled={isEmailVerified || loadingAction === "verifyEmail"}
-              onClick={() => executeAction("verifyEmail", () => verifyUserEmailAction(userId))}
-              title={isEmailVerified ? "Email is already verified" : "Manually verify email"}
-            >
-              <MailCheck size={14} className={`mr-1.5 ${isEmailVerified ? "text-accent-green" : "text-muted"}`} />
-              {isEmailVerified ? "Email Verified" : "Verify Email"}
-            </Button>
+                    {/* Mark Email Verified */}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      id="user-verify-email-btn"
+                      disabled={isEmailVerified || loadingAction === "verifyEmail"}
+                      onClick={() => executeAction("verifyEmail", () => verifyUserEmailAction(userId))}
+                      title={isEmailVerified ? "Email is already verified" : "Manually verify email"}
+                    >
+                      <MailCheck size={14} className={`mr-1.5 ${isEmailVerified ? "text-accent-green" : "text-muted"}`} />
+                      {isEmailVerified ? "Email Verified" : "Verify Email"}
+                    </Button>
 
-            {/* Send Password Reset */}
-            <Button
-              variant="secondary"
-              size="sm"
-              id="user-reset-pwd-btn"
-              disabled={loadingAction === "resetPassword"}
-              onClick={() => executeAction("resetPassword", () => sendPasswordResetAction(userId))}
-            >
-              <Key size={14} className="mr-1.5 text-blue-500" />
-              {loadingAction === "resetPassword" ? "Sending..." : "Send Reset Link"}
-            </Button>
+                    {/* Send Password Reset */}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      id="user-reset-pwd-btn"
+                      disabled={loadingAction === "resetPassword"}
+                      onClick={() => executeAction("resetPassword", () => sendPasswordResetAction(userId))}
+                    >
+                      <Key size={14} className="mr-1.5 text-blue-500" />
+                      {loadingAction === "resetPassword" ? "Sending..." : "Send Reset Link"}
+                    </Button>
+                  </>
+                )}
 
-            {/* Set Limit Overrides Modal Trigger */}
-            <Button
-              variant="secondary"
-              size="sm"
-              id="user-overrides-btn"
-              onClick={() => setShowOverridesModal(true)}
-              title="Configure custom resource limits specifically for this user"
-            >
-              <Sliders size={14} className="mr-1.5 text-purple-500" /> Custom Limit Overrides
-            </Button>
+                {/* Set Limit Overrides Modal Trigger */}
+                {canManagePlans && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    id="user-overrides-btn"
+                    onClick={() => setShowOverridesModal(true)}
+                    title="Configure custom resource limits specifically for this user"
+                  >
+                    <Sliders size={14} className="mr-1.5 text-purple-500" /> Custom Limit Overrides
+                  </Button>
+                )}
 
-            {/* Revoke All Sessions */}
-            <Button
-              variant="ghost"
-              size="sm"
-              id="user-revoke-sessions-btn"
-              disabled={loadingAction === "revokeSessions"}
-              onClick={() => setShowRevokeDialog(true)}
-            >
-              <LogOut size={14} className="mr-1.5" /> Revoke Sessions
-            </Button>
+                {canManageUsers && (
+                  <>
+                    {/* Revoke All Sessions */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      id="user-revoke-sessions-btn"
+                      disabled={loadingAction === "revokeSessions"}
+                      onClick={() => setShowRevokeDialog(true)}
+                    >
+                      <LogOut size={14} className="mr-1.5" /> Revoke Sessions
+                    </Button>
 
-            {/* Soft Delete */}
-            {currentStatus !== "pending_delete" && (
-              <Button
-                variant="danger"
-                size="sm"
-                id="user-soft-delete-btn"
-                disabled={isCurrentAdmin || loadingAction === "softDelete"}
-                onClick={() => setShowDeleteDialog(true)}
-                title={isCurrentAdmin ? "You cannot delete yourself" : "Mark user as pending deletion"}
-              >
-                <Trash2 size={14} className="mr-1.5" /> Soft Delete
-              </Button>
-            )}
+                    {/* Soft Delete */}
+                    {currentStatus !== "pending_delete" && (
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        id="user-soft-delete-btn"
+                        disabled={isCurrentAdmin || loadingAction === "softDelete"}
+                        onClick={() => setShowDeleteDialog(true)}
+                        title={isCurrentAdmin ? "You cannot delete yourself" : "Mark user as pending deletion"}
+                      >
+                        <Trash2 size={14} className="mr-1.5" /> Soft Delete
+                      </Button>
+                    )}
 
-            {/* Hard Delete (Super Admin only, regular users only, cannot delete self) */}
-            {isSuperAdmin && !isCurrentAdmin && currentRole === "user" && (
-              <Button
-                variant="danger"
-                size="sm"
-                id="user-hard-delete-btn"
-                disabled={loadingAction === "hardDelete"}
-                onClick={() => {
-                  setHardDeleteEmailInput("");
-                  setHardDeleteError(null);
-                  setShowHardDeleteDialog(true);
-                }}
-                className="bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/80 shadow-xs"
-                title="Permanently erase user and all records (Super Admin only)"
-              >
-                <Trash2 size={14} className="mr-1.5 text-red-400" /> Delete Permanently
-              </Button>
-            )}
-          </div>
+                    {/* Hard Delete (Super Admin only, regular users only, cannot delete self) */}
+                    {isSuperAdmin && !isCurrentAdmin && currentRole === "user" && (
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        id="user-hard-delete-btn"
+                        disabled={loadingAction === "hardDelete"}
+                        onClick={() => {
+                          setHardDeleteEmailInput("");
+                          setHardDeleteError(null);
+                          setShowHardDeleteDialog(true);
+                        }}
+                        className="bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/80 shadow-xs"
+                        title="Permanently erase user and all records (Super Admin only)"
+                      >
+                        <Trash2 size={14} className="mr-1.5 text-red-400" /> Delete Permanently
+                      </Button>
+                    )}
+                  </>
+                )}
+              </div>
 
-          {/* Quick Role & Plan Toggles */}
-          <div className="pt-3 border-t border-border grid gap-4 sm:grid-cols-2">
-            {/* Role selector */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted flex items-center gap-1.5">
-                <Shield size={12} /> Assign Role
-              </label>
-              <select
-                id="user-role-select"
-                disabled={(isCurrentAdmin && currentRole === "super_admin") || loadingAction === "role"}
-                value={selectedRole}
-                onChange={(e) => handleRoleChange(e.target.value)}
-                className="w-full h-9 rounded-md border border-border-input bg-surface px-3 text-xs text-fg focus:border-focus-ring focus:outline-none focus:ring-2 focus:ring-focus-ring/20 cursor-pointer"
-              >
-                <option value="user">User (Standard Platform Client)</option>
-                <option value="support">Support Specialist (Read users & logs)</option>
-                <option value="finance">Finance Manager (Billing & Plans)</option>
-                <option value="admin">Admin (Full operations)</option>
-                <option value="super_admin">Super Admin (Unrestricted Master)</option>
-              </select>
-            </div>
+              {/* Quick Role & Plan Toggles */}
+              {(canManageStaff || canManageUsers) && (
+                <div className="pt-3 border-t border-border grid gap-4 sm:grid-cols-2">
+                  {/* Role selector */}
+                  {canManageStaff && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted flex items-center gap-1.5">
+                        <Shield size={12} /> Assign Role
+                      </label>
+                      <select
+                        id="user-role-select"
+                        disabled={(isCurrentAdmin && currentRole === "super_admin") || loadingAction === "role"}
+                        value={selectedRole}
+                        onChange={(e) => handleRoleChange(e.target.value)}
+                        className="w-full h-9 rounded-md border border-border-input bg-surface px-3 text-xs text-fg focus:border-focus-ring focus:outline-none focus:ring-2 focus:ring-focus-ring/20 cursor-pointer"
+                      >
+                        <option value="user">User (Standard Platform Client)</option>
+                        <option value="support">Support Specialist (Read users & logs)</option>
+                        <option value="finance">Finance Manager (Billing & Plans)</option>
+                        <option value="admin">Admin (Full operations)</option>
+                        <option value="super_admin">Super Admin (Unrestricted Master)</option>
+                      </select>
+                    </div>
+                  )}
 
-            {/* Plan selector */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted flex items-center gap-1.5">
-                <CreditCard size={12} /> Subscription Plan Tier
-              </label>
-              <select
-                id="user-plan-select"
-                disabled={loadingAction === "plan"}
-                value={selectedPlan}
-                onChange={(e) => handlePlanChange(e.target.value)}
-                className="w-full h-9 rounded-md border border-border-input bg-surface px-3 text-xs text-fg focus:border-focus-ring focus:outline-none focus:ring-2 focus:ring-focus-ring/20 cursor-pointer"
-              >
-                {planOptions.map((p) => (
-                  <option key={p.slug} value={p.slug}>
-                    {p.name} (/{p.slug})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+                  {/* Plan selector */}
+                  {canManageUsers && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted flex items-center gap-1.5">
+                        <CreditCard size={12} /> Subscription Plan Tier
+                      </label>
+                      <select
+                        id="user-plan-select"
+                        disabled={loadingAction === "plan"}
+                        value={selectedPlan}
+                        onChange={(e) => handlePlanChange(e.target.value)}
+                        className="w-full h-9 rounded-md border border-border-input bg-surface px-3 text-xs text-fg focus:border-focus-ring focus:outline-none focus:ring-2 focus:ring-focus-ring/20 cursor-pointer"
+                      >
+                        {planOptions.map((p) => (
+                          <option key={p.slug} value={p.slug}>
+                            {p.name} (/{p.slug})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
 

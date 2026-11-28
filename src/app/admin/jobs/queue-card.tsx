@@ -7,7 +7,7 @@ import { toggleQueuePauseAction } from "./job-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-export function QueueCard({ queue }: { queue: QueueOverview }) {
+export function QueueCard({ queue, canManage = false }: { queue: QueueOverview; canManage?: boolean }) {
   const [loading, setLoading] = useState(false);
   const [isPaused, setIsPaused] = useState(queue.isPaused);
 
@@ -54,26 +54,28 @@ export function QueueCard({ queue }: { queue: QueueOverview }) {
               </Badge>
             )}
 
-            <Button
-              onClick={handleToggle}
-              disabled={loading}
-              variant="ghost"
-              size="sm"
-              className={`!p-1.5 text-xs rounded-lg transition ${
-                isPaused
-                  ? "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
-                  : "text-muted hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40"
-              }`}
-              title={isPaused ? "Resume Queue" : "Pause Queue"}
-            >
-              {loading ? (
-                <Loader2 size={13} className="animate-spin" />
-              ) : isPaused ? (
-                <Play size={13} />
-              ) : (
-                <Pause size={13} />
-              )}
-            </Button>
+            {canManage && (
+              <Button
+                onClick={handleToggle}
+                disabled={loading}
+                variant="ghost"
+                size="sm"
+                className={`!p-1.5 text-xs rounded-lg transition ${
+                  isPaused
+                    ? "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                    : "text-muted hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40"
+                }`}
+                title={isPaused ? "Resume Queue" : "Pause Queue"}
+              >
+                {loading ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : isPaused ? (
+                  <Play size={13} />
+                ) : (
+                  <Pause size={13} />
+                )}
+              </Button>
+            )}
           </div>
         </div>
 

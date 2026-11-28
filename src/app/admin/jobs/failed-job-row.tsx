@@ -6,7 +6,7 @@ import { FailedJobItem } from "@/server/queues/manager";
 import { retryJobAction, removeJobAction } from "./job-actions";
 import { Button } from "@/components/ui/button";
 
-export function FailedJobRow({ job }: { job: FailedJobItem }) {
+export function FailedJobRow({ job, canManage = false }: { job: FailedJobItem; canManage?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -85,27 +85,31 @@ export function FailedJobRow({ job }: { job: FailedJobItem }) {
               {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </Button>
 
-            <Button
-              onClick={handleRetry}
-              disabled={retrying || removing}
-              variant="ghost"
-              size="sm"
-              className="!p-1.5 text-brand hover:bg-brand/10"
-              title="Retry Job"
-            >
-              {retrying ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-            </Button>
+            {canManage && (
+              <>
+                <Button
+                  onClick={handleRetry}
+                  disabled={retrying || removing}
+                  variant="ghost"
+                  size="sm"
+                  className="!p-1.5 text-brand hover:bg-brand/10"
+                  title="Retry Job"
+                >
+                  {retrying ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                </Button>
 
-            <Button
-              onClick={handleRemove}
-              disabled={retrying || removing}
-              variant="ghost"
-              size="sm"
-              className="!p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
-              title="Remove Job"
-            >
-              {removing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-            </Button>
+                <Button
+                  onClick={handleRemove}
+                  disabled={retrying || removing}
+                  variant="ghost"
+                  size="sm"
+                  className="!p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
+                  title="Remove Job"
+                >
+                  {removing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                </Button>
+              </>
+            )}
           </div>
         </td>
       </tr>

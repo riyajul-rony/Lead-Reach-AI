@@ -183,6 +183,9 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
         isEmailVerified={Boolean(user.email_verified_at)}
         isCurrentAdmin={isCurrentAdmin}
         isSuperAdmin={currentAdmin.role === "super_admin"}
+        canManageUsers={canManageUsers}
+        canManagePlans={hasPermission(currentAdmin.role, "plans.manage")}
+        canManageStaff={hasPermission(currentAdmin.role, "staff.manage")}
         availablePlans={availablePlans.map((p: any) => ({ id: p.id, slug: p.slug, name: p.name }))}
         initialOverrides={userOverrides}
       />

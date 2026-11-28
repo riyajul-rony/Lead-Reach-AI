@@ -31,13 +31,13 @@ const adminNavConfig: NavConfigItem[] = [
   { href: "/admin/plans", label: "Plans & Limits", icon: "Layers", permission: "plans.manage" },
   { href: "/admin/usage", label: "Usage Analytics", icon: "BarChart3", permission: "plans.manage" },
   { href: "/admin/billing", label: "Billing & Revenue", icon: "CreditCard", permission: "billing.manage" },
-  { href: "/admin/jobs", label: "Queues & Jobs", icon: "Workflow", permission: "settings.manage" },
+  { href: "/admin/jobs", label: "Queues & Jobs", icon: "Workflow", permission: "logs.read" },
   { href: "/admin/logs", label: "System Logs", icon: "ScrollText", permission: "logs.read" },
   { href: "/admin/staff", label: "Staff & Permissions", icon: "Users", permission: "staff.manage" },
   { href: "/admin/apify", label: "Apify Integration", icon: "Cloud", permission: "settings.manage" },
   { href: "/admin/branding", label: "Branding & CMS", icon: "Palette", permission: "settings.manage" },
   { href: "/admin/setup", label: "System Setup & Keys", icon: "Settings", permission: "settings.manage" },
-  { href: "/admin/health", label: "Health & Services", icon: "Activity" },
+  { href: "/admin/health", label: "Health & Services", icon: "Activity", permission: "logs.read" },
 ];
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

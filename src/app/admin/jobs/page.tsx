@@ -12,6 +12,7 @@ import {
   ScrollText,
 } from "lucide-react";
 import { requirePermission } from "@/server/auth/guards";
+import { hasPermission } from "@/server/auth/permissions";
 import { getAllQueuesOverview, getFailedJobs } from "@/server/queues/manager";
 import { getWorkerSchedulerStatus } from "@/server/worker/status";
 import { StatCard } from "@/components/admin/stat-card";
@@ -31,7 +32,8 @@ interface AdminJobsPageProps {
 }
 
 export default async function AdminJobsPage({ searchParams }: AdminJobsPageProps) {
-  await requirePermission("logs.read");
+  const admin = await requirePermission("logs.read");
+  const canManageJobs = hasPermission(admin.role, "settings.manage");
 
   const resolvedParams = await searchParams;
   const selectedQueue = resolvedParams.queue?.trim() || "";
@@ -153,7 +155,7 @@ export default async function AdminJobsPage({ searchParams }: AdminJobsPageProps
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {queues.map((q) => (
-            <QueueCard key={q.name} queue={q} />
+            <QueueCard key={q.name} queue={q} canManage={canManageJobs} />
           ))}
         </div>
       </div>
@@ -221,7 +223,7 @@ export default async function AdminJobsPage({ searchParams }: AdminJobsPageProps
               </thead>
               <tbody className="divide-y divide-border">
                 {failedJobs.map((job) => (
-                  <FailedJobRow key={`${job.queueName}_${job.id}`} job={job} />
+                  <FailedJobRow key={`${job.queueName}_${job.id}`} job={job} canManage={canManageJobs} />
                 ))}
               </tbody>
             </table>

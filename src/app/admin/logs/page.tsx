@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ScrollText, Activity, ShieldCheck, AlertTriangle } from "lucide-react";
 import { requirePermission } from "@/server/auth/guards";
+import { hasPermission } from "@/server/auth/permissions";
 import { db } from "@/server/db";
 import { Pagination } from "@/components/pagination";
 import { LogsFilterBar } from "./logs-filter-bar";
@@ -25,7 +26,8 @@ interface AdminLogsPageProps {
 
 export default async function AdminLogsPage({ searchParams }: AdminLogsPageProps) {
   // Permission Guard
-  await requirePermission("logs.read");
+  const admin = await requirePermission("logs.read");
+  const canPurgeLogs = hasPermission(admin.role, "settings.manage");
 
   const sp = await searchParams;
   const tab = (sp.tab === "audit" || sp.tab === "errors" ? sp.tab : "activity") as
@@ -191,9 +193,11 @@ export default async function AdminLogsPage({ searchParams }: AdminLogsPageProps
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <PurgeLogsButton />
-        </div>
+        {canPurgeLogs && (
+          <div className="flex items-center gap-2">
+            <PurgeLogsButton />
+          </div>
+        )}
       </div>
 
       {/* Tab Navigation */}
