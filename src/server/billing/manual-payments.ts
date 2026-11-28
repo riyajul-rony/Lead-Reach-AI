@@ -3,7 +3,8 @@ import { db } from "@/server/db";
 import { getManualPaymentConfig, computeBdtAmount } from "@/server/billing/manual-settings";
 import { recordAuditLog } from "@/server/audit";
 import { sendSystemMail } from "@/server/email/system-mailer";
-import { getAppUrl } from "@/server/config";
+import { getAppUrl, getConfig } from "@/server/config";
+import { hasPermission, STAFF_ROLES } from "@/server/auth/permissions";
 import { logger } from "@/server/logger";
 
 export const MANUAL_PAYMENT_METHODS = ["bkash", "nagad", "bank"] as const;
@@ -170,10 +171,144 @@ export async function submitManualPaymentDetails(input: {
     },
   });
 
+  if (!existingDetails.admin_notified_at) {
+    await notifyAdminsOfManualPayment(updated, updatedDetails).catch((err: any) => {
+      logger.warn({ paymentId: updated.id, err: err?.message }, "Admin manual payment notification failed");
+    });
+  }
+
   return {
     payment: updated,
     details: updatedDetails,
   };
+}
+
+export async function notifyAdminsOfManualPayment(
+  payment: any,
+  details: Record<string, any>
+): Promise<{ noticesCreated: number; emailsSent: number }> {
+  if (details.admin_notified_at) {
+    return { noticesCreated: 0, emailsSent: 0 };
+  }
+
+  const billingRoles = STAFF_ROLES.filter((role) => hasPermission(role, "billing.manage"));
+  const admins = await db.users
+    .findMany({
+      where: {
+        role: { in: billingRoles },
+        status: "active",
+      },
+      select: { id: true, email: true, name: true, role: true },
+      take: 50,
+    })
+    .catch(() => []);
+
+  if (admins.length === 0) {
+    return { noticesCreated: 0, emailsSent: 0 };
+  }
+
+  const payer = await db.users
+    .findUnique({
+      where: { id: payment.user_id },
+      select: { email: true, name: true },
+    })
+    .catch(() => null);
+
+  const [smtpHost, smtpFrom, appUrlRaw] = await Promise.all([
+    getConfig("SYSTEM_SMTP_HOST").catch(() => undefined),
+    getConfig("SYSTEM_SMTP_FROM").catch(() => undefined),
+    getAppUrl().catch(() => "http://localhost:3000"),
+  ]);
+  const mailerConfigured = Boolean(smtpHost && smtpFrom);
+  const adminBillingUrl = `${appUrlRaw.replace(/\/$/, "")}/admin/billing`;
+
+  const payerLabel = payer?.email || payment.user_id;
+  const planName = details.plan_name || "Paid Plan";
+  const intervalLabel = details.interval === "yearly" ? "Yearly" : "Monthly";
+  const amountLine = details.bdt_amount
+    ? `${payment.currency || "USD"} ${Number(payment.amount).toFixed(2)} (BDT ${Number(details.bdt_amount).toLocaleString()})`
+    : `${payment.currency || "USD"} ${Number(payment.amount).toFixed(2)}`;
+  const trxId = details.transaction_id || payment.provider_payment_id || "N/A";
+  const senderNumber = details.sender_number || "N/A";
+
+  const noticeType = `manual_payment_submitted_${payment.id}`;
+  const emailMarkerType = `admin_manual_pay_email_${payment.id}`;
+  let noticesCreated = 0;
+  let emailsSent = 0;
+
+  for (const admin of admins) {
+    try {
+      const notifApi = (db as any).notifications;
+      if (notifApi?.findFirst && notifApi?.create) {
+        const existingNotice = await notifApi
+          .findFirst({ where: { user_id: admin.id, type: noticeType } })
+          .catch(() => null);
+        if (!existingNotice) {
+          const created = await notifApi
+            .create({
+              data: {
+                user_id: admin.id,
+                type: noticeType,
+                title: `New Manual Payment (${payment.invoice_number})`,
+                body: `${payerLabel} submitted ${details.method || "manual"} payment (${trxId}) for ${planName} (${intervalLabel}) — ${amountLine}.`,
+                entity_type: "payment",
+                entity_id: payment.id,
+              },
+            })
+            .catch(() => null);
+          if (created) noticesCreated++;
+        }
+      }
+
+      if (mailerConfigured && admin.email) {
+        const existingMailMarker = await db.activity_logs
+          .findMany({
+            where: { user_id: admin.id, type: emailMarkerType },
+            take: 1,
+          })
+          .catch(() => []);
+
+        if (existingMailMarker.length === 0) {
+          const mailRes = await sendSystemMail({
+            to: admin.email,
+            subject: `Manual Payment Submitted — ${payment.invoice_number} (${planName})`,
+            text: `A user submitted a manual payment for review:\n\nUser: ${payer?.name ? `${payer.name} (${payerLabel})` : payerLabel}\nPlan: ${planName} (${intervalLabel})\nAmount: ${amountLine}\nMethod: ${details.method || "manual"}\nTransaction ID: ${trxId}\nSender Number: ${senderNumber}\nInvoice: ${payment.invoice_number}\n\nReview queue: ${adminBillingUrl}\n`,
+            html: `<p>A user submitted a manual payment for review:</p><ul><li><strong>User:</strong> ${payer?.name ? `${payer.name} (${payerLabel})` : payerLabel}</li><li><strong>Plan:</strong> ${planName} (${intervalLabel})</li><li><strong>Amount:</strong> ${amountLine}</li><li><strong>Method:</strong> ${details.method || "manual"}</li><li><strong>Transaction ID:</strong> ${trxId}</li><li><strong>Sender Number:</strong> ${senderNumber}</li><li><strong>Invoice:</strong> ${payment.invoice_number}</li></ul><p><a href="${adminBillingUrl}">Review Pending Payments</a></p>`,
+          }).catch((err: any) => ({ ok: false, error: err?.message }));
+
+          if (mailRes?.ok) {
+            await db.activity_logs
+              .create({
+                data: {
+                  user_id: admin.id,
+                  type: emailMarkerType,
+                  message: `Admin notified for manual payment ${payment.invoice_number}.`,
+                  meta: { paymentId: payment.id },
+                },
+              })
+              .catch(() => null);
+            emailsSent++;
+          }
+        }
+      }
+    } catch (err: any) {
+      logger.warn({ adminId: admin.id, paymentId: payment.id, err: err?.message }, "Failed to notify admin of manual payment");
+    }
+  }
+
+  await db.payments
+    .update({
+      where: { id: payment.id },
+      data: {
+        method_details: {
+          ...details,
+          admin_notified_at: new Date().toISOString(),
+        },
+      },
+    })
+    .catch(() => null);
+
+  return { noticesCreated, emailsSent };
 }
 
 const DAY_MS = 86_400_000;
