@@ -16,9 +16,23 @@ function luminance(r, g, b) {
   return 0.2126 * sR + 0.7152 * sG + 0.0722 * sB;
 }
 
-function contrastRatio(hex1, hex2) {
-  const [r1, g1, b1] = hexToRgb(hex1);
-  const [r2, g2, b2] = hexToRgb(hex2);
+function parseColor(color, backdrop = '#FFFFFF') {
+  if (color.startsWith('rgba(')) {
+    const parts = color.slice(5, -1).split(',').map((s) => parseFloat(s.trim()));
+    const [r, g, b, a] = parts;
+    const [br, bg, bb] = hexToRgb(backdrop);
+    return [
+      Math.round(r * a + br * (1 - a)),
+      Math.round(g * a + bg * (1 - a)),
+      Math.round(b * a + bb * (1 - a)),
+    ];
+  }
+  return hexToRgb(color);
+}
+
+function contrastRatio(color1, color2, backdrop = '#FFFFFF') {
+  const [r1, g1, b1] = parseColor(color1, backdrop);
+  const [r2, g2, b2] = parseColor(color2, backdrop);
   const l1 = luminance(r1, g1, b1);
   const l2 = luminance(r2, g2, b2);
   const lighter = Math.max(l1, l2);
@@ -37,18 +51,18 @@ const tokens = {
     text: '#09090B',
     textMuted: '#52525B',
     textSubtle: '#71717A',
-    primary: '#18181B',
+    primary: '#047857',
     primaryText: '#FFFFFF',
-    accent: '#4F46E5',
-    accentSubtle: '#EEF2FF',
-    accentText: '#4338CA',
-    success: '#15803D',
-    successBg: '#F0FDF4',
-    warning: '#B45309',
-    warningBg: '#FFFBEB',
+    accent: '#047857',
+    accentSubtle: 'rgba(5, 150, 105, 0.10)',
+    accentText: '#047857',
+    success: '#047857',
+    successBg: 'rgba(5, 150, 105, 0.10)',
+    warning: '#92400E',
+    warningBg: 'rgba(180, 83, 9, 0.10)',
     danger: '#B91C1C',
-    dangerBg: '#FEF2F2',
-    focusRing: '#4F46E5',
+    dangerBg: 'rgba(185, 28, 28, 0.10)',
+    focusRing: '#047857',
   },
   dark: {
     bg: '#09090B',
@@ -60,18 +74,18 @@ const tokens = {
     text: '#FAFAFA',
     textMuted: '#A1A1AA',
     textSubtle: '#8F8F99',
-    primary: '#FAFAFA',
-    primaryText: '#09090B',
-    accent: '#818CF8',
-    accentSubtle: '#1E1B4B',
-    accentText: '#A5B4FC',
-    success: '#4ADE80',
-    successBg: '#052E16',
+    primary: '#10B981',
+    primaryText: '#041F16',
+    accent: '#10B981',
+    accentSubtle: 'rgba(16, 185, 129, 0.12)',
+    accentText: '#34D399',
+    success: '#34D399',
+    successBg: 'rgba(16, 185, 129, 0.12)',
     warning: '#FBBF24',
-    warningBg: '#451A03',
+    warningBg: 'rgba(245, 158, 11, 0.12)',
     danger: '#F87171',
-    dangerBg: '#450A0A',
-    focusRing: '#818CF8',
+    dangerBg: 'rgba(239, 68, 68, 0.12)',
+    focusRing: '#10B981',
   },
 };
 
@@ -116,7 +130,7 @@ function runAudit() {
     ];
 
     for (const p of pairs) {
-      const ratio = contrastRatio(p.fg, p.bg);
+      const ratio = contrastRatio(p.fg, p.bg, t.surface);
       const passed = ratio >= p.target;
       const status = passed ? 'PASS' : 'FAIL';
       const indicator = passed ? '✓' : '✗';
