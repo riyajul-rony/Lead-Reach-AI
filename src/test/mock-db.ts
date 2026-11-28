@@ -1680,7 +1680,13 @@ class LocalDevMockDb {
       const matchSub = (s: any) => {
         if (where?.user_id && s.user_id !== where.user_id) return false;
         if (where?.plan_id && s.plan_id !== where.plan_id) return false;
-        if (where?.provider && s.provider !== where.provider) return false;
+        if (where?.provider) {
+          if (typeof where.provider === "object" && where.provider.not !== undefined) {
+            if (s.provider === where.provider.not) return false;
+          } else if (s.provider !== where.provider) {
+            return false;
+          }
+        }
         if (where?.status) {
           if (where.status.in && Array.isArray(where.status.in)) {
             if (!where.status.in.includes(s.status)) return false;
@@ -1719,7 +1725,13 @@ class LocalDevMockDb {
       return localDevStore.findSubscription((s) => {
         if (where?.id && s.id !== where.id) return false;
         if (where?.user_id && s.user_id !== where.user_id) return false;
-        if (where?.provider && s.provider !== where.provider) return false;
+        if (where?.provider) {
+          if (typeof where.provider === "object" && where.provider.not !== undefined) {
+            if (s.provider === where.provider.not) return false;
+          } else if (s.provider !== where.provider) {
+            return false;
+          }
+        }
         if (where?.status) {
           if (where.status.in && Array.isArray(where.status.in)) {
             if (!where.status.in.includes(s.status)) return false;

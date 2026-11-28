@@ -40,6 +40,20 @@ export function clearConfigMemoryCache(key?: string) {
 }
 
 /**
+ * Persist an encrypted value into system_settings using the exact same key used by getConfig().
+ */
+export async function setEncryptedConfig(key: ConfigKey, value: string): Promise<void> {
+  const { encrypt } = await import("@/server/crypto");
+  const encrypted = encrypt(value, encKey());
+  await db.system_settings.upsert({
+    where: { key },
+    create: { key, value_enc: encrypted },
+    update: { value_enc: encrypted },
+  });
+  await invalidateSettingCache(key);
+}
+
+/**
  * Invalidate Redis cache and in-memory cache when system_settings are changed.
  */
 export async function invalidateSettingCache(key?: string): Promise<void> {

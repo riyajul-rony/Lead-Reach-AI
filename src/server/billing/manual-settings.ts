@@ -1,6 +1,4 @@
-import { db } from "@/server/db";
-import { encrypt } from "@/server/crypto";
-import { getConfig, invalidateSettingCache } from "@/server/config";
+import { getConfig, setEncryptedConfig } from "@/server/config";
 import { recordAuditLog } from "@/server/audit";
 
 export interface ManualPaymentConfig {
@@ -166,18 +164,7 @@ export async function saveManualPaymentConfig(
   }
 
   const serialized = JSON.stringify(normalized);
-  await db.system_settings.upsert({
-    where: { key: "MANUAL_PAYMENT_CONFIG" },
-    create: {
-      key: "MANUAL_PAYMENT_CONFIG",
-      value_enc: encrypt(serialized),
-    },
-    update: {
-      value_enc: encrypt(serialized),
-    },
-  });
-
-  await invalidateSettingCache("MANUAL_PAYMENT_CONFIG");
+  await setEncryptedConfig("MANUAL_PAYMENT_CONFIG", serialized);
 
   await recordAuditLog({
     adminId,

@@ -364,7 +364,14 @@ export async function approveManualPayment(input: {
   const activeOrTrialSub = existingSubs.find((s: any) =>
     ["active", "trialing", "past_due"].includes(s.status)
   );
-  const subToUpdate = activeOrTrialSub || linkedSub || null;
+  // Fall back to the most recent expired paid subscription so a renewal
+  // after expiry reactivates the same record instead of creating a new one.
+  const expiredPaidSub = !activeOrTrialSub
+    ? existingSubs.find(
+        (s: any) => s.status === "expired" && s.provider !== "trial"
+      )
+    : null;
+  const subToUpdate = activeOrTrialSub || expiredPaidSub || linkedSub || null;
 
   const targetPlanId =
     (typeof details.plan_id === "string" && details.plan_id) ||
