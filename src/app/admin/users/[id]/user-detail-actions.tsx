@@ -13,10 +13,12 @@ import {
   Sliders,
   X,
   CreditCard,
+  Clock,
 } from "lucide-react";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import type { TrialStatus } from "@/server/billing/trial";
 import {
   suspendUserAction,
   activateUserAction,
@@ -27,6 +29,8 @@ import {
   revokeAllSessionsAction,
   softDeleteUserAction,
   hardDeleteUserAction,
+  extendUserTrialAction,
+  setUserTrialExemptAction,
 } from "@/server/admin/user-actions";
 import { updateUserLimitOverridesAction } from "@/server/admin/plan-actions";
 
@@ -59,6 +63,8 @@ interface UserDetailActionsProps {
   canManageStaff?: boolean;
   availablePlans?: PlanOption[];
   initialOverrides?: UserOverridesData | null;
+  initialTrialStatus?: TrialStatus | null;
+  isTrialExempt?: boolean;
 }
 
 export function UserDetailActions({
@@ -75,6 +81,8 @@ export function UserDetailActions({
   canManageStaff = false,
   availablePlans = [],
   initialOverrides,
+  initialTrialStatus = null,
+  isTrialExempt = false,
 }: UserDetailActionsProps) {
   const router = useRouter();
 
@@ -94,6 +102,7 @@ export function UserDetailActions({
   // Quick inputs
   const [selectedRole, setSelectedRole] = useState(currentRole);
   const [selectedPlan, setSelectedPlan] = useState(currentPlan);
+  const [trialExtendDays, setTrialExtendDays] = useState("7");
 
   // Overrides form state
   const [overrideLeads, setOverrideLeads] = useState(initialOverrides?.monthly_leads != null ? String(initialOverrides.monthly_leads) : "");
@@ -375,6 +384,76 @@ export function UserDetailActions({
                       </select>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Free Trial Controls */}
+              {canManageUsers && currentRole === "user" && (
+                <div className="pt-3 border-t border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-0.5 text-xs">
+                    <div className="font-medium text-fg flex items-center gap-1.5">
+                      <Clock size={12} className="text-brand" /> Free Trial State:{" "}
+                      <span className="font-mono">
+                        {isTrialExempt
+                          ? "Exempt"
+                          : initialTrialStatus?.status === "active"
+                          ? `Active (${initialTrialStatus.daysLeft}d left)`
+                          : initialTrialStatus?.status === "expired"
+                          ? "Expired"
+                          : "Not applicable"}
+                      </span>
+                    </div>
+                    {initialTrialStatus?.endsAt && !isTrialExempt && (
+                      <div className="text-[11px] text-muted">
+                        Trial ends: {new Date(initialTrialStatus.endsAt).toLocaleDateString()}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={1}
+                        max={365}
+                        aria-label="Extend trial by days"
+                        value={trialExtendDays}
+                        onChange={(e) => setTrialExtendDays(e.target.value)}
+                        className="w-16 h-8 rounded-md border border-border-input bg-surface px-2 text-xs font-mono text-fg focus:border-focus-ring focus:outline-none focus:ring-2 focus:ring-focus-ring/20"
+                      />
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        id="user-extend-trial-btn"
+                        disabled={loadingAction === "extendTrial"}
+                        onClick={() =>
+                          executeAction("extendTrial", () =>
+                            extendUserTrialAction(userId, parseInt(trialExtendDays, 10) || 7)
+                          )
+                        }
+                      >
+                        {loadingAction === "extendTrial" ? "Extending..." : "+ Extend Trial (Days)"}
+                      </Button>
+                    </div>
+
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      id="user-trial-exempt-btn"
+                      disabled={loadingAction === "trialExempt"}
+                      onClick={() =>
+                        executeAction("trialExempt", () =>
+                          setUserTrialExemptAction(userId, !isTrialExempt)
+                        )
+                      }
+                    >
+                      {loadingAction === "trialExempt"
+                        ? "Saving..."
+                        : isTrialExempt
+                        ? "Remove Trial Exemption"
+                        : "Mark Trial Exempt"}
+                    </Button>
+                  </div>
                 </div>
               )}
             </>

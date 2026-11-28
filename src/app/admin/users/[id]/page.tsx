@@ -20,6 +20,7 @@ import { requirePermission } from "@/server/auth/guards";
 import { hasPermission } from "@/server/auth/permissions";
 import { db } from "@/server/db";
 import { getUserUsageAndLimits } from "@/server/billing/limits";
+import { getTrialStatus } from "@/server/billing/trial";
 import { listEmailAccounts } from "@/server/email/account-service";
 import { getAdaptiveLimitConfig } from "@/server/email/adaptive-limit-config";
 import { StatusBadge } from "@/components/admin/status-badge";
@@ -53,6 +54,7 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
       role: true,
       status: true,
       plan: true,
+      trial_exempt: true,
       business_name: true,
       business_category: true,
       country: true,
@@ -86,6 +88,7 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
     userOverrides,
     limitsAndUsage,
     userEmailAccounts,
+    trialStatus,
   ] = await Promise.all([
     db.social_accounts.count({ where: { user_id: userId } }).catch(() => 0),
     db.google_connections.count({ where: { user_id: userId } }).catch(() => 0),
@@ -115,6 +118,7 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
     db.user_limit_overrides.findUnique({ where: { user_id: userId } }).catch(() => null),
     getUserUsageAndLimits(userId),
     listEmailAccounts(userId).catch(() => []),
+    getTrialStatus(userId).catch(() => null),
   ]);
 
   const isCurrentAdmin = currentAdmin.id === user.id;
@@ -158,6 +162,13 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
                 <Badge variant="neutral" size="sm" className="capitalize">
                   Plan: {user.plan || "free"}
                 </Badge>
+                {user.trial_exempt ? (
+                  <Badge variant="accent" size="sm">Trial Exempt</Badge>
+                ) : trialStatus?.status === "active" ? (
+                  <Badge variant="warning" size="sm">Trial: {trialStatus.daysLeft}d left</Badge>
+                ) : trialStatus?.status === "expired" ? (
+                  <Badge variant="danger" size="sm">Trial Expired</Badge>
+                ) : null}
                 {user.email_verified_at ? (
                   <span className="inline-flex items-center gap-1 text-xs text-accent-green font-medium">
                     <CheckCircle2 size={13} /> Verified
@@ -188,6 +199,8 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
         canManageStaff={hasPermission(currentAdmin.role, "staff.manage")}
         availablePlans={availablePlans.map((p: any) => ({ id: p.id, slug: p.slug, name: p.name }))}
         initialOverrides={userOverrides}
+        initialTrialStatus={trialStatus}
+        isTrialExempt={Boolean(user.trial_exempt)}
       />
 
       {/* Plan Quotas & Limit Overrides Card */}

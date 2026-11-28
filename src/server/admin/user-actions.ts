@@ -15,6 +15,7 @@ import { rateLimit } from "@/server/security/rate-limit";
 import { decrypt } from "@/server/crypto";
 import { removeAvatar } from "@/server/storage/avatar";
 import { cancelUserJobs } from "@/server/queues/manager";
+import { ensureFreePlanRecord } from "@/server/billing/trial";
 import { logger } from "@/server/logger";
 
 const VALID_PLANS = ["free", "starter", "pro", "enterprise"];
@@ -574,5 +575,141 @@ export async function hardDeleteUserAction(targetUserId: string, confirmationEma
   return {
     ok: true,
     message: `User ${target.email} and all associated records have been permanently deleted.`,
+  };
+}
+
+/**
+ * Extend a user's free trial by N days from their current trial end (or from now if already expired).
+ */
+export async function extendUserTrialAction(targetUserId: string, additionalDays: number) {
+  const session = await getSessionUser();
+  if (!session) throw new Error("Unauthorized");
+  assertPermission(session.user.role, "users.manage");
+
+  const days = Math.floor(Number(additionalDays));
+  if (!Number.isFinite(days) || days < 1 || days > 365) {
+    throw new Error("Trial extension must be between 1 and 365 days.");
+  }
+
+  const target = await db.users.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, email: true, role: true, plan: true, plan_id: true },
+  });
+  if (!target) throw new Error("User not found.");
+
+  const now = new Date();
+  const existingTrial = await db.subscriptions.findFirst({
+    where: {
+      user_id: targetUserId,
+      OR: [{ status: "trialing" }, { provider: "trial" }],
+    },
+    orderBy: { created_at: "desc" },
+  });
+
+  const baseEnd =
+    existingTrial && new Date(existingTrial.current_period_end) > now
+      ? new Date(existingTrial.current_period_end)
+      : now;
+  const newEnd = new Date(baseEnd.getTime() + days * 86_400_000);
+
+  if (existingTrial) {
+    await db.subscriptions.update({
+      where: { id: existingTrial.id },
+      data: {
+        status: "trialing",
+        current_period_end: newEnd,
+      },
+    });
+  } else {
+    const freePlan = await ensureFreePlanRecord();
+    if (!freePlan) {
+      throw new Error("Free plan record missing; unable to provision trial subscription.");
+    }
+    await db.subscriptions.create({
+      data: {
+        user_id: targetUserId,
+        plan_id: freePlan.id,
+        status: "trialing",
+        current_period_start: now,
+        current_period_end: newEnd,
+        cancel_at_period_end: false,
+        provider: "trial",
+        provider_subscription_id: `trial_${targetUserId}`,
+      },
+    });
+    if (!target.plan_id) {
+      await db.users.update({
+        where: { id: targetUserId },
+        data: { plan: target.plan || "free", plan_id: freePlan.id },
+      });
+    }
+  }
+
+  await recordAuditLog({
+    adminId: session.user.id,
+    action: "user.trial_extend",
+    targetType: "user",
+    targetId: targetUserId,
+    beforeState: {
+      trial_ends_at: existingTrial?.current_period_end
+        ? new Date(existingTrial.current_period_end).toISOString()
+        : null,
+    },
+    afterState: {
+      added_days: days,
+      trial_ends_at: newEnd.toISOString(),
+    },
+  });
+
+  try {
+    revalidatePath("/admin/users");
+    revalidatePath(`/admin/users/${targetUserId}`);
+  } catch {}
+
+  return {
+    ok: true,
+    endsAt: newEnd.toISOString(),
+    message: `Extended trial for ${target.email} by ${days} day(s) (ends ${newEnd.toLocaleDateString()}).`,
+  };
+}
+
+/**
+ * Mark or unmark a free-plan user as exempt from 14-day trial expiry enforcement.
+ */
+export async function setUserTrialExemptAction(targetUserId: string, exempt: boolean) {
+  const session = await getSessionUser();
+  if (!session) throw new Error("Unauthorized");
+  assertPermission(session.user.role, "users.manage");
+
+  const target = await db.users.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, email: true, trial_exempt: true },
+  });
+  if (!target) throw new Error("User not found.");
+
+  await db.users.update({
+    where: { id: targetUserId },
+    data: { trial_exempt: Boolean(exempt) },
+  });
+
+  await recordAuditLog({
+    adminId: session.user.id,
+    action: "user.trial_exempt_change",
+    targetType: "user",
+    targetId: targetUserId,
+    beforeState: { trial_exempt: Boolean(target.trial_exempt) },
+    afterState: { trial_exempt: Boolean(exempt) },
+  });
+
+  try {
+    revalidatePath("/admin/users");
+    revalidatePath(`/admin/users/${targetUserId}`);
+  } catch {}
+
+  return {
+    ok: true,
+    message: exempt
+      ? `${target.email} is now exempt from free-trial expiry.`
+      : `Removed free-trial exemption for ${target.email}.`,
   };
 }
