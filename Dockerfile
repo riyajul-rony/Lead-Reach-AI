@@ -1,14 +1,7 @@
 # Multi-stage production build for Lead Reach AI web & worker
 # Fast, lightweight Node.js Debian-slim image
 
-# 1. Node production dependencies
-FROM node:24-bookworm-slim AS deps
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
-RUN npm install -D prisma@7.10.0
-
-# 2. Next.js app builder
+# 1. Next.js app builder
 FROM node:24-bookworm-slim AS builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -19,7 +12,7 @@ RUN npx prisma generate
 RUN npm run build
 RUN npm run build:worker
 
-# 3. Final Debian-based production runner
+# 2. Final Debian-based production runner
 FROM node:24-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production

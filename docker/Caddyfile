@@ -9,11 +9,10 @@
 {$APP_DOMAIN:localhost} {
     encode zstd gzip
 
-    # Modern production security headers
+    # Modern production security headers (X-Frame-Options: DENY is owned by next.config.ts)
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
-        X-Frame-Options "SAMEORIGIN"
         Referrer-Policy "strict-origin-when-cross-origin"
         Permissions-Policy "camera=(), microphone=(), geolocation=()"
     }
