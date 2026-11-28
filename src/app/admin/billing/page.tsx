@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ManualPaymentDialog } from "./manual-payment-dialog";
 import { ManualSettingsCard } from "./manual-settings-card";
+import { PendingReviewQueue, PendingManualPaymentItem } from "./pending-review-queue";
 import { CancelSubscriptionButton, RefundPaymentButton } from "./subscription-actions-menu";
 import { getManualPaymentConfig } from "@/server/billing/manual-settings";
 
@@ -111,6 +112,54 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
     usdToBdtRate: null,
     isConfigured: false,
   }));
+
+  const pendingManualRows = await db.payments.findMany({
+    where: {
+      status: "pending",
+      provider: "manual",
+    },
+    include: {
+      user: { select: { id: true, name: true, email: true } },
+    },
+    orderBy: { created_at: "desc" },
+    take: 50,
+  }).catch(() => []);
+
+  const planNameById = new Map<string, string>(
+    allPlansForSelect.map((p: any) => [p.id, p.name])
+  );
+
+  const pendingReviewItems: PendingManualPaymentItem[] = (pendingManualRows as any[]).map((p: any) => {
+    const details =
+      p.method_details && typeof p.method_details === "object"
+        ? (p.method_details as Record<string, any>)
+        : {};
+    const resolvedPlanName =
+      (typeof details.plan_name === "string" && details.plan_name) ||
+      (typeof details.plan_id === "string" ? planNameById.get(details.plan_id) : undefined) ||
+      "Plan";
+
+    return {
+      id: p.id,
+      invoiceNumber: p.invoice_number,
+      userId: p.user_id,
+      userName: p.user?.name || "Unnamed User",
+      userEmail: p.user?.email || "—",
+      planName: resolvedPlanName,
+      interval: details.interval === "yearly" ? "yearly" : "monthly",
+      amount: Number(p.amount || 0),
+      currency: p.currency || "USD",
+      bdtAmount: typeof details.bdt_amount === "number" ? details.bdt_amount : null,
+      method: typeof details.method === "string" ? details.method : "manual",
+      transactionId: typeof details.transaction_id === "string" ? details.transaction_id : "",
+      senderNumber: typeof details.sender_number === "string" ? details.sender_number : "",
+      userNote: typeof details.user_note === "string" ? details.user_note : "",
+      submittedAt:
+        typeof details.submitted_at === "string"
+          ? details.submitted_at
+          : new Date(p.created_at).toISOString(),
+    };
+  });
 
   const planOptions = allPlansForSelect.map((p: any) => ({
     id: p.id,
@@ -257,6 +306,9 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
 
       {/* Manual Payment Instructions & Exchange Rate Settings */}
       <ManualSettingsCard initialConfig={manualPaymentConfig} />
+
+      {/* Pending Manual Payments Review Queue */}
+      <PendingReviewQueue items={pendingReviewItems} />
 
       {/* Tabs & Filter Bar & Table */}
       <div className="rounded-xl border border-border bg-surface overflow-hidden space-y-0">
@@ -505,8 +557,13 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
                               {p.method_details?.method || p.provider}
                             </div>
                             {p.provider_payment_id && (
-                              <div className="text-[10px] text-muted font-mono truncate max-w-[130px]">
+                              <div className="text-[10px] text-muted font-mono truncate max-w-[160px]">
                                 {p.provider_payment_id}
+                              </div>
+                            )}
+                            {p.method_details?.sender_number && (
+                              <div className="text-[10px] text-muted">
+                                From: {p.method_details.sender_number}
                               </div>
                             )}
                           </td>
@@ -523,7 +580,12 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
                             ) : p.status === "pending" ? (
                               <Badge variant="warning">Pending</Badge>
                             ) : (
-                              <Badge variant="danger">Failed</Badge>
+                              <Badge variant="danger">Rejected / Failed</Badge>
+                            )}
+                            {p.status === "failed" && p.method_details?.rejection_reason && (
+                              <div className="text-[10px] text-danger mt-1 max-w-[180px]">
+                                {p.method_details.rejection_reason}
+                              </div>
                             )}
                           </td>
 
