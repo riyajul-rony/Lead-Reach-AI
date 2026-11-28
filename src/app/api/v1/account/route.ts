@@ -27,7 +27,6 @@ export async function DELETE(req: NextRequest) {
       message: "Your account and all associated data have been permanently deleted.",
     });
     res.cookies.delete(SESSION_COOKIE);
-    res.cookies.delete("autohub_session");
     return res;
   } catch (err: any) {
     if (err instanceof AccountActionError) {

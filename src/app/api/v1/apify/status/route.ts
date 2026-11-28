@@ -30,7 +30,7 @@ export async function GET() {
 
   const payload: Record<string, any> = {
     configured: status.configured,
-    google_maps_provider: settings.google_maps_provider || "compass",
+    google_maps_provider: settings.google_maps_provider || "kaix",
     limits: settings.limits,
     unitPrices: settings.unitPrices,
   };

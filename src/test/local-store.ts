@@ -1,46 +1,4 @@
 // In-memory test mock store. File-based dev_store.json has been removed in favor of real PostgreSQL.
-import { hashPassword } from "@/server/auth/password";
-
-let devAdminUserInitialized = false;
-
-export async function ensureDevAdminUser(): Promise<void> {
-  if (process.env.NODE_ENV !== "development") return;
-  if (devAdminUserInitialized) return;
-
-  const email = process.env.DEV_ADMIN_EMAIL?.trim().toLowerCase();
-  const plainPassword = process.env.DEV_ADMIN_PASSWORD;
-  const passwordHash = process.env.DEV_ADMIN_PASSWORD_HASH;
-
-  // Create dev user ONLY when NODE_ENV=development and env variables are explicitly set
-  if (!email || (!plainPassword && !passwordHash)) {
-    devAdminUserInitialized = true;
-    return;
-  }
-
-  const hash = passwordHash || (plainPassword ? await hashPassword(plainPassword) : "");
-  if (!hash) {
-    devAdminUserInitialized = true;
-    return;
-  }
-
-  const store = loadStore();
-  if (!store.users) store.users = [];
-  if (!store.users.some((u) => u.email?.toLowerCase() === email)) {
-    store.users.push({
-      id: "dev_admin_user",
-      email,
-      name: "Dev Administrator",
-      password_hash: hash,
-      email_verified_at: new Date("2026-01-01T00:00:00.000Z"),
-      onboarded_at: new Date("2026-01-01T00:00:00.000Z"),
-      role: "super_admin",
-      status: "active",
-      plan: "free",
-      timezone: "Asia/Dhaka",
-    });
-  }
-  devAdminUserInitialized = true;
-}
 
 interface StoreSchema {
   users: any[];

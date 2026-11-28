@@ -79,21 +79,34 @@ Hostinger Docker will then have authenticated access to pull private images.
     ```
 
 ### Step 3: Enter Required Environment Variables
-In Hostinger's **Environment Variables** section, add the following variables:
+In Hostinger's **Environment Variables** section (or `.env`), configure the following variables (see [`.env.example`](.env.example) for the complete list):
 
 | Variable | Required | Example / Recommended Value | Description |
 |---|---|---|---|
-| `APP_DOMAIN` | **Yes** | `leadreachai.cerkitlabs.tech` | Domain mapped in Traefik labels |
-| `ADMIN_EMAIL` | **Yes** | `admin@cerkitlabs.tech` | Admin notification & fallback email |
-| `POSTGRES_PASSWORD` | **Yes** | *(Generate strong password)* | Dedicated database password |
-| `AUTH_SECRET` | **Yes** | *(Generate 32+ char secret)* | Session JWT cookie secret (`openssl rand -hex 32`) |
-| `APP_ENCRYPTION_KEY` | **Yes** | *(Generate 32-byte Base64 key)* | AES-256 key for stored credentials (`openssl rand -base64 32`) |
-| `TRAEFIK_NETWORK` | No | `n8n-scad_cerkitlabs` | Traefik external network (default matches your VPS) |
-| `TRAEFIK_ENTRYPOINT` | No | `websecure` | Traefik HTTPS entrypoint (default matches your VPS) |
-| `TRAEFIK_CERTRESOLVER` | No | `letsencrypt` | Traefik cert resolver (default matches your VPS) |
-| `GOOGLE_CLIENT_ID` | No | *(Your OAuth client ID)* | For Google OAuth / Sheets |
-| `GOOGLE_CLIENT_SECRET` | No | *(Your OAuth secret)* | For Google OAuth / Sheets |
-| `OPENAI_API_KEY` | No | *(Your OpenAI key)* | AI copy & campaign generation |
+| `APP_DOMAIN` | **Yes** | `leadreachai.yourdomain.com` | Domain mapped in Traefik / Caddy |
+| `ADMIN_EMAIL` | **Yes** | `admin@yourdomain.com` | Admin notification & fallback email |
+| `POSTGRES_PASSWORD` | **Yes** | *(Generate strong password)* | Dedicated PostgreSQL password |
+| `AUTH_SECRET` | **Yes** | *(Generate 32+ char secret)* | Session & OAuth state HMAC secret (`openssl rand -base64 32`) |
+| `APP_ENCRYPTION_KEY` | **Yes** | *(Generate 32-byte key)* | AES-256-GCM key for stored credentials (`openssl rand -base64 32`) |
+| `TRACKING_SECRET` | **Recommended** | *(Generate 32+ char secret)* | Dedicated HMAC secret for click-tracking URLs (`openssl rand -base64 32`; falls back to `AUTH_SECRET` if unset) |
+| `CTD_TLS_ASK_SECRET` | **Recommended** | *(Generate random secret)* | Shared secret protecting `/api/internal/tls-ask` for Custom Tracking Domains |
+| `HEALTH_CHECK_SECRET` | No | *(Generate random secret)* | Header secret (`x-internal-health-secret`) for verbose `/api/health` diagnostics (falls back to `CTD_TLS_ASK_SECRET`) |
+| `TRACKING_CNAME_TARGET` | No | `track.yourdomain.com` | Canonical CNAME target hostname shown to users for Custom Tracking Domains |
+| `SCHEDULERS_ENABLED` | **Worker: true** | `true` (worker) / `false` (web) | Enables BullMQ repeatable schedulers; defaulted to `true` on `worker` and `false` on `web` in Compose |
+| `STALE_THRESHOLD_HOURS` | No | `24` | Hours before overdue scheduled jobs are flagged `needs_review` |
+| `TRIAL_DAYS` | No | `14` | Default free-trial duration in days on signup (`0` disables trial; overridable in Admin Setup) |
+| `REGISTRATION_MODE` | No | `invite` | Signup policy: `open`, `invite`, or `closed` |
+| `SELF_WARMUP_INTERVAL_MINUTES` | No | `15` | Minutes between self warm-up pool ticks (`1`–`1440`) |
+| `SELF_WARMUP_MAX_PER_TICK` | No | `5` | Maximum warm-up email pairs dispatched per tick (`1`–`50`) |
+| `SEND_JITTER_MIN_SECONDS` | No | `120` | Minimum per-account send delay jitter in seconds (`>= 30`) |
+| `SEND_JITTER_MAX_SECONDS` | No | `300` | Maximum per-account send delay jitter in seconds |
+| `CSP_REPORT_ONLY` | No | `false` | Set `true` only to report Content-Security-Policy without enforcing |
+| `TRAEFIK_NETWORK` | No | `n8n-scad_cerkitlabs` | Traefik external network (default matches VPS) |
+| `TRAEFIK_ENTRYPOINT` | No | `websecure` | Traefik HTTPS entrypoint |
+| `TRAEFIK_CERTRESOLVER` | No | `letsencrypt` | Traefik cert resolver |
+| `SYSTEM_SMTP_HOST` / `PORT` / `USER` / `PASS` / `FROM` | No | `smtp.example.com` / `587` | System SMTP for verification, trial reminders & password resets |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | No | *(OAuth credentials)* | Google OAuth login, Gmail outreach & Sheets export |
+| `OPENAI_API_KEY` / `REPLY_AI_*` | No | *(OpenAI key)* | AI outreach/social generation & reply categorization |
 
 > [!WARNING]
 > **Old Docker Volumes Notice**: If PostgreSQL was started previously on the VPS with an old password, the persistent volume `leadreach-ai_pgdata` holds that initial password. If you change `POSTGRES_PASSWORD`, you must remove the old volume (`docker volume rm leadreach-ai_pgdata`) before deploying so the database re-initializes with the new password.
@@ -118,14 +131,19 @@ Once deployed, verify your setup:
 2. **HTTP Health Check**:
    Open in your browser:
    `https://leadreachai.cerkitlabs.tech/api/health`
-   Expected response:
+   Expected unauthenticated response:
+   ```json
+   { "ok": true }
+   ```
+   To view detailed database, Redis, and worker heartbeat diagnostics, either sign in as an admin or send the `x-internal-health-secret` header matching `HEALTH_CHECK_SECRET` (or `CTD_TLS_ASK_SECRET`):
    ```json
    {
      "status": "healthy",
      "timestamp": "2026-11-02T...",
      "components": {
        "database": { "status": "up", "latencyMs": 2 },
-       "redis": { "status": "up" }
+       "redis": { "status": "up" },
+       "worker": { "status": "up", "lastHeartbeat": "...", "schedulersEnabled": true }
      }
    }
    ```

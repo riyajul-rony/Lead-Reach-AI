@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { logger } from "@/server/logger";
 
 export type GenerateContentInput = {
   apiKey: string;
@@ -89,7 +90,7 @@ ${(input.recentCaptions || []).slice(0, 10).map((c, i) => `${i + 1}. ${c}`).join
     imageUrl = imgRes.data?.[0]?.url;
   } catch (imgErr) {
     // If image generation fails, continue with text so preview is not completely lost
-    console.error("Image generation failed:", imgErr);
+    logger.error({ err: imgErr }, "Image generation failed");
   }
 
   return {

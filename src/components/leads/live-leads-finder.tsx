@@ -18,10 +18,8 @@ import {
   Building2,
   Eye,
   X,
-  Key,
   ShieldCheck,
   Sparkles,
-  AlertCircle,
   AlertTriangle,
   Trash2,
   FileSpreadsheet,
@@ -36,7 +34,6 @@ import {
   generateHtmlTableContent,
   formatLeadRowForExport,
 } from "@/server/providers/leads/export-helpers";
-import { parseMultiLineSearch } from "@/server/providers/leads/apify/line-parser";
 
 function GoogleSheetsIcon({ className = "w-4 h-4" }: { className?: string }) {
   return (
@@ -268,15 +265,6 @@ export function LiveLeadsFinder({
   const isMeta = source === "meta_ads";
   const isLinkedIn = source === "linkedin";
 
-  // Google Maps Multi-Line Search (format: niche, location)
-  const [gmapsMultiLine, setGmapsMultiLine] = useState(
-    "restaurant, TX\nGYM, NY\nDENTAL CLINIC, CA\nCOFFEE SHOP, FL\nBARBER SHOP, GA"
-  );
-
-  const parsedGmaps = useMemo(() => {
-    return parseMultiLineSearch(gmapsMultiLine, 5);
-  }, [gmapsMultiLine]);
-
   // Seniority levels & Company Size for B2B Leads
   const [selectedSeniority, setSelectedSeniority] = useState<string[]>([]);
   const [companySize, setCompanySize] = useState<string>("");
@@ -324,12 +312,9 @@ export function LiveLeadsFinder({
   }, [isGoogleMaps, isMeta, adminLimits]);
 
   const [metaCountry, setMetaCountry] = useState("US");
-  const [metaCity, setMetaCity] = useState("");
   const [metaAdStatus, setMetaAdStatus] = useState<"active" | "all">("active");
   const [selectedTitles, setSelectedTitles] = useState<string[]>(["CEO", "Founder", "Managing Director"]);
   const [customTitleInput, setCustomTitleInput] = useState("");
-  const [findDecisionMakers, setFindDecisionMakers] = useState(true);
-  const [maxDecisionMakers, setMaxDecisionMakers] = useState(3);
   const [linkedinCountry, setLinkedinCountry] = useState("US");
   const [linkedinState, setLinkedinState] = useState("");
   const [linkedinCity, setLinkedinCity] = useState("");
@@ -624,12 +609,10 @@ export function LiveLeadsFinder({
   // Apify integration status state
   const [apifyStatus, setApifyStatus] = useState<{
     configured: boolean;
-    google_maps_provider?: "compass" | "poidata";
+    google_maps_provider?: string;
     limits?: any;
     unitPrices?: {
       google_maps: number;
-      google_maps_compass?: number;
-      google_maps_poidata?: number;
       meta_ads: number;
       b2b_leads: number;
     };
@@ -661,8 +644,6 @@ export function LiveLeadsFinder({
     try {
       const savedMetaCountry = sessionStorage.getItem("leadreach_lead_meta_country") || sessionStorage.getItem("autohub_lead_meta_country");
       if (savedMetaCountry) setMetaCountry(savedMetaCountry);
-      const savedMetaCity = sessionStorage.getItem("leadreach_lead_meta_city") || sessionStorage.getItem("autohub_lead_meta_city");
-      if (savedMetaCity) setMetaCity(savedMetaCity);
       const savedMetaStatus = sessionStorage.getItem("leadreach_lead_meta_status") || sessionStorage.getItem("autohub_lead_meta_status");
       if (savedMetaStatus) setMetaAdStatus(savedMetaStatus as "active" | "all");
       const savedEmails = sessionStorage.getItem("leadreach_lead_emails") ?? sessionStorage.getItem("autohub_lead_emails");
@@ -675,10 +656,6 @@ export function LiveLeadsFinder({
       if (savedLiCountry) setLinkedinCountry(savedLiCountry);
       const savedLiCity = sessionStorage.getItem("leadreach_lead_li_city") || sessionStorage.getItem("autohub_lead_li_city");
       if (savedLiCity) setLinkedinCity(savedLiCity);
-      const savedLiDm = sessionStorage.getItem("leadreach_lead_li_dm") ?? sessionStorage.getItem("autohub_lead_li_dm");
-      if (savedLiDm !== null) setFindDecisionMakers(savedLiDm === "true");
-      const savedLiMaxDm = sessionStorage.getItem("leadreach_lead_li_max_dm") || sessionStorage.getItem("autohub_lead_li_max_dm");
-      if (savedLiMaxDm) setMaxDecisionMakers(Number(savedLiMaxDm) || 3);
     } catch {}
 
     // 1. Apify Service status
@@ -716,14 +693,6 @@ export function LiveLeadsFinder({
       }
     }
   }, []);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      (window as any).__extractLeads = () => handleSearch();
-    }
-  }, [keyword, location, maxResultsStr, findEmails]);
-
-
 
   const handleSaveGoogleConfig = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -942,8 +911,6 @@ export function LiveLeadsFinder({
           company_size: isLinkedIn ? companySize : undefined,
           require_email: isLinkedIn ? requireEmailOnly : undefined,
           require_phone: isLinkedIn ? requirePhoneOnly : undefined,
-          find_decision_makers: isLinkedIn ? findDecisionMakers : undefined,
-          max_decision_makers: isLinkedIn ? maxDecisionMakers : undefined,
         }),
         signal: controller.signal,
       });

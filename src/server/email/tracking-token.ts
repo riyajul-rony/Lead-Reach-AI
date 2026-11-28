@@ -1,12 +1,22 @@
 import crypto from "node:crypto";
 
 function getTrackingSecret(): string {
-  return (
-    process.env.TRACKING_SECRET ||
-    process.env.AUTH_SECRET ||
-    process.env.APP_ENCRYPTION_KEY ||
-    "leadreach_click_tracking_secret"
-  );
+  const secret =
+    process.env.TRACKING_SECRET?.trim() ||
+    process.env.AUTH_SECRET?.trim() ||
+    process.env.APP_ENCRYPTION_KEY?.trim();
+
+  if (secret) {
+    return secret;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "FATAL: TRACKING_SECRET (or AUTH_SECRET / APP_ENCRYPTION_KEY) must be set in production for click-tracking signatures."
+    );
+  }
+
+  return "leadreach_dev_click_tracking_secret";
 }
 
 /**

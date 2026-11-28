@@ -86,11 +86,6 @@ export async function resolveLeadershipViaKnowledge(companyName: string, locatio
   if (!clean || clean.length < 3 || clean.toLowerCase() === "business") return {};
 
   let founderName: string | undefined;
-  let managerName: string | undefined;
-  let facebook: string | undefined;
-  let instagram: string | undefined;
-  let twitter: string | undefined;
-  let website: string | undefined;
 
   // 0. Extract authentic Agent / Doctor / Realtor / Proprietor directly from business title
   // e.g. "State Farm Steven Hill, Agent" -> "Steven Hill"
@@ -129,7 +124,7 @@ export async function resolveLeadershipViaKnowledge(companyName: string, locatio
     }
   }
 
-  return { founderName, managerName, facebook, instagram, twitter, website };
+  return { founderName };
 }
 
 
@@ -674,7 +669,6 @@ export async function scrapeFullCompanyProfile(
   };
 
   const htmlMap = new Map<string, string>();
-  let aggregatedSiteText = "";
 
   if (validSite && base) {
     const homeTarget = websiteUrl.startsWith("http") ? websiteUrl : `${base}/`;
@@ -1002,8 +996,6 @@ export async function scrapeFullCompanyProfile(
           .replace(/\s*\(\s*dot\s*\)\s*/gi, ".")
           .replace(/\s*\{\s*dot\s*\}\s*/gi, ".")
           .replace(/\s+dot\s+/gi, ".");
-
-        aggregatedSiteText += ` ${unobfuscatedText}`;
 
         const textEmails = unobfuscatedText.match(EMAIL_REGEX) || [];
         for (const raw of textEmails) {
@@ -1412,16 +1404,6 @@ export async function scrapeFullCompanyProfile(
     }
   }
 
-  // 9. Verify domain mail server (MX records) for genuinely discovered emails
-  if (baseHostname && (compEmails.size > 0 || founderEmails.size > 0 || managerEmails.size > 0)) {
-    try {
-      const mxRecords = await dnsPromises.resolveMx(baseHostname).catch(() => []);
-      if (!mxRecords || mxRecords.length === 0) {
-        // Domain has no active MX records
-      }
-    } catch {}
-  }
-
   // Filter socials: Only genuine personal profiles matching the person's name
   const fFirst = founderName ? founderName.split(/\s+/)[0].toLowerCase() : "";
   const fLast = founderName ? founderName.split(/\s+/).slice(-1)[0].toLowerCase() : "";
@@ -1479,43 +1461,5 @@ export async function scrapeFullCompanyProfile(
     manager_emails: Array.from(managerEmails),
     manager_phones: Array.from(managerPhonesMap.values()),
     manager_socials: cleanManagerSocials.length > 0 ? cleanManagerSocials : Array.from(managerSocials),
-  };
-}
-
-// Backwards compatibility wrappers
-export async function deepScrapeWebsite(url: string) {
-  const profile = await scrapeFullCompanyProfile(url, { name: "Company" });
-  const allCategorizedEmails: Array<{ email: string; category: "founder_ceo" | "manager_exec" | "company_general"; tag: string }> = [
-    ...profile.founder_emails.map((e) => ({ email: e, category: "founder_ceo" as const, tag: "Founder / CEO" })),
-    ...profile.manager_emails.map((e) => ({ email: e, category: "manager_exec" as const, tag: "Manager / Exec" })),
-    ...profile.company_emails.map((e) => ({ email: e, category: "company_general" as const, tag: "Company General" })),
-  ];
-
-  return {
-    emails: allCategorizedEmails,
-    primaryEmail: profile.founder_emails[0] || profile.company_emails[0],
-    founderEmail: profile.founder_emails[0],
-    managerEmail: profile.manager_emails[0],
-    companyEmail: profile.company_emails[0],
-    phoneNumbers: profile.company_phones,
-    facebookUrl: profile.company_facebook,
-    instagramUrl: profile.company_instagram,
-    linkedinUrl: profile.company_linkedin,
-    twitterUrl: profile.company_twitter,
-    tiktokUrl: profile.company_tiktok,
-    youtubeUrl: profile.company_youtube,
-  };
-}
-
-export async function enrichWebsite(url: string) {
-  const d = await deepScrapeWebsite(url);
-  return {
-    emails: d.emails.map((e) => ({ email: e.email, type: "role" as const, status: "valid" as const })),
-    facebookUrl: d.facebookUrl,
-    instagramUrl: d.instagramUrl,
-    linkedinUrl: d.linkedinUrl,
-    twitterUrl: d.twitterUrl,
-    tiktokUrl: d.tiktokUrl,
-    youtubeUrl: d.youtubeUrl,
   };
 }

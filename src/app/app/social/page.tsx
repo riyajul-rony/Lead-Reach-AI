@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Clock, Share2 } from "lucide-react";
+import { Plus, Clock } from "lucide-react";
 import { SocialHubManager } from "@/components/social/social-hub-manager";
 import { requireUser } from "@/server/auth/guards";
 import { getTrialStatus } from "@/server/billing/trial";

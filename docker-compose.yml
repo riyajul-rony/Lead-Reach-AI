@@ -72,7 +72,7 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node", "dist/worker.cjs"]
+    command: ["node", "--max-old-space-size=384", "dist/worker.cjs"]
     environment:
       <<: *app_env
       SERVICE_ROLE: worker

@@ -22,7 +22,7 @@ import {
   Palette,
 } from "lucide-react";
 import { StatusBadge } from "@/components/admin/status-badge";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { BrandLogo } from "@/components/brand/brand-logo";
 

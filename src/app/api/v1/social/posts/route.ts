@@ -7,6 +7,7 @@ import { getUserApiKey } from "@/server/api-keys/service";
 import { assertLimit } from "@/server/billing/limits";
 import { assertTrialActive, isTrialExpiredError } from "@/server/billing/trial";
 import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
+import { logger } from "@/server/logger";
 
 export async function GET() {
   const session = await getSessionUser();
@@ -168,7 +169,7 @@ export async function POST(req: NextRequest) {
       imagePrompt = aiResult.imagePrompt;
       if (aiResult.imageUrl) imageUrl = aiResult.imageUrl;
     } catch (err: any) {
-      console.warn("AI generation fallback to default copy:", err.message);
+      logger.warn({ err: err?.message }, "AI generation fallback to default copy");
     }
   }
 
