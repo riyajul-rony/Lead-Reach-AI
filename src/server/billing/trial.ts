@@ -1,6 +1,7 @@
 import { db } from "@/server/db";
-import { getConfig } from "@/server/config";
+import { getAppUrl, getConfig } from "@/server/config";
 import { isAdminRole } from "@/server/auth/permissions";
+import { sendSystemMail } from "@/server/email/system-mailer";
 import { logger } from "@/server/logger";
 
 const DAY_MS = 86_400_000;
@@ -387,4 +388,199 @@ export async function backfillFreeUserTrials(now: Date = new Date()): Promise<{
   }
 
   return { createdCount, skippedCount };
+}
+
+type TrialReminderMilestone = "4d" | "1d" | "expired";
+
+function buildTrialReminderContent(
+  milestone: TrialReminderMilestone,
+  userName: string | null | undefined,
+  endsAt: Date,
+  billingUrl: string
+) {
+  const greetingName = userName?.trim() || "there";
+  const formattedEnd = endsAt.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+  if (milestone === "expired") {
+    return {
+      title: "Your free trial has ended",
+      subject: "Your Lead Reach AI free trial has ended",
+      body: `Your 14-day free trial ended on ${formattedEnd}. Upgrade to a paid plan to resume campaign sending, lead searches, and social auto-posting.`,
+      text: `Hi ${greetingName},\n\nYour Lead Reach AI free trial ended on ${formattedEnd}.\n\nYour existing leads, campaigns, and reports are safe, and exports remain available. Upgrade to a paid plan to resume sending and automation:\n${billingUrl}\n`,
+      html: `<p>Hi ${greetingName},</p><p>Your Lead Reach AI free trial ended on <strong>${formattedEnd}</strong>.</p><p>Your existing leads, campaigns, and reports are safe, and exports remain available. To resume sending, lead discovery, and social auto-posting, please upgrade to a paid plan:</p><p><a href="${billingUrl}">Upgrade Your Plan</a></p>`,
+    };
+  }
+
+  if (milestone === "1d") {
+    return {
+      title: "1 day left in your free trial",
+      subject: "Only 1 day left in your Lead Reach AI free trial",
+      body: `Your free trial ends tomorrow (${formattedEnd}). Upgrade to a paid plan to keep your campaigns running without interruption.`,
+      text: `Hi ${greetingName},\n\nYou have 1 day left in your Lead Reach AI free trial (ends ${formattedEnd}).\n\nUpgrade before the trial ends so your outreach campaigns and social schedules keep running without interruption:\n${billingUrl}\n`,
+      html: `<p>Hi ${greetingName},</p><p>You have <strong>1 day left</strong> in your Lead Reach AI free trial (ends <strong>${formattedEnd}</strong>).</p><p>Upgrade before the trial ends so your outreach campaigns and social schedules keep running smoothly:</p><p><a href="${billingUrl}">Choose a Paid Plan</a></p>`,
+    };
+  }
+
+  return {
+    title: "4 days left in your free trial",
+    subject: "4 days left in your Lead Reach AI free trial",
+    body: `You have 4 days left in your free trial (ends ${formattedEnd}). Upgrade anytime to keep uninterrupted access to all features.`,
+    text: `Hi ${greetingName},\n\nYou have 4 days left in your Lead Reach AI free trial (ends ${formattedEnd}).\n\nWhen the trial ends, sending, lead search, and social publishing will pause until you choose a paid plan:\n${billingUrl}\n`,
+    html: `<p>Hi ${greetingName},</p><p>You have <strong>4 days left</strong> in your Lead Reach AI free trial (ends <strong>${formattedEnd}</strong>).</p><p>When the trial ends, outreach sending, lead discovery, and social publishing pause until you pick a paid plan:</p><p><a href="${billingUrl}">View Paid Plans</a></p>`,
+  };
+}
+
+/**
+ * Dispatch idempotent 4-day, 1-day, and expired trial reminders to verified account owners
+ * and record in-app notification notices. Never throws on mailer or per-user errors.
+ */
+export async function processTrialReminders(now: Date = new Date()): Promise<{
+  processed: number;
+  emailsSent: number;
+  noticesCreated: number;
+}> {
+  if (!db.subscriptions?.findMany) {
+    return { processed: 0, emailsSent: 0, noticesCreated: 0 };
+  }
+
+  const trialSubs = await db.subscriptions
+    .findMany({
+      where: {
+        OR: [{ status: "trialing" }, { provider: "trial" }],
+      },
+    })
+    .catch(() => []);
+
+  const appUrl = (await getAppUrl().catch(() => "http://localhost:3000")).replace(/\/$/, "");
+  const billingUrl = `${appUrl}/app/settings/billing`;
+
+  let processed = 0;
+  let emailsSent = 0;
+  let noticesCreated = 0;
+
+  for (const sub of trialSubs) {
+    try {
+      const user = await db.users.findUnique({
+        where: { id: sub.user_id },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          plan: true,
+          trial_exempt: true,
+          email_verified_at: true,
+        },
+      });
+
+      if (!user || isAdminRole(user.role) || user.trial_exempt) continue;
+      if (user.plan && user.plan !== "free") continue;
+
+      const endsAt = new Date(sub.current_period_end);
+      const msLeft = endsAt.getTime() - now.getTime();
+      let milestone: TrialReminderMilestone | null = null;
+
+      if (msLeft <= 0) {
+        milestone = "expired";
+      } else {
+        const daysLeft = Math.ceil(msLeft / DAY_MS);
+        if (daysLeft === 1) {
+          milestone = "1d";
+        } else if (daysLeft <= 4) {
+          milestone = "4d";
+        }
+      }
+
+      if (!milestone) continue;
+      processed++;
+
+      const endDayStr = endsAt.toISOString().slice(0, 10);
+      const noticeType = `trial_notice_${milestone}_${sub.id}_${endDayStr}`;
+      const emailMarkerType = `trial_reminder_${milestone}_${sub.id}_${endDayStr}`;
+      const content = buildTrialReminderContent(milestone, user.name, endsAt, billingUrl);
+
+      // Record idempotent in-app notification if notifications model is available
+      const notifApi = (db as any).notifications;
+      if (notifApi?.findFirst && notifApi?.create) {
+        const existingNotice = await notifApi
+          .findFirst({ where: { user_id: user.id, type: noticeType } })
+          .catch(() => null);
+        if (!existingNotice) {
+          const createdNotice = await notifApi
+            .create({
+              data: {
+                user_id: user.id,
+                type: noticeType,
+                title: content.title,
+                body: content.body,
+                entity_type: "subscription",
+                entity_id: sub.id,
+              },
+            })
+            .catch(() => null);
+          if (createdNotice) noticesCreated++;
+        }
+      }
+
+      // Send email ONLY to verified email owners, idempotently
+      if (!user.email_verified_at || !user.email) {
+        continue;
+      }
+
+      const existingMarkers = await db.activity_logs
+        .findMany({
+          where: { user_id: user.id, type: emailMarkerType },
+          take: 1,
+        })
+        .catch(() => []);
+
+      if (existingMarkers.length > 0) {
+        continue;
+      }
+
+      const mailRes = await sendSystemMail({
+        to: user.email,
+        subject: content.subject,
+        text: content.text,
+        html: content.html,
+      });
+
+      if (!mailRes.ok) {
+        logger.warn(
+          { userId: user.id, milestone, err: mailRes.error },
+          "Trial reminder email delivery failed; continuing maintenance"
+        );
+        continue;
+      }
+
+      await db.activity_logs
+        .create({
+          data: {
+            user_id: user.id,
+            type: emailMarkerType,
+            message: `Trial ${milestone} reminder email sent to ${user.email}.`,
+            meta: { subscriptionId: sub.id, milestone, endsAt: endsAt.toISOString() },
+          },
+        })
+        .catch((err: any) => {
+          logger.warn(
+            { userId: user.id, milestone, err: err?.message },
+            "Failed to persist trial reminder idempotency marker"
+          );
+        });
+
+      emailsSent++;
+    } catch (err: any) {
+      logger.warn(
+        { subId: sub?.id, err: err?.message },
+        "Unexpected error while processing trial reminder; continuing"
+      );
+    }
+  }
+
+  return { processed, emailsSent, noticesCreated };
 }

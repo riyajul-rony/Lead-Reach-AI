@@ -18,7 +18,7 @@ import { incrementWarmupDayForActiveAccounts } from "@/server/email/account-serv
 import { evaluateDailyAccountHealth } from "@/server/email/adaptive-limit-service";
 import { runSelfWarmupTick } from "@/server/email/warmup-pool-service";
 import { recoverStuckLeadSearches } from "@/server/worker/lead-search-worker";
-import { getTrialExpiredUserIdsSet, getTrialStatus } from "@/server/billing/trial";
+import { getTrialExpiredUserIdsSet, getTrialStatus, processTrialReminders } from "@/server/billing/trial";
 
 /**
  * 1. PLANNER WORKER: runs every minute, computes scheduled runs from DB campaigns
@@ -460,6 +460,10 @@ export function startMaintenanceWorker() {
       logger.info("Maintenance worker tick starting");
       const result = await resetOrArchiveOldUsageCounters();
       const lifecycleResult = await processSubscriptionLifecycles();
+      const trialReminderResult = await processTrialReminders().catch((err) => {
+        logger.warn({ err }, "Trial reminder job failed; continuing maintenance");
+        return { processed: 0, emailsSent: 0, noticesCreated: 0 };
+      });
       const purgeResult = await cleanupOldLogs(90);
       const warmupResult = await incrementWarmupDayForActiveAccounts();
       const healthResult = await evaluateDailyAccountHealth();
@@ -468,12 +472,13 @@ export function startMaintenanceWorker() {
         {
           archivedCounters: result,
           lifecycles: lifecycleResult,
+          trialReminders: trialReminderResult,
           purgedLogs: purgeResult,
           warmupIncrements: warmupResult,
           accountHealthEval: healthResult,
           durationMs,
         },
-        "Maintenance tick completed (archived counters, processed lifecycles, purged 90d logs, warmup incremented & account health evaluated)"
+        "Maintenance tick completed (archived counters, processed lifecycles, sent trial reminders, purged 90d logs, warmup incremented & account health evaluated)"
       );
 
       try {
@@ -486,6 +491,7 @@ export function startMaintenanceWorker() {
             durationMs,
             archivedCounters: result,
             lifecycles: lifecycleResult,
+            trialReminders: trialReminderResult,
             purgedLogs: purgeResult,
             warmupIncrements: warmupResult,
           }),
