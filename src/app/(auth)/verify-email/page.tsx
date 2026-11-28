@@ -2,9 +2,9 @@ import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthShell } from "@/components/auth/auth-shell";
-import { resendVerificationAction } from "@/server/auth/actions";
+import { ResendVerificationForm } from "@/components/auth/resend-verification-form";
+import { safeDecodeURIComponent } from "@/lib/query-params";
 import { AlertCircle } from "lucide-react";
-import { Button, Input } from "@/components/ui";
 
 export const metadata = {
   title: "Verify email — Lead Reach AI",
@@ -40,7 +40,7 @@ export default async function VerifyEmailPage({
     errorMessage = "A server error occurred during verification. Please request a new link.";
   }
 
-  const emailParam = sp.email ? decodeURIComponent(sp.email) : "";
+  const emailParam = safeDecodeURIComponent(sp.email);
 
   return (
     <AuthShell
@@ -69,7 +69,7 @@ export default async function VerifyEmailPage({
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" strokeWidth={1.5} />
             <div className="space-y-1">
               <p className="font-semibold">Email Delivery Issue</p>
-              <p className="text-[11px] opacity-90">{decodeURIComponent(sp.delivery_error)}</p>
+              <p className="text-[11px] opacity-90">{safeDecodeURIComponent(sp.delivery_error)}</p>
             </div>
           </div>
         ) : (
@@ -84,29 +84,7 @@ export default async function VerifyEmailPage({
           </div>
         )}
 
-        <form
-          action={async (formData) => {
-            "use server";
-            await resendVerificationAction(undefined, formData);
-          }}
-          className="space-y-3 pt-2"
-        >
-          {emailParam ? (
-            <input type="hidden" name="email" value={emailParam} />
-          ) : (
-            <Input
-              name="email"
-              type="email"
-              label="Email Address"
-              placeholder="you@company.com"
-              required
-            />
-          )}
-
-          <Button type="submit" variant="secondary" size="md" className="w-full">
-            Resend Verification Link
-          </Button>
-        </form>
+        <ResendVerificationForm email={emailParam} allowEmailInput className="pt-2" />
 
         <div className="pt-2 text-center">
           <Link

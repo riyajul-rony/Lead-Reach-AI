@@ -3,9 +3,10 @@ import Link from "next/link";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { AuthForm } from "@/components/auth/auth-form";
 import { GoogleAuthButton } from "@/components/auth/google-auth-button";
-import { loginAction, resendVerificationAction } from "@/server/auth/actions";
+import { ResendVerificationForm } from "@/components/auth/resend-verification-form";
+import { loginAction } from "@/server/auth/actions";
+import { safeDecodeURIComponent } from "@/lib/query-params";
 import { CheckCircle2, AlertCircle } from "lucide-react";
-import { Button } from "@/components/ui";
 
 export const metadata = {
   title: "Log in — Lead Reach AI",
@@ -30,7 +31,7 @@ export default async function LoginPage({
     bannerError = "Registration is currently invite-only.";
   }
 
-  const prefilledEmail = sp.email ? decodeURIComponent(sp.email) : "";
+  const prefilledEmail = safeDecodeURIComponent(sp.email);
 
   return (
     <AuthShell
@@ -67,18 +68,7 @@ export default async function LoginPage({
           <p className="text-[11px] opacity-90">
             We sent a verification link to {prefilledEmail || "your email"}.
           </p>
-          <form
-            action={async (formData) => {
-              "use server";
-              await resendVerificationAction(undefined, formData);
-            }}
-            className="pt-1"
-          >
-            <input type="hidden" name="email" value={prefilledEmail} />
-            <Button type="submit" variant="secondary" size="sm" className="w-full text-xs">
-              Resend Verification Link
-            </Button>
-          </form>
+          <ResendVerificationForm email={prefilledEmail} buttonSize="sm" className="pt-1" />
         </div>
       )}
 
