@@ -14,6 +14,7 @@ import { requireUser } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { getUserUsageAndLimits } from "@/server/billing/limits";
 import { getTrialStatus } from "@/server/billing/trial";
+import { getManualPaymentConfig } from "@/server/billing/manual-settings";
 import { BillingClient } from "./billing-client";
 import { PageHeader } from "@/components/ui/page-header";
 import { SettingsNav } from "@/components/settings/settings-nav";
@@ -27,9 +28,19 @@ export const metadata = {
 
 export default async function BillingSettingsPage() {
   const user = await requireUser();
-  const [limitsAndUsage, trialStatus] = await Promise.all([
+  const [limitsAndUsage, trialStatus, manualConfig] = await Promise.all([
     getUserUsageAndLimits(user.id),
     getTrialStatus(user.id).catch(() => null),
+    getManualPaymentConfig().catch(() => ({
+      bkashNumber: "",
+      nagadNumber: "",
+      bankName: "",
+      bankAccountName: "",
+      bankAccountNumber: "",
+      note: "",
+      usdToBdtRate: null,
+      isConfigured: false,
+    })),
   ]);
 
   // Fetch active subscription
@@ -293,6 +304,7 @@ export default async function BillingSettingsPage() {
         activeSubscriptionId={activeSubscription?.id}
         isCanceled={Boolean(activeSubscription?.cancel_at_period_end)}
         isTrialExpired={trialStatus?.status === "expired"}
+        manualConfig={manualConfig}
       />
 
       {/* Invoices & Payment History */}

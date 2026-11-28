@@ -19,7 +19,9 @@ import { StatCard } from "@/components/admin/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ManualPaymentDialog } from "./manual-payment-dialog";
+import { ManualSettingsCard } from "./manual-settings-card";
 import { CancelSubscriptionButton, RefundPaymentButton } from "./subscription-actions-menu";
+import { getManualPaymentConfig } from "@/server/billing/manual-settings";
 
 export const metadata = {
   title: "Billing & Revenue — Lead Reach AI Admin",
@@ -98,6 +100,17 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
     orderBy: { monthly_price: "asc" },
     select: { id: true, name: true, slug: true, monthly_price: true, currency: true },
   }).catch(() => []);
+
+  const manualPaymentConfig = await getManualPaymentConfig().catch(() => ({
+    bkashNumber: "",
+    nagadNumber: "",
+    bankName: "",
+    bankAccountName: "",
+    bankAccountNumber: "",
+    note: "",
+    usdToBdtRate: null,
+    isConfigured: false,
+  }));
 
   const planOptions = allPlansForSelect.map((p: any) => ({
     id: p.id,
@@ -241,6 +254,9 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
           bg="bg-amber-50 dark:bg-amber-950/40"
         />
       </div>
+
+      {/* Manual Payment Instructions & Exchange Rate Settings */}
+      <ManualSettingsCard initialConfig={manualPaymentConfig} />
 
       {/* Tabs & Filter Bar & Table */}
       <div className="rounded-xl border border-border bg-surface overflow-hidden space-y-0">

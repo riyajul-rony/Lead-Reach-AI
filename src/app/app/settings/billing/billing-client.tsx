@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import type { ManualPaymentConfig } from "@/server/billing/manual-settings";
 
 interface PlanItem {
   id: string;
@@ -27,6 +28,7 @@ interface BillingClientProps {
   activeSubscriptionId?: string;
   isCanceled?: boolean;
   isTrialExpired?: boolean;
+  manualConfig: ManualPaymentConfig;
 }
 
 export function BillingClient({
@@ -35,6 +37,7 @@ export function BillingClient({
   activeSubscriptionId,
   isCanceled,
   isTrialExpired = false,
+  manualConfig,
 }: BillingClientProps) {
   const router = useRouter();
   const [loadingPlanId, setLoadingPlanId] = useState<string | null>(null);
@@ -48,6 +51,13 @@ export function BillingClient({
 
   const handleSelectPlan = async (plan: PlanItem) => {
     if (plan.slug === currentPlanSlug) return;
+    if (!manualConfig.isConfigured) {
+      setModalData({
+        planName: plan.name,
+        amount: plan.price_monthly,
+      });
+      return;
+    }
 
     setLoadingPlanId(plan.id);
     try {
@@ -136,16 +146,24 @@ export function BillingClient({
 
       {/* Available Plans Comparison Cards */}
       <div id="upgrade-plans" className="space-y-4">
-        <div>
-          <h3 className="text-lg font-bold text-fg">
-            {isTrialExpired ? "Upgrade to Continue Using Lead Reach AI" : "Compare Plans & Upgrade"}
-          </h3>
-          <p className="text-xs text-muted">
-            {isTrialExpired
-              ? "Your free trial has ended. Select a paid plan below to immediately restore outreach sending, lead discovery, and social posting."
-              : "Choose the plan that fits your business outreach scale. Upgrades activate immediately."}
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-fg">
+              {isTrialExpired ? "Upgrade to Continue Using Lead Reach AI" : "Compare Plans & Upgrade"}
+            </h3>
+            <p className="text-xs text-muted">
+              {isTrialExpired
+                ? "Your free trial has ended. Select a paid plan below to immediately restore outreach sending, lead discovery, and social posting."
+                : "Choose the plan that fits your business outreach scale."}
+            </p>
+          </div>
         </div>
+
+        {!manualConfig.isConfigured && (
+          <div className="rounded-lg border border-warning/30 bg-warningBg px-4 py-3 text-xs text-fg">
+            Manual payment is not set up yet. Please contact the administrator before submitting an upgrade payment.
+          </div>
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {plans.map((p) => {
@@ -269,15 +287,21 @@ export function BillingClient({
             </div>
 
             <div className="rounded-lg bg-bgSubtle border border-border p-4 text-xs space-y-2 whitespace-pre-line text-fg leading-relaxed">
-              {modalData.instructionHtml}
+              {manualConfig.isConfigured && modalData.instructionHtml ? (
+                modalData.instructionHtml
+              ) : (
+                "Manual payment is not set up yet. Please contact the administrator before submitting a payment."
+              )}
             </div>
 
-            <div className="rounded-lg bg-brand/5 border border-brand/20 p-3 text-xs text-brand space-y-1">
-              <div className="font-semibold">Next Step:</div>
-              <div>
-                Once you complete the transfer, send your Transaction ID and Invoice #{modalData.invoiceNumber} to our support team. Your account will be activated instantly upon verification!
+            {manualConfig.isConfigured && (
+              <div className="rounded-lg bg-brand/5 border border-brand/20 p-3 text-xs text-brand space-y-1">
+                <div className="font-semibold">Next Step:</div>
+                <div>
+                  Once you complete the transfer, send your Transaction ID and Invoice #{modalData.invoiceNumber} to our support team. Your account will be activated instantly upon verification!
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="flex justify-end pt-2 border-t border-border">
               <Button

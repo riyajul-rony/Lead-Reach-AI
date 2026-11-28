@@ -19,6 +19,11 @@ export interface CheckoutResult {
   provider: string;
   instructionHtml?: string;
   invoiceNumber?: string;
+  configured?: boolean;
+  alreadySubmitted?: boolean;
+  existingStatus?: string;
+  bdtAmount?: number | null;
+  usdToBdtRate?: number | null;
 }
 
 export interface WebhookResult {

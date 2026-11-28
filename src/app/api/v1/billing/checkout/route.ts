@@ -26,8 +26,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Plan not found or inactive" }, { status: 404 });
   }
 
+  const normalizedInterval = interval === "yearly" ? "yearly" : "monthly";
   const amount =
-    interval === "yearly" ? Number(plan.price_yearly || 0) : Number(plan.price_monthly || 0);
+    normalizedInterval === "yearly"
+      ? Number((plan as any).yearly_price ?? (plan as any).price_yearly ?? 0)
+      : Number((plan as any).monthly_price ?? (plan as any).price_monthly ?? 0);
 
   const defaultProviderId = await getDefaultProviderId();
   const provider = getPaymentProvider(defaultProviderId);
@@ -51,7 +54,7 @@ export async function POST(req: NextRequest) {
       planName: plan.name,
       amount,
       currency: plan.currency || "USD",
-      interval,
+      interval: normalizedInterval,
       successUrl: `${appUrl}/app/settings/billing?success=true`,
       cancelUrl: `${appUrl}/app/settings/billing?canceled=true`,
       metadata: {

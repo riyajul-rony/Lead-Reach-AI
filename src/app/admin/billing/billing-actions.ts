@@ -4,6 +4,22 @@ import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
+import {
+  saveManualPaymentConfig,
+  SaveManualPaymentConfigInput,
+} from "@/server/billing/manual-settings";
+
+export async function saveManualPaymentSettingsAction(input: SaveManualPaymentConfigInput) {
+  const admin = await requirePermission("billing.manage");
+  try {
+    const saved = await saveManualPaymentConfig(input, admin.id);
+    revalidatePath("/admin/billing");
+    revalidatePath("/app/settings/billing");
+    return { success: true, config: saved };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Failed to save manual payment settings." };
+  }
+}
 
 export interface RecordManualPaymentInput {
   userId: string;
