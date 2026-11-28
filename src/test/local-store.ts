@@ -31,6 +31,7 @@ interface StoreSchema {
   usage_counters: any[];
   subscriptions: any[];
   payments: any[];
+  notifications: any[];
   processed_webhook_events: any[];
   error_logs: any[];
   system_settings: any[];
@@ -72,6 +73,7 @@ function getInitialStore(): StoreSchema {
     usage_counters: [],
     subscriptions: [],
     payments: [],
+    notifications: [],
     processed_webhook_events: [],
     error_logs: [],
     system_settings: [],
@@ -1151,6 +1153,47 @@ export const localDevStore = {
     store.payments.push(newPayment);
     saveStore();
     return newPayment;
+  },
+  updateManyPayments: (filter: (item: any) => boolean, data: any) => {
+    const store = loadStore();
+    if (!store.payments) store.payments = [];
+    let count = 0;
+    store.payments = store.payments.map((p) => {
+      if (filter(p)) {
+        count++;
+        return { ...p, ...data, updated_at: new Date().toISOString() };
+      }
+      return p;
+    });
+    saveStore();
+    return { count };
+  },
+
+  // --- Notifications ---
+  getNotifications: (filter?: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!(store as any).notifications) (store as any).notifications = [];
+    const list = (store as any).notifications as any[];
+    return filter ? list.filter(filter) : list;
+  },
+  findNotification: (filter: (item: any) => boolean) => {
+    const store = loadStore();
+    if (!(store as any).notifications) (store as any).notifications = [];
+    return ((store as any).notifications as any[]).find(filter) || null;
+  },
+  saveNotification: (item: any) => {
+    const store = loadStore();
+    if (!(store as any).notifications) (store as any).notifications = [];
+    const notif = {
+      id: item.id || `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      created_at: new Date().toISOString(),
+      read_at: null,
+      emailed_at: null,
+      ...item,
+    };
+    ((store as any).notifications as any[]).unshift(notif);
+    saveStore();
+    return notif;
   },
 
   // Processed Webhooks

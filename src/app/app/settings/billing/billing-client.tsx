@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
-import { CheckCircle2, Loader2, ArrowRight, X, Sparkles, Ban } from "lucide-react";
+import React, { useMemo, useState } from "react";
+import { CheckCircle2, Loader2, ArrowRight, Sparkles, Ban, Clock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Dialog } from "@/components/ui/dialog";
 import type { ManualPaymentConfig } from "@/server/billing/manual-settings";
 
 interface PlanItem {
@@ -22,6 +24,24 @@ interface PlanItem {
   features: string[];
 }
 
+export interface RecentPaymentSummary {
+  id: string;
+  invoice_number: string;
+  amount: number;
+  currency: string;
+  status: string;
+  plan_id: string | null;
+  plan_name: string | null;
+  interval: "monthly" | "yearly";
+  method: string | null;
+  transaction_id: string | null;
+  sender_number: string | null;
+  user_note: string | null;
+  bdt_amount: number | null;
+  submitted_at: string | null;
+  rejection_reason: string | null;
+}
+
 interface BillingClientProps {
   plans: PlanItem[];
   currentPlanSlug: string;
@@ -29,6 +49,7 @@ interface BillingClientProps {
   isCanceled?: boolean;
   isTrialExpired?: boolean;
   manualConfig: ManualPaymentConfig;
+  recentPayments?: RecentPaymentSummary[];
 }
 
 export function BillingClient({
@@ -38,35 +59,83 @@ export function BillingClient({
   isCanceled,
   isTrialExpired = false,
   manualConfig,
+  recentPayments = [],
 }: BillingClientProps) {
   const router = useRouter();
+  const [interval, setInterval] = useState<"monthly" | "yearly">("monthly");
   const [loadingPlanId, setLoadingPlanId] = useState<string | null>(null);
   const [canceling, setCanceling] = useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [bannerError, setBannerError] = useState<string | null>(null);
+
+  const availableMethods = useMemo(() => {
+    const list: Array<{ id: "bkash" | "nagad" | "bank"; label: string }> = [];
+    if (manualConfig.bkashNumber) list.push({ id: "bkash", label: "bKash" });
+    if (manualConfig.nagadNumber) list.push({ id: "nagad", label: "Nagad" });
+    if (manualConfig.bankName && manualConfig.bankAccountNumber) {
+      list.push({ id: "bank", label: "Bank Transfer" });
+    }
+    return list;
+  }, [manualConfig]);
+
   const [modalData, setModalData] = useState<{
-    invoiceNumber?: string;
-    instructionHtml?: string;
-    amount?: number;
-    planName?: string;
+    paymentId: string;
+    invoiceNumber: string;
+    amount: number;
+    currency: string;
+    bdtAmount: number | null;
+    planName: string;
+    interval: "monthly" | "yearly";
+    alreadySubmitted: boolean;
+    submittedMethod?: string | null;
+    submittedTrxId?: string | null;
+    submittedSender?: string | null;
   } | null>(null);
 
-  const handleSelectPlan = async (plan: PlanItem) => {
-    if (plan.slug === currentPlanSlug) return;
+  const [method, setMethod] = useState<"bkash" | "nagad" | "bank">(
+    availableMethods[0]?.id || "bkash"
+  );
+  const [transactionId, setTransactionId] = useState("");
+  const [senderNumber, setSenderNumber] = useState("");
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+
+  const pendingByPlanId = useMemo(() => {
+    const map = new Map<string, RecentPaymentSummary>();
+    for (const p of recentPayments) {
+      if (p.status === "pending" && p.plan_id && !map.has(p.plan_id)) {
+        map.set(p.plan_id, p);
+      }
+    }
+    return map;
+  }, [recentPayments]);
+
+  const latestRejected = useMemo(
+    () => recentPayments.find((p) => p.status === "failed" && p.rejection_reason),
+    [recentPayments]
+  );
+
+  const startManualCheckout = async (plan: PlanItem) => {
+    setBannerError(null);
     if (!manualConfig.isConfigured) {
-      setModalData({
-        planName: plan.name,
-        amount: plan.price_monthly,
-      });
+      setBannerError("Manual payment is not set up yet. Please contact the administrator.");
       return;
     }
 
+    const planAmount = interval === "yearly" ? plan.price_yearly : plan.price_monthly;
     setLoadingPlanId(plan.id);
+    setSubmitError(null);
+    setSubmitSuccess(null);
+
     try {
       const res = await fetch("/api/v1/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           planId: plan.id,
-          interval: "monthly",
+          interval,
         }),
       });
 
@@ -77,28 +146,84 @@ export function BillingClient({
 
       if (data.data?.checkoutUrl && !data.data?.instructionHtml) {
         window.location.href = data.data.checkoutUrl;
-      } else {
-        setModalData({
-          invoiceNumber: data.data?.invoiceNumber,
-          instructionHtml: data.data?.instructionHtml,
-          amount: plan.price_monthly,
-          planName: plan.name,
-        });
+        return;
       }
+
+      const existingPending = pendingByPlanId.get(plan.id);
+      const alreadySubmitted = Boolean(data.data?.alreadySubmitted);
+      setMethod(availableMethods[0]?.id || "bkash");
+      setTransactionId("");
+      setSenderNumber("");
+      setNote("");
+      setModalData({
+        paymentId: data.data?.sessionId,
+        invoiceNumber: data.data?.invoiceNumber || "PENDING",
+        amount: planAmount,
+        currency: plan.currency || "USD",
+        bdtAmount:
+          typeof data.data?.bdtAmount === "number"
+            ? data.data.bdtAmount
+            : manualConfig.usdToBdtRate
+            ? Math.round(planAmount * manualConfig.usdToBdtRate)
+            : null,
+        planName: plan.name,
+        interval,
+        alreadySubmitted,
+        submittedMethod: existingPending?.method || null,
+        submittedTrxId: existingPending?.transaction_id || null,
+        submittedSender: existingPending?.sender_number || null,
+      });
     } catch (err: any) {
-      alert(err.message || "Checkout failed");
+      setBannerError(err.message || "Checkout failed.");
     } finally {
       setLoadingPlanId(null);
     }
   };
 
+  const handleSubmitPaymentDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modalData) return;
+    setSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const res = await fetch("/api/v1/billing/manual/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          paymentId: modalData.paymentId,
+          method,
+          transactionId: transactionId.trim(),
+          senderNumber: senderNumber.trim(),
+          note: note.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to submit payment details.");
+      }
+
+      setModalData({
+        ...modalData,
+        alreadySubmitted: true,
+        submittedMethod: data.data?.method || method,
+        submittedTrxId: data.data?.transactionId || transactionId.trim(),
+        submittedSender: data.data?.senderNumber || senderNumber.trim(),
+      });
+      setSubmitSuccess("Payment details submitted and waiting for admin review.");
+      router.refresh();
+    } catch (err: any) {
+      setSubmitError(err.message || "Failed to submit payment details.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleCancelSubscription = async () => {
     if (!activeSubscriptionId) return;
-    if (!confirm("Are you sure you want to cancel auto-renewal? You will keep your plan limits until the end of the billing period.")) {
-      return;
-    }
-
     setCanceling(true);
+    setBannerError(null);
     try {
       const res = await fetch("/api/v1/billing/cancel", {
         method: "POST",
@@ -109,9 +234,10 @@ export function BillingClient({
       });
 
       if (!res.ok) throw new Error("Failed to cancel subscription");
+      setCancelDialogOpen(false);
       router.refresh();
     } catch (err: any) {
-      alert(err.message || "Cancel failed");
+      setBannerError(err.message || "Cancel failed");
     } finally {
       setCanceling(false);
     }
@@ -127,20 +253,37 @@ export function BillingClient({
             <div className="text-muted mt-0.5">
               {isCanceled
                 ? "Your subscription is scheduled to expire at the end of the current period."
-                : "Your subscription automatically renews each month."}
+                : "Your subscription is active for the current billing period."}
             </div>
           </div>
           {!isCanceled && (
             <Button
               variant="danger"
               size="sm"
-              onClick={handleCancelSubscription}
+              onClick={() => setCancelDialogOpen(true)}
               disabled={canceling}
             >
               {canceling ? <Loader2 size={13} className="animate-spin mr-1.5" /> : <Ban size={13} className="mr-1.5" />}
               Cancel Auto-Renew
             </Button>
           )}
+        </div>
+      )}
+
+      {latestRejected && (
+        <div className="rounded-lg border border-danger/30 bg-dangerBg px-4 py-3 text-xs text-fg space-y-1">
+          <div className="font-semibold text-danger">
+            Latest Manual Payment Rejected ({latestRejected.invoice_number})
+          </div>
+          <div>
+            Reason: <span className="font-medium">{latestRejected.rejection_reason}</span>
+          </div>
+        </div>
+      )}
+
+      {bannerError && (
+        <div className="rounded-lg border border-danger/30 bg-dangerBg px-4 py-3 text-xs text-danger">
+          {bannerError}
         </div>
       )}
 
@@ -153,9 +296,35 @@ export function BillingClient({
             </h3>
             <p className="text-xs text-muted">
               {isTrialExpired
-                ? "Your free trial has ended. Select a paid plan below to immediately restore outreach sending, lead discovery, and social posting."
-                : "Choose the plan that fits your business outreach scale."}
+                ? "Your free trial has ended. Select a paid plan below to restore outreach sending, lead discovery, and social posting."
+                : "Choose a plan and billing interval. Accounts activate as soon as your manual payment is verified."}
             </p>
+          </div>
+
+          {/* Monthly / Yearly Toggle */}
+          <div className="inline-flex rounded-lg border border-border bg-surface p-1 self-start">
+            <button
+              type="button"
+              onClick={() => setInterval("monthly")}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition ${
+                interval === "monthly"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted hover:text-fg"
+              }`}
+            >
+              Monthly
+            </button>
+            <button
+              type="button"
+              onClick={() => setInterval("yearly")}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition ${
+                interval === "yearly"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted hover:text-fg"
+              }`}
+            >
+              Yearly (365d)
+            </button>
           </div>
         </div>
 
@@ -171,6 +340,13 @@ export function BillingClient({
             const pFree = p.slug === "free" || Number(p.price_monthly) === 0;
             const isRecommendedPaid = isTrialExpired && p.slug === "pro";
             const isLoading = loadingPlanId === p.id;
+            const displayPrice = interval === "yearly" ? p.price_yearly : p.price_monthly;
+            const displayBdt =
+              !pFree && manualConfig.usdToBdtRate && displayPrice > 0
+                ? Math.round(displayPrice * manualConfig.usdToBdtRate)
+                : null;
+            const openPending = pendingByPlanId.get(p.id);
+            const waitingReview = Boolean(openPending?.submitted_at || openPending?.transaction_id);
 
             return (
               <Card
@@ -193,15 +369,24 @@ export function BillingClient({
                         <Badge variant="danger" size="sm">Ended</Badge>
                       ) : isCurrent ? (
                         <Badge variant="success" size="sm" dot>Active</Badge>
+                      ) : waitingReview ? (
+                        <Badge variant="warning" size="sm">In Review</Badge>
                       ) : isRecommendedPaid ? (
                         <Badge variant="accent" size="sm">Recommended</Badge>
                       ) : null}
                     </div>
                     <div className="my-3 pb-3 border-b border-border">
                       <span className="text-2xl font-bold text-fg">
-                        {pFree ? "$0" : `$${p.price_monthly}`}
+                        {pFree ? "$0" : `$${displayPrice}`}
                       </span>
-                      <span className="text-xs text-muted">/month</span>
+                      <span className="text-xs text-muted">
+                        /{interval === "yearly" ? "year" : "month"}
+                      </span>
+                      {displayBdt !== null && (
+                        <div className="text-xs text-muted mt-0.5 font-mono">
+                          ≈ BDT {displayBdt.toLocaleString()}
+                        </div>
+                      )}
                     </div>
 
                     <ul className="text-xs space-y-2 text-muted my-3">
@@ -225,7 +410,27 @@ export function BillingClient({
                   </div>
 
                   <div className="pt-3 border-t border-border">
-                    {isCurrent ? (
+                    {isCurrent && !pFree ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => startManualCheckout(p)}
+                        disabled={isLoading || !manualConfig.isConfigured}
+                        size="sm"
+                        className="w-full"
+                      >
+                        {isLoading ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : waitingReview ? (
+                          <>
+                            <Clock size={13} className="mr-1.5" /> View Renewal Status
+                          </>
+                        ) : (
+                          <>
+                            Renew {p.name} <ArrowRight size={13} className="ml-1" />
+                          </>
+                        )}
+                      </Button>
+                    ) : isCurrent ? (
                       <span
                         className={`text-xs font-semibold block text-center py-1.5 ${
                           isTrialExpired ? "text-danger" : "text-[var(--badge-success-text)]"
@@ -240,13 +445,17 @@ export function BillingClient({
                     ) : (
                       <Button
                         variant="primary"
-                        onClick={() => handleSelectPlan(p)}
-                        disabled={isLoading}
+                        onClick={() => startManualCheckout(p)}
+                        disabled={isLoading || !manualConfig.isConfigured}
                         size="sm"
                         className="w-full"
                       >
                         {isLoading ? (
                           <Loader2 size={13} className="animate-spin" />
+                        ) : waitingReview ? (
+                          <>
+                            <Clock size={13} className="mr-1.5" /> Waiting for Review
+                          </>
                         ) : (
                           <>
                             Upgrade to {p.name} <ArrowRight size={13} className="ml-1" />
@@ -262,61 +471,172 @@ export function BillingClient({
         </div>
       </div>
 
-      {/* Manual Payment Instructions Modal */}
-      {modalData && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-surface w-full max-w-md rounded-xl p-6 border border-border shadow-2xl relative space-y-4">
-            <div className="flex items-center justify-between border-b border-border pb-3">
-              <div>
-                <h3 className="text-base font-semibold text-fg flex items-center gap-2">
-                  <Sparkles size={16} className="text-brand" />
-                  Upgrade to {modalData.planName}
-                </h3>
-                <p className="text-xs text-muted">
-                  Invoice #{modalData.invoiceNumber || "PENDING"}
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setModalData(null)}
-                className="text-muted hover:text-fg p-1 h-8 w-8"
-              >
-                <X size={16} />
-              </Button>
-            </div>
+      {/* Cancel Auto-Renew Confirmation Dialog */}
+      <Dialog
+        open={cancelDialogOpen}
+        onClose={() => setCancelDialogOpen(false)}
+        title="Cancel Subscription Auto-Renewal?"
+        description="You will keep your paid plan quotas until the end of your current billing period."
+        confirmLabel="Confirm Cancellation"
+        confirmVariant="danger"
+        loading={canceling}
+        onConfirm={handleCancelSubscription}
+      />
 
-            <div className="rounded-lg bg-bgSubtle border border-border p-4 text-xs space-y-2 whitespace-pre-line text-fg leading-relaxed">
-              {manualConfig.isConfigured && modalData.instructionHtml ? (
-                modalData.instructionHtml
-              ) : (
-                "Manual payment is not set up yet. Please contact the administrator before submitting a payment."
-              )}
-            </div>
-
-            {manualConfig.isConfigured && (
-              <div className="rounded-lg bg-brand/5 border border-brand/20 p-3 text-xs text-brand space-y-1">
-                <div className="font-semibold">Next Step:</div>
+      {/* Manual Payment Instructions & Submission Dialog */}
+      <Dialog
+        open={Boolean(modalData)}
+        onClose={() => setModalData(null)}
+        title={modalData ? `${modalData.planName} (${modalData.interval === "yearly" ? "Yearly" : "Monthly"})` : ""}
+        description={modalData ? `Invoice #${modalData.invoiceNumber}` : ""}
+      >
+        {modalData && (
+          <div className="space-y-4">
+            {/* Amount Summary */}
+            <div className="rounded-lg border border-border bg-bgSubtle p-3 flex items-center justify-between text-xs">
+              <span className="text-muted font-medium">Amount Due</span>
+              <div className="text-right font-mono font-bold text-fg">
                 <div>
-                  Once you complete the transfer, send your Transaction ID and Invoice #{modalData.invoiceNumber} to our support team. Your account will be activated instantly upon verification!
+                  {modalData.currency} {modalData.amount.toFixed(2)}
                 </div>
+                {modalData.bdtAmount !== null && (
+                  <div className="text-[11px] text-brand">
+                    BDT {modalData.bdtAmount.toLocaleString()}
+                    {manualConfig.usdToBdtRate ? ` (@ ${manualConfig.usdToBdtRate} BDT/USD)` : ""}
+                  </div>
+                )}
               </div>
-            )}
-
-            <div className="flex justify-end pt-2 border-t border-border">
-              <Button
-                onClick={() => {
-                  setModalData(null);
-                  router.refresh();
-                }}
-                size="sm"
-              >
-                Got it
-              </Button>
             </div>
+
+            {!manualConfig.isConfigured ? (
+              <div className="rounded-lg border border-warning/30 bg-warningBg p-3 text-xs text-fg">
+                Manual payment is not set up yet. Please contact the administrator.
+              </div>
+            ) : (
+              <>
+                {/* Configured Payment Accounts */}
+                <div className="rounded-lg border border-border bg-surface p-3.5 text-xs space-y-1.5">
+                  <div className="font-semibold text-fg flex items-center gap-1.5">
+                    <Sparkles size={13} className="text-brand" />
+                    Send Payment To:
+                  </div>
+                  {manualConfig.bkashNumber && (
+                    <div>
+                      <span className="text-muted">bKash:</span>{" "}
+                      <span className="font-mono font-semibold text-fg">{manualConfig.bkashNumber}</span>
+                    </div>
+                  )}
+                  {manualConfig.nagadNumber && (
+                    <div>
+                      <span className="text-muted">Nagad:</span>{" "}
+                      <span className="font-mono font-semibold text-fg">{manualConfig.nagadNumber}</span>
+                    </div>
+                  )}
+                  {manualConfig.bankName && manualConfig.bankAccountNumber && (
+                    <div>
+                      <span className="text-muted">Bank:</span>{" "}
+                      <span className="font-medium text-fg">{manualConfig.bankName}</span>
+                      {manualConfig.bankAccountName ? ` (${manualConfig.bankAccountName})` : ""} —{" "}
+                      <span className="font-mono font-semibold text-fg">{manualConfig.bankAccountNumber}</span>
+                    </div>
+                  )}
+                  {manualConfig.note && (
+                    <div className="pt-1 text-muted whitespace-pre-line">{manualConfig.note}</div>
+                  )}
+                </div>
+
+                {modalData.alreadySubmitted ? (
+                  <div className="rounded-lg border border-warning/30 bg-warningBg p-3.5 text-xs space-y-1.5">
+                    <div className="font-semibold text-fg flex items-center gap-1.5">
+                      <Clock size={14} className="text-warning" />
+                      Waiting for Admin Review
+                    </div>
+                    {submitSuccess && <div className="text-emerald-600 dark:text-emerald-400">{submitSuccess}</div>}
+                    <div className="text-muted">
+                      Method: <span className="text-fg capitalize font-medium">{modalData.submittedMethod}</span>
+                    </div>
+                    <div className="text-muted">
+                      Transaction ID: <span className="text-fg font-mono font-medium">{modalData.submittedTrxId}</span>
+                    </div>
+                    <div className="text-muted">
+                      Sender Number: <span className="text-fg font-mono font-medium">{modalData.submittedSender}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <form onSubmit={handleSubmitPaymentDetails} className="space-y-3 text-xs">
+                    {submitError && (
+                      <div className="rounded-lg border border-danger/30 bg-dangerBg px-3 py-2 text-danger">
+                        {submitError}
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs font-medium text-text-muted mb-1">
+                        Payment Method
+                      </label>
+                      <select
+                        value={method}
+                        onChange={(e) => setMethod(e.target.value as "bkash" | "nagad" | "bank")}
+                        className="w-full h-9 rounded-[6px] border border-border-input bg-surface px-3 text-xs text-text focus:border-focus-ring focus:outline-none"
+                      >
+                        {availableMethods.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <Input
+                      label="Transaction ID"
+                      value={transactionId}
+                      onChange={(e) => setTransactionId(e.target.value)}
+                      placeholder="e.g. TXN9A7B3C"
+                      minLength={4}
+                      maxLength={80}
+                      required
+                    />
+
+                    <Input
+                      label="Sender Number / Account"
+                      value={senderNumber}
+                      onChange={(e) => setSenderNumber(e.target.value)}
+                      placeholder="Number or account used to send"
+                      minLength={4}
+                      maxLength={40}
+                      required
+                    />
+
+                    <div>
+                      <label className="block text-xs font-medium text-text-muted mb-1">
+                        Optional Note
+                      </label>
+                      <textarea
+                        value={note}
+                        onChange={(e) => setNote(e.target.value)}
+                        rows={2}
+                        maxLength={500}
+                        placeholder="Any extra reference or transfer details"
+                        className="w-full rounded-[6px] border border-border-input bg-surface px-3 py-2 text-xs text-text placeholder:text-text-subtle focus:border-focus-ring focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button type="button" variant="secondary" size="sm" onClick={() => setModalData(null)}>
+                        Close
+                      </Button>
+                      <Button type="submit" variant="primary" size="sm" disabled={submitting}>
+                        {submitting && <Loader2 size={13} className="animate-spin mr-1.5" />}
+                        Submit for Review
+                      </Button>
+                    </div>
+                  </form>
+                )}
+              </>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </Dialog>
     </div>
   );
 }

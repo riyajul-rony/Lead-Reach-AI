@@ -1752,12 +1752,37 @@ class LocalDevMockDb {
   };
 
   payments = {
-    findMany: async ({ where, orderBy, take, skip }: any = {}) => {
+    findMany: async ({ where, orderBy, take, skip, include }: any = {}) => {
       let items = localDevStore.getPayments((p) => {
+        if (where?.id) {
+          if (typeof where.id === "object" && where.id.not) {
+            if (p.id === where.id.not) return false;
+          } else if (p.id !== where.id) {
+            return false;
+          }
+        }
         if (where?.user_id && p.user_id !== where.user_id) return false;
-        if (where?.status && p.status !== where.status) return false;
+        if (where?.status) {
+          if (typeof where.status === "object" && Array.isArray(where.status.in)) {
+            if (!where.status.in.includes(p.status)) return false;
+          } else if (p.status !== where.status) {
+            return false;
+          }
+        }
         if (where?.subscription_id && p.subscription_id !== where.subscription_id) return false;
         if (where?.provider && p.provider !== where.provider) return false;
+        if (where?.provider_payment_id) {
+          const target =
+            typeof where.provider_payment_id === "object"
+              ? String(where.provider_payment_id.equals || "")
+              : String(where.provider_payment_id);
+          const ci = typeof where.provider_payment_id === "object" && where.provider_payment_id.mode === "insensitive";
+          if (ci) {
+            if (String(p.provider_payment_id || "").toLowerCase() !== target.toLowerCase()) return false;
+          } else if (p.provider_payment_id !== target) {
+            return false;
+          }
+        }
         return true;
       });
       if (orderBy?.created_at === "desc") {
@@ -1765,14 +1790,45 @@ class LocalDevMockDb {
       }
       if (skip && typeof skip === "number") items = items.slice(skip);
       if (take && typeof take === "number") items = items.slice(0, take);
+      if (include) {
+        items = items.map((p) => ({
+          ...p,
+          ...(include.user ? { user: localDevStore.findUser((u) => u.id === p.user_id) || null } : {}),
+          ...(include.subscription
+            ? {
+                subscription: p.subscription_id
+                  ? localDevStore.findSubscription((s) => s.id === p.subscription_id) || null
+                  : null,
+              }
+            : {}),
+        }));
+      }
       return items;
     },
     findFirst: async ({ where }: any = {}) => {
       return localDevStore.findPayment((p) => {
-        if (where?.id && p.id !== where.id) return false;
+        if (where?.id) {
+          if (typeof where.id === "object" && where.id.not) {
+            if (p.id === where.id.not) return false;
+          } else if (p.id !== where.id) {
+            return false;
+          }
+        }
         if (where?.user_id && p.user_id !== where.user_id) return false;
+        if (where?.status && p.status !== where.status) return false;
         if (where?.invoice_number && p.invoice_number !== where.invoice_number) return false;
-        if (where?.provider_payment_id && p.provider_payment_id !== where.provider_payment_id) return false;
+        if (where?.provider_payment_id) {
+          const target =
+            typeof where.provider_payment_id === "object"
+              ? String(where.provider_payment_id.equals || "")
+              : String(where.provider_payment_id);
+          const ci = typeof where.provider_payment_id === "object" && where.provider_payment_id.mode === "insensitive";
+          if (ci) {
+            if (String(p.provider_payment_id || "").toLowerCase() !== target.toLowerCase()) return false;
+          } else if (p.provider_payment_id !== target) {
+            return false;
+          }
+        }
         return true;
       });
     },
@@ -1784,6 +1840,14 @@ class LocalDevMockDb {
       const existing = localDevStore.findPayment((p) => p.id === where.id);
       return localDevStore.savePayment({ ...existing, ...data });
     },
+    updateMany: async ({ where, data }: any = {}) => {
+      return localDevStore.updateManyPayments((p) => {
+        if (where?.id && p.id !== where.id) return false;
+        if (where?.status && p.status !== where.status) return false;
+        if (where?.user_id && p.user_id !== where.user_id) return false;
+        return true;
+      }, data);
+    },
     deleteMany: async ({ where }: any = {}) => {
       return localDevStore.deleteWhere("payments", (p) => !where?.user_id || p.user_id === where.user_id);
     },
@@ -1794,6 +1858,32 @@ class LocalDevMockDb {
         return true;
       }).length;
     },
+  };
+
+  notifications = {
+    findMany: async ({ where, orderBy, take, skip }: any = {}) => {
+      let items = localDevStore.getNotifications((n) => {
+        if (where?.user_id && n.user_id !== where.user_id) return false;
+        if (where?.type && n.type !== where.type) return false;
+        if (where?.entity_id && n.entity_id !== where.entity_id) return false;
+        return true;
+      });
+      if (orderBy?.created_at === "desc") {
+        items = [...items].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      }
+      if (skip && typeof skip === "number") items = items.slice(skip);
+      if (take && typeof take === "number") items = items.slice(0, take);
+      return items;
+    },
+    findFirst: async ({ where }: any = {}) => {
+      return localDevStore.findNotification((n) => {
+        if (where?.user_id && n.user_id !== where.user_id) return false;
+        if (where?.type && n.type !== where.type) return false;
+        if (where?.entity_id && n.entity_id !== where.entity_id) return false;
+        return true;
+      });
+    },
+    create: async ({ data }: any) => localDevStore.saveNotification(data),
   };
 
   processed_webhook_events = {
