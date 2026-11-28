@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { db } from "@/server/db";
+import { startFreeTrialForUser } from "@/server/billing/trial";
 
 const { mockSession, mockQueueLeadSearch, mockExecuteLeadSearch, mockIsApifyConfigured, mockGetApifySettings, mockLoggerError } =
   vi.hoisted(() => ({
@@ -69,6 +70,7 @@ describe("Phase 6c Item 3 (BUG-017): POST /api/v1/leads/search", () => {
     await db.users.create({
       data: { id: userId, email: `${userId}@test.io`, role: "user", status: "active", plan: "free" },
     });
+    await startFreeTrialForUser(userId, { trialDays: 14 });
     // Free plan default monthly_leads = 100; override to 10 and record 5 used -> 5 remaining
     await db.user_limit_overrides.upsert({
       where: { user_id: userId },

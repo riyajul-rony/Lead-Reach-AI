@@ -9,6 +9,7 @@ import {
 import { createOutreachCampaign } from "@/server/email/campaign-service";
 import { listUserWarmupLogs } from "@/server/email/warmup-pool-service";
 import { recordWorkspaceLegalAcknowledgement } from "@/server/legal/acknowledgement";
+import { startFreeTrialForUser } from "@/server/billing/trial";
 import * as AccountsRoute from "@/app/api/v1/email-accounts/route";
 import * as AccountByIdRoute from "@/app/api/v1/email-accounts/[id]/route";
 
@@ -35,6 +36,7 @@ describe("Email Accounts Reply Detection Readiness (API + Launch Guard)", () => 
         role: "user",
       },
     });
+    await startFreeTrialForUser(userId, { trialDays: 14 });
     mockSession.mockResolvedValue({ user: { id: userId, email: `${userId}@example.com` } });
     await recordWorkspaceLegalAcknowledgement(userId);
 

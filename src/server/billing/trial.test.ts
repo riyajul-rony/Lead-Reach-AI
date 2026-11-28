@@ -106,12 +106,15 @@ vi.mock("@/server/config", async (importOriginal) => {
 import {
   assertTrialActive,
   backfillFreeUserTrials,
+  ensureFreePlanRecord,
   getConfiguredTrialDays,
+  getTrialExpiredUserIdsSet,
   getTrialStatus,
   processTrialReminders,
   startFreeTrialForUser,
   TrialExpiredError,
 } from "@/server/billing/trial";
+import { expireOverdueSubscriptions } from "@/server/billing/lifecycle";
 import { signupAction } from "@/server/auth/actions";
 import { GET as googleAuthCallbackGET } from "@/app/api/v1/auth/google/callback/route";
 import { GET as leadsGET } from "@/app/api/v1/leads/route";
@@ -641,5 +644,209 @@ describe("14-Day Free Trial (Item 10 comprehensive suite)", () => {
     const actions = logs.map((l: any) => l.action);
     expect(actions).toContain("user.trial_extend");
     expect(actions).toContain("user.trial_exempt_change");
+  });
+
+  it("blocks a user with plan=free who has no subscription row at all, and blocks paid-then-expired users reset to free by lifecycle", async () => {
+    // 1. Bare free user with NO subscription rows
+    const bareFreeId = uid("bare-free");
+    await db.users.create({
+      data: {
+        id: bareFreeId,
+        email: `${bareFreeId}@test.io`,
+        role: "user",
+        status: "active",
+        plan: "free",
+        trial_exempt: false,
+      },
+    });
+    expect((await getTrialStatus(bareFreeId)).status).toBe("expired");
+    await expect(assertTrialActive(bareFreeId)).rejects.toBeInstanceOf(TrialExpiredError);
+    expect((await getTrialExpiredUserIdsSet()).has(bareFreeId)).toBe(true);
+
+    // 2. Paid user whose subscription has NOT ended yet -> never blocked
+    await ensureFreePlanRecord();
+    const proPlan = await db.plans.create({
+      data: {
+        id: uid("plan-pro-lc"),
+        name: "Pro",
+        slug: "pro",
+        monthly_price: 49,
+        yearly_price: 470,
+        currency: "USD",
+        is_active: true,
+        monthly_leads: 2500,
+        monthly_social_posts: 120,
+        monthly_outreach_emails: 2500,
+        max_social_accounts: 5,
+        max_email_accounts: 5,
+        max_campaigns: 20,
+      },
+    });
+
+    const paidUserId = uid("paid-then-expired");
+    await db.users.create({
+      data: {
+        id: paidUserId,
+        email: `${paidUserId}@test.io`,
+        role: "user",
+        status: "active",
+        plan: "pro",
+        plan_id: proPlan.id,
+      },
+    });
+    const futureSub = await db.subscriptions.create({
+      data: {
+        user_id: paidUserId,
+        plan_id: proPlan.id,
+        status: "active",
+        current_period_start: new Date(Date.now() - 10 * 86_400_000),
+        current_period_end: new Date(Date.now() + 20 * 86_400_000),
+        provider: "stripe",
+        provider_subscription_id: `sub_${paidUserId}`,
+      },
+    });
+    expect((await getTrialStatus(paidUserId)).status).toBe("not_applicable");
+    await expect(assertTrialActive(paidUserId)).resolves.toMatchObject({ status: "not_applicable" });
+
+    // 3. Period ends -> lifecycle expires paid subscription and resets user to free -> blocked immediately
+    await db.subscriptions.update({
+      where: { id: futureSub.id },
+      data: { current_period_end: new Date(Date.now() - 86_400_000) },
+    });
+    const lcRes = await expireOverdueSubscriptions();
+    expect(lcRes.expiredCount).toBeGreaterThanOrEqual(1);
+
+    const revertedUser = await db.users.findUnique({ where: { id: paidUserId } });
+    expect(revertedUser?.plan).toBe("free");
+    expect((await getTrialStatus(paidUserId)).status).toBe("expired");
+    await expect(assertTrialActive(paidUserId)).rejects.toBeInstanceOf(TrialExpiredError);
+    expect((await getTrialExpiredUserIdsSet()).has(paidUserId)).toBe(true);
+
+    // 4. Buying a paid plan after being expired unblocks immediately
+    await db.subscriptions.create({
+      data: {
+        user_id: paidUserId,
+        plan_id: proPlan.id,
+        status: "active",
+        current_period_start: new Date(),
+        current_period_end: new Date(Date.now() + 30 * 86_400_000),
+        provider: "manual",
+        provider_subscription_id: `manual_${paidUserId}`,
+      },
+    });
+    await db.users.update({
+      where: { id: paidUserId },
+      data: { plan: "pro", plan_id: proPlan.id },
+    });
+    expect((await getTrialStatus(paidUserId)).status).toBe("not_applicable");
+    await expect(assertTrialActive(paidUserId)).resolves.toMatchObject({ status: "not_applicable" });
+    expect((await getTrialExpiredUserIdsSet()).has(paidUserId)).toBe(false);
+  });
+
+  it("backfills free users with old expired manual/canceled/trial rows while preserving active future trials and idempotency", async () => {
+    const freePlan = await ensureFreePlanRecord();
+    const proPlan = await db.plans.create({
+      data: {
+        id: uid("plan-pro-bf2"),
+        name: "Pro BF",
+        slug: "pro",
+        monthly_price: 49,
+        yearly_price: 470,
+        currency: "USD",
+        is_active: true,
+        monthly_leads: 2500,
+        monthly_social_posts: 120,
+        monthly_outreach_emails: 2500,
+        max_social_accounts: 5,
+        max_email_accounts: 5,
+        max_campaigns: 20,
+      },
+    });
+
+    const deployNow = new Date("2026-11-28T10:00:00.000Z");
+    const pastDate = new Date("2026-10-01T10:00:00.000Z");
+    const sixDaysLater = new Date(deployNow.getTime() + 6 * 86_400_000);
+
+    const expiredManualUser = uid("bf-exp-manual");
+    const canceledStripeUser = uid("bf-canc-stripe");
+    const activeFutureTrialUser = uid("bf-active-future");
+
+    await db.users.create({
+      data: { id: expiredManualUser, email: `${expiredManualUser}@test.io`, role: "user", status: "active", plan: "free" },
+    });
+    await db.subscriptions.create({
+      data: {
+        user_id: expiredManualUser,
+        plan_id: proPlan.id,
+        status: "expired",
+        current_period_start: new Date("2026-09-01T10:00:00.000Z"),
+        current_period_end: pastDate,
+        provider: "manual",
+      },
+    });
+
+    await db.users.create({
+      data: { id: canceledStripeUser, email: `${canceledStripeUser}@test.io`, role: "user", status: "active", plan: "free" },
+    });
+    await db.subscriptions.create({
+      data: {
+        user_id: canceledStripeUser,
+        plan_id: proPlan.id,
+        status: "canceled",
+        current_period_start: new Date("2026-09-01T10:00:00.000Z"),
+        current_period_end: pastDate,
+        provider: "stripe",
+      },
+    });
+
+    await db.users.create({
+      data: { id: activeFutureTrialUser, email: `${activeFutureTrialUser}@test.io`, role: "user", status: "active", plan: "free" },
+    });
+    const existingActiveTrial = await db.subscriptions.create({
+      data: {
+        user_id: activeFutureTrialUser,
+        plan_id: freePlan!.id,
+        status: "trialing",
+        current_period_start: new Date(deployNow.getTime() - 8 * 86_400_000),
+        current_period_end: sixDaysLater,
+        provider: "trial",
+        provider_subscription_id: `trial_${activeFutureTrialUser}`,
+      },
+    });
+
+    // Run 1: expired manual & canceled stripe free users receive deploy+14d; active future trial untouched
+    const run1 = await backfillFreeUserTrials(deployNow);
+    expect(run1.createdCount).toBeGreaterThanOrEqual(2);
+
+    const manualBackfillStatus = await getTrialStatus(expiredManualUser, deployNow);
+    expect(manualBackfillStatus.status).toBe("active");
+    expect(manualBackfillStatus.daysLeft).toBe(14);
+    expect(manualBackfillStatus.endsAt).toBe(new Date(deployNow.getTime() + 14 * 86_400_000).toISOString());
+
+    const stripeBackfillStatus = await getTrialStatus(canceledStripeUser, deployNow);
+    expect(stripeBackfillStatus.status).toBe("active");
+    expect(stripeBackfillStatus.daysLeft).toBe(14);
+
+    // Active future trial user keeps their exact 6-day remaining end date
+    const activeSubs = await db.subscriptions.findMany({ where: { user_id: activeFutureTrialUser } });
+    expect(activeSubs).toHaveLength(1);
+    expect(new Date(activeSubs[0].current_period_end).getTime()).toBe(sixDaysLater.getTime());
+    expect(activeSubs[0].id).toBe(existingActiveTrial.id);
+
+    // Run 2 (immediately after): changes nothing for anyone
+    const run2 = await backfillFreeUserTrials(deployNow);
+    expect(run2.createdCount).toBe(0);
+
+    // Even if run again 20 days later, already-backfilled users never get extended again
+    const laterNow = new Date(deployNow.getTime() + 20 * 86_400_000);
+    await backfillFreeUserTrials(laterNow);
+
+    const manualSubsAfter = await db.subscriptions.findMany({
+      where: { user_id: expiredManualUser, provider: "trial" },
+    });
+    expect(manualSubsAfter).toHaveLength(1);
+    expect(new Date(manualSubsAfter[0].current_period_end).getTime()).toBe(
+      deployNow.getTime() + 14 * 86_400_000
+    );
   });
 });

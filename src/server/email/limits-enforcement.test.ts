@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { encrypt } from "@/server/crypto";
 import { sendSingleRecipientEmail } from "@/server/email/sending-engine";
 import { saveCampaignSequence, sendSingleRecipientFollowup } from "@/server/email/sequence-service";
+import { startFreeTrialForUser } from "@/server/billing/trial";
 
 const { sentMailMock } = vi.hoisted(() => ({
   sentMailMock: vi.fn(),
@@ -141,6 +142,7 @@ describe("Limits Enforcement: Warmup Daily Limits & Plan Limits (Initial + Follo
         plan: "free",
       },
     });
+    await startFreeTrialForUser(userId, { now, trialDays: 14 });
 
     // Enforce tight daily_outreach_emails = 1 via user_limit_overrides
     await db.user_limit_overrides.create({
