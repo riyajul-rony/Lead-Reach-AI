@@ -8,7 +8,9 @@ export interface CheckboxProps extends Omit<React.InputHTMLAttributes<HTMLInputE
 
 export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
   ({ className = "", label, description, id, disabled, checked, ...props }, ref) => {
-    const inputId = id || (typeof label === "string" ? label.toLowerCase().replace(/\s+/g, "-") : undefined);
+    const generatedId = React.useId();
+    const inputId =
+      id || (typeof label === "string" ? label.toLowerCase().replace(/\s+/g, "-") : generatedId);
 
     return (
       <label
@@ -23,12 +25,12 @@ export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
             type="checkbox"
             id={inputId}
             disabled={disabled}
-            checked={checked}
+            {...(checked !== undefined ? { checked } : {})}
             className="peer sr-only"
             {...props}
           />
-          <div className="w-4 h-4 rounded-[4px] border border-border-input bg-surface transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-focus-ring peer-focus-visible:ring-offset-1 peer-checked:bg-primary peer-checked:border-primary group-hover:border-text-muted flex items-center justify-center">
-            <Check className="w-3 h-3 text-primary-text opacity-0 peer-checked:opacity-100 transition-opacity" strokeWidth={2.5} />
+          <div className="w-4 h-4 rounded-[4px] border border-border-input bg-surface transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-focus-ring peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-bg peer-checked:bg-primary peer-checked:border-primary peer-checked:[&>svg]:opacity-100 group-hover:border-text-muted flex items-center justify-center">
+            <Check className="w-3 h-3 text-primary-text opacity-0 transition-opacity" strokeWidth={2.5} />
           </div>
         </div>
 
