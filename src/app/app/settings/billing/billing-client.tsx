@@ -26,6 +26,7 @@ interface BillingClientProps {
   currentPlanSlug: string;
   activeSubscriptionId?: string;
   isCanceled?: boolean;
+  isTrialExpired?: boolean;
 }
 
 export function BillingClient({
@@ -33,6 +34,7 @@ export function BillingClient({
   currentPlanSlug,
   activeSubscriptionId,
   isCanceled,
+  isTrialExpired = false,
 }: BillingClientProps) {
   const router = useRouter();
   const [loadingPlanId, setLoadingPlanId] = useState<string | null>(null);
@@ -133,11 +135,15 @@ export function BillingClient({
       )}
 
       {/* Available Plans Comparison Cards */}
-      <div className="space-y-4">
+      <div id="upgrade-plans" className="space-y-4">
         <div>
-          <h3 className="text-lg font-bold text-fg">Compare Plans &amp; Upgrade</h3>
+          <h3 className="text-lg font-bold text-fg">
+            {isTrialExpired ? "Upgrade to Continue Using Lead Reach AI" : "Compare Plans & Upgrade"}
+          </h3>
           <p className="text-xs text-muted">
-            Choose the plan that fits your business outreach scale. Upgrades activate immediately.
+            {isTrialExpired
+              ? "Your free trial has ended. Select a paid plan below to immediately restore outreach sending, lead discovery, and social posting."
+              : "Choose the plan that fits your business outreach scale. Upgrades activate immediately."}
           </p>
         </div>
 
@@ -145,24 +151,33 @@ export function BillingClient({
           {plans.map((p) => {
             const isCurrent = p.slug === currentPlanSlug;
             const pFree = p.slug === "free" || Number(p.price_monthly) === 0;
+            const isRecommendedPaid = isTrialExpired && p.slug === "pro";
             const isLoading = loadingPlanId === p.id;
 
             return (
               <Card
                 key={p.id}
                 className={`flex flex-col justify-between transition-colors duration-150 ${
-                  isCurrent
+                  isRecommendedPaid
+                    ? "border-[var(--brand-emerald)] shadow-md ring-2 ring-[var(--brand-emerald)]/40"
+                    : isCurrent && !isTrialExpired
                     ? "border-[var(--brand-emerald)] shadow-sm ring-1 ring-[var(--brand-emerald)]/30"
+                    : isCurrent && isTrialExpired
+                    ? "border-danger/40 opacity-85"
                     : "hover:border-borderStrong"
                 }`}
               >
                 <CardContent className="p-5 flex flex-col justify-between h-full space-y-4">
                   <div>
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <h4 className="font-semibold text-base text-fg">{p.name}</h4>
-                      {isCurrent && (
+                      {isCurrent && isTrialExpired ? (
+                        <Badge variant="danger" size="sm">Ended</Badge>
+                      ) : isCurrent ? (
                         <Badge variant="success" size="sm" dot>Active</Badge>
-                      )}
+                      ) : isRecommendedPaid ? (
+                        <Badge variant="accent" size="sm">Recommended</Badge>
+                      ) : null}
                     </div>
                     <div className="my-3 pb-3 border-b border-border">
                       <span className="text-2xl font-bold text-fg">
@@ -193,8 +208,16 @@ export function BillingClient({
 
                   <div className="pt-3 border-t border-border">
                     {isCurrent ? (
-                      <span className="text-xs font-semibold text-[var(--badge-success-text)] block text-center py-1.5">
-                        Current Plan
+                      <span
+                        className={`text-xs font-semibold block text-center py-1.5 ${
+                          isTrialExpired ? "text-danger" : "text-[var(--badge-success-text)]"
+                        }`}
+                      >
+                        {isTrialExpired ? "Free Trial Ended" : "Current Plan"}
+                      </span>
+                    ) : pFree ? (
+                      <span className="text-xs text-muted block text-center py-1.5">
+                        14-day introductory trial only
                       </span>
                     ) : (
                       <Button
@@ -208,7 +231,7 @@ export function BillingClient({
                           <Loader2 size={13} className="animate-spin" />
                         ) : (
                           <>
-                            {pFree ? "Switch to Free" : "Upgrade Plan"} <ArrowRight size={13} className="ml-1" />
+                            Upgrade to {p.name} <ArrowRight size={13} className="ml-1" />
                           </>
                         )}
                       </Button>

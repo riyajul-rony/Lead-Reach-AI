@@ -15,7 +15,13 @@ const BUSINESS_CATEGORIES = [
 const BRAND_VOICES = ["Professional", "Friendly", "Witty", "Luxury", "Educational"];
 const IMAGE_STYLES = ["Photorealistic", "Illustration", "Minimal", "Flat/Vector", "3D"];
 
-export function CampaignSetupForm({ provider }: { provider: string }) {
+export function CampaignSetupForm({
+  provider,
+  trialExpired = false,
+}: {
+  provider: string;
+  trialExpired?: boolean;
+}) {
   const router = useRouter();
 
   // Connected accounts & API keys
@@ -440,13 +446,18 @@ export function CampaignSetupForm({ provider }: { provider: string }) {
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap pt-2">
             <Button
               type="button"
               variant="secondary"
               size="sm"
               onClick={handleGeneratePreview}
-              disabled={previewLoading}
+              disabled={previewLoading || trialExpired}
+              title={
+                trialExpired
+                  ? "Your free trial has ended. Upgrade to a paid plan to generate previews."
+                  : undefined
+              }
               icon={<Eye size={14} />}
             >
               {previewLoading ? "Generating AI Preview..." : "Preview AI Generation"}
@@ -456,9 +467,18 @@ export function CampaignSetupForm({ provider }: { provider: string }) {
               type="submit"
               variant="primary"
               size="sm"
-              disabled={saving}
+              disabled={saving || trialExpired}
+              title={
+                trialExpired
+                  ? "Your free trial has ended. Upgrade to a paid plan to activate campaigns."
+                  : undefined
+              }
             >
-              {saving ? "Saving Campaign..." : "Save & Activate Campaign"}
+              {saving
+                ? "Saving Campaign..."
+                : trialExpired
+                ? "Trial Ended — Upgrade to Save"
+                : "Save & Activate Campaign"}
             </Button>
           </div>
         </form>

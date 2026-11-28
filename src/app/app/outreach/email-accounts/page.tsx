@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { requireUser } from "@/server/auth/guards";
 import { listEmailAccounts } from "@/server/email/account-service";
+import { getTrialStatus } from "@/server/billing/trial";
 import { EmailAccountsManager, EmailAccount } from "./email-accounts-manager";
 
 export const metadata = {
@@ -12,7 +13,11 @@ export const metadata = {
 export default async function EmailAccountsPage() {
   const user = await requireUser();
 
-  const accountsRaw = await listEmailAccounts(user.id);
+  const [accountsRaw, trialStatus] = await Promise.all([
+    listEmailAccounts(user.id),
+    getTrialStatus(user.id).catch(() => null),
+  ]);
+  const trialExpired = trialStatus?.status === "expired";
 
   const initialAccounts: EmailAccount[] = accountsRaw.map((a: any) => ({
     ...a,
@@ -30,7 +35,7 @@ export default async function EmailAccountsPage() {
         </Link>
       </div>
 
-      <EmailAccountsManager initialAccounts={initialAccounts} />
+      <EmailAccountsManager initialAccounts={initialAccounts} trialExpired={trialExpired} />
     </div>
   );
 }

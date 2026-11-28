@@ -62,6 +62,7 @@ interface OutreachDashboardProps {
   initialAccounts?: EmailAccount[];
   initialReplies?: ReplySummary[];
   totalRepliesCount?: number;
+  trialExpired?: boolean;
 }
 
 export function OutreachDashboard({
@@ -69,6 +70,7 @@ export function OutreachDashboard({
   initialAccounts = [],
   initialReplies = [],
   totalRepliesCount = 0,
+  trialExpired = false,
 }: OutreachDashboardProps) {
   const searchParams = useSearchParams();
   const initialTabParam = searchParams.get("tab");
@@ -577,7 +579,12 @@ export function OutreachDashboard({
                             variant={isRunning ? "secondary" : "primary"}
                             size="sm"
                             onClick={() => handleStatusToggle(c.id, c.status)}
-                            disabled={actionLoadingId === c.id}
+                            disabled={actionLoadingId === c.id || (trialExpired && isPaused)}
+                            title={
+                              trialExpired && isPaused
+                                ? "Your free trial has ended. Upgrade to a paid plan to resume campaigns."
+                                : undefined
+                            }
                             icon={
                               actionLoadingId === c.id ? (
                                 <Loader2 size={13} className="animate-spin" />

@@ -2,6 +2,7 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { CampaignSetupForm } from "@/components/social/campaign-setup-form";
 import { requireUser } from "@/server/auth/guards";
+import { getTrialStatus } from "@/server/billing/trial";
 import { PageHeader } from "@/components/ui/page-header";
 
 export const metadata = {
@@ -14,9 +15,13 @@ export default async function NewCampaignPage({
 }: {
   params: Promise<{ provider: string }>;
 }) {
-  await requireUser();
-  const { provider } = await params;
+  const user = await requireUser();
+  const [{ provider }, trialStatus] = await Promise.all([
+    params,
+    getTrialStatus(user.id).catch(() => null),
+  ]);
   const platformName = provider.charAt(0).toUpperCase() + provider.slice(1);
+  const trialExpired = trialStatus?.status === "expired";
 
   return (
     <div className="space-y-6">
@@ -34,7 +39,7 @@ export default async function NewCampaignPage({
         description="Configure prompt direction, image style, daily schedule, and preview AI output."
       />
 
-      <CampaignSetupForm provider={provider} />
+      <CampaignSetupForm provider={provider} trialExpired={trialExpired} />
     </div>
   );
 }

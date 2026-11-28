@@ -14,6 +14,7 @@ import {
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/guards";
 import { isApifyConfigured } from "@/server/providers/leads/apify/config";
+import { getTrialStatus } from "@/server/billing/trial";
 import { Pagination } from "@/components/pagination";
 import { parsePageParam } from "@/lib/query-params";
 import { PageHeader } from "@/components/ui/page-header";
@@ -87,7 +88,7 @@ export default async function LeadsOverviewPage({
   const pageSize = 50;
   const skip = (currentPage - 1) * pageSize;
 
-  const [realLeads, totalLeadsCount, searches, configured] = await Promise.all([
+  const [realLeads, totalLeadsCount, searches, configured, trialStatus] = await Promise.all([
     db.leads.findMany({
       where: { user_id: userId },
       take: pageSize,
@@ -122,7 +123,10 @@ export default async function LeadsOverviewPage({
       },
     }),
     isApifyConfigured(),
+    getTrialStatus(userId).catch(() => null),
   ]);
+
+  const trialExpired = trialStatus?.status === "expired";
 
   const leads = realLeads;
 
@@ -139,16 +143,24 @@ export default async function LeadsOverviewPage({
                 Launch Outreach
               </Button>
             </Link>
-            {configured ? (
+            {configured && !trialExpired ? (
               <Link href="/app/leads/google_maps">
                 <Button variant="primary" size="sm" icon={<Plus size={14} />}>
                   New Search
                 </Button>
               </Link>
             ) : (
-              <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled>
-                New Search
-              </Button>
+              <span
+                title={
+                  trialExpired
+                    ? "Your free trial has ended. Upgrade at Billing to run new searches."
+                    : "Lead generation service is not configured yet."
+                }
+              >
+                <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled>
+                  New Search
+                </Button>
+              </span>
             )}
           </div>
         }

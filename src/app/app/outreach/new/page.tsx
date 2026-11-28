@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { requireUser } from "@/server/auth/guards";
+import { getTrialStatus } from "@/server/billing/trial";
 import { OutreachWizard } from "./outreach-wizard";
 
 export const metadata = {
@@ -24,7 +25,9 @@ function WizardSkeleton() {
 }
 
 export default async function NewOutreachCampaignPage() {
-  await requireUser();
+  const user = await requireUser();
+  const trialStatus = await getTrialStatus(user.id).catch(() => null);
+  const trialExpired = trialStatus?.status === "expired";
 
   return (
     <div className="space-y-6 pb-16">
@@ -39,7 +42,7 @@ export default async function NewOutreachCampaignPage() {
       </div>
 
       <Suspense fallback={<WizardSkeleton />}>
-        <OutreachWizard />
+        <OutreachWizard trialExpired={trialExpired} />
       </Suspense>
     </div>
   );

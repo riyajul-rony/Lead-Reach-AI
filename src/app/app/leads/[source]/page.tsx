@@ -3,6 +3,7 @@ import { ArrowLeft, AlertTriangle } from "lucide-react";
 import { LiveLeadsFinder } from "@/components/leads/live-leads-finder";
 import { requireUser } from "@/server/auth/guards";
 import { isApifyConfigured } from "@/server/providers/leads/apify/config";
+import { getTrialStatus } from "@/server/billing/trial";
 import { PageHeader } from "@/components/ui/page-header";
 
 export default async function LeadSearchSourcePage({
@@ -10,10 +11,14 @@ export default async function LeadSearchSourcePage({
 }: {
   params: Promise<{ source: string }>;
 }) {
-  await requireUser();
+  const user = await requireUser();
   const { source } = await params;
   const sourceName = source.replace("_", " ").toUpperCase();
-  const configured = await isApifyConfigured();
+  const [configured, trialStatus] = await Promise.all([
+    isApifyConfigured(),
+    getTrialStatus(user.id).catch(() => null),
+  ]);
+  const trialExpired = trialStatus?.status === "expired";
 
   return (
     <div className="w-full space-y-6">
@@ -50,7 +55,7 @@ export default async function LeadSearchSourcePage({
       )}
 
       {/* Main Interactive Live Leads Finder Engine */}
-      <LiveLeadsFinder source={source} isConfigured={configured} />
+      <LiveLeadsFinder source={source} isConfigured={configured} trialExpired={trialExpired} />
     </div>
   );
 }

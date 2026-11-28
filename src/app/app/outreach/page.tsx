@@ -5,6 +5,7 @@ import { requireUser } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { listCampaigns } from "@/server/email/campaign-service";
 import { listEmailAccounts } from "@/server/email/account-service";
+import { getTrialStatus } from "@/server/billing/trial";
 import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { OutreachDashboard, CampaignSummary } from "./outreach-dashboard";
@@ -32,7 +33,7 @@ function OutreachSkeleton() {
 export default async function OutreachOverviewPage() {
   const user = await requireUser();
 
-  const [rawCampaigns, accountsRaw, repliesRaw, totalRepliesCount] = await Promise.all([
+  const [rawCampaigns, accountsRaw, repliesRaw, totalRepliesCount, trialStatus] = await Promise.all([
     listCampaigns(user.id),
     listEmailAccounts(user.id),
     db.email_messages.findMany({
@@ -70,7 +71,9 @@ export default async function OutreachOverviewPage() {
         direction: "in",
       },
     }),
+    getTrialStatus(user.id).catch(() => null),
   ]);
+  const trialExpired = trialStatus?.status === "expired";
 
   const initialCampaigns: CampaignSummary[] = rawCampaigns.map((c: any) => ({
     id: c.id,
@@ -126,11 +129,19 @@ export default async function OutreachOverviewPage() {
         title="Cold Outreach"
         description="Automated multi-inbox cold emailing with human-like randomized delays and stop-on-reply protection."
         actions={
-          <Link href="/app/outreach/new">
-            <Button variant="primary" size="md" icon={<Plus size={16} />}>
-              New Campaign
-            </Button>
-          </Link>
+          trialExpired ? (
+            <span title="Your free trial has ended. Upgrade to a paid plan to launch new campaigns.">
+              <Button variant="primary" size="md" icon={<Plus size={16} />} disabled>
+                New Campaign
+              </Button>
+            </span>
+          ) : (
+            <Link href="/app/outreach/new">
+              <Button variant="primary" size="md" icon={<Plus size={16} />}>
+                New Campaign
+              </Button>
+            </Link>
+          )
         }
       />
 
@@ -140,6 +151,7 @@ export default async function OutreachOverviewPage() {
           initialAccounts={initialAccounts}
           initialReplies={initialReplies}
           totalRepliesCount={totalRepliesCount}
+          trialExpired={trialExpired}
         />
       </Suspense>
     </div>

@@ -258,9 +258,11 @@ export function getLeadUniqueKey(l: ComprehensiveLead, index: number): string {
 export function LiveLeadsFinder({
   source = "google_maps",
   isConfigured = true,
+  trialExpired = false,
 }: {
   source?: string;
   isConfigured?: boolean;
+  trialExpired?: boolean;
 }) {
   const isGoogleMaps = source === "google_maps";
   const isMeta = source === "meta_ads";
@@ -1746,14 +1748,21 @@ export function LiveLeadsFinder({
                   type="submit"
                   id="extract-leads-button"
                   onClick={(e) => handleSearch(e)}
-                  disabled={loading || !isServiceConfigured}
+                  disabled={loading || !isServiceConfigured || trialExpired}
                   loading={loading}
                   variant="primary"
                   size="lg"
                   leftIcon={<Sparkles size={18} className="shrink-0" />}
                   className="flex-1 h-11 text-sm font-semibold tracking-wide"
+                  title={
+                    trialExpired
+                      ? "Your free trial has ended. Upgrade at Billing to extract new leads."
+                      : !isServiceConfigured
+                      ? "Lead generation provider is not configured."
+                      : undefined
+                  }
                 >
-                  {loading ? "Extracting Leads..." : "Extract Leads"}
+                  {loading ? "Extracting Leads..." : trialExpired ? "Trial Ended — Upgrade to Search" : "Extract Leads"}
                 </Button>
                 {loading && (
                   <Button

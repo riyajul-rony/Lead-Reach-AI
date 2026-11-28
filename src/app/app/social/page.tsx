@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Plus, Clock, Share2 } from "lucide-react";
 import { SocialHubManager } from "@/components/social/social-hub-manager";
 import { requireUser } from "@/server/auth/guards";
+import { getTrialStatus } from "@/server/billing/trial";
 import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 
@@ -11,7 +12,9 @@ export const metadata = {
 };
 
 export default async function SocialOverviewPage() {
-  await requireUser();
+  const user = await requireUser();
+  const trialStatus = await getTrialStatus(user.id).catch(() => null);
+  const trialExpired = trialStatus?.status === "expired";
 
   return (
     <div className="space-y-6">
@@ -19,11 +22,19 @@ export default async function SocialOverviewPage() {
         title="Social Media Auto Post"
         description="Configure AI post schedules, connect your social profiles, and review approval queues."
         actions={
-          <Link href="/app/social/facebook/new">
-            <Button variant="primary" size="sm" icon={<Plus size={14} />}>
-              New Campaign
-            </Button>
-          </Link>
+          trialExpired ? (
+            <span title="Your free trial has ended. Upgrade to a paid plan to create new social campaigns.">
+              <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled>
+                New Campaign
+              </Button>
+            </span>
+          ) : (
+            <Link href="/app/social/facebook/new">
+              <Button variant="primary" size="sm" icon={<Plus size={14} />}>
+                New Campaign
+              </Button>
+            </Link>
+          )
         }
       />
 

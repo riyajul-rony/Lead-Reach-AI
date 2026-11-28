@@ -13,6 +13,7 @@ import {
 import { requireUser } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { getUserUsageAndLimits } from "@/server/billing/limits";
+import { getTrialStatus } from "@/server/billing/trial";
 import { BillingClient } from "./billing-client";
 import { PageHeader } from "@/components/ui/page-header";
 import { SettingsNav } from "@/components/settings/settings-nav";
@@ -26,7 +27,10 @@ export const metadata = {
 
 export default async function BillingSettingsPage() {
   const user = await requireUser();
-  const limitsAndUsage = await getUserUsageAndLimits(user.id);
+  const [limitsAndUsage, trialStatus] = await Promise.all([
+    getUserUsageAndLimits(user.id),
+    getTrialStatus(user.id).catch(() => null),
+  ]);
 
   // Fetch active subscription
   const activeSubscription = await db.subscriptions.findFirst({
@@ -81,20 +85,49 @@ export default async function BillingSettingsPage() {
 
       <SettingsNav />
 
+      {trialStatus?.status === "expired" && (
+        <div
+          role="alert"
+          className="rounded-xl border border-danger/40 bg-dangerBg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+        >
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-sm font-bold text-fg">
+              <AlertCircle size={17} className="text-danger shrink-0" />
+              Your 14-day free trial has ended
+            </div>
+            <p className="text-xs text-muted leading-relaxed">
+              Choose any paid plan below to unlock campaign launches, lead searches, enrichment, and social publishing immediately.
+            </p>
+          </div>
+          <a
+            href="#upgrade-plans"
+            className="btn btn-primary text-xs px-4 py-2 shrink-0 self-start sm:self-center"
+          >
+            Choose a Paid Plan
+          </a>
+        </div>
+      )}
+
       {/* Current Active Plan Overview */}
       <Card>
         <CardContent className="p-6 sm:p-7 space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border">
             <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Badge variant="accent" size="sm">
                   <Sparkles size={11} className="mr-1" /> Current Active Tier
                 </Badge>
-                {activeSubscription && (
-                  <Badge variant={activeSubscription.status === "active" ? "success" : "warning"} size="sm">
-                    {activeSubscription.status}
+                {trialStatus?.status === "expired" ? (
+                  <Badge variant="danger" size="sm">
+                    Trial Ended
                   </Badge>
-                )}
+                ) : activeSubscription ? (
+                  <Badge variant={activeSubscription.status === "active" ? "success" : "warning"} size="sm">
+                    {activeSubscription.status === "trialing" && trialStatus?.status === "active"
+                      ? `Free Trial · ${trialStatus.daysLeft}d left`
+                      : activeSubscription.status}
+                  </Badge>
+                ) : null}
               </div>
               <h2 className="text-2xl font-bold text-fg">{plan.name} Plan</h2>
               <p className="text-xs text-muted">
@@ -259,6 +292,7 @@ export default async function BillingSettingsPage() {
         currentPlanSlug={plan.slug}
         activeSubscriptionId={activeSubscription?.id}
         isCanceled={Boolean(activeSubscription?.cancel_at_period_end)}
+        isTrialExpired={trialStatus?.status === "expired"}
       />
 
       {/* Invoices & Payment History */}

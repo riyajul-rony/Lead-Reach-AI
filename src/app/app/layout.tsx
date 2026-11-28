@@ -20,9 +20,11 @@ import { getSessionUser } from "@/server/auth/session";
 import { isAdminRole } from "@/server/auth/permissions";
 import { getSiteBranding } from "@/server/branding";
 import { isUserWorkspaceSendingPaused } from "@/server/workspace/sending-control";
+import { getTrialStatus } from "@/server/billing/trial";
 import { SidebarProvider, Sidebar, Topbar, NavSection } from "@/components/ui";
 import { UserMenu } from "@/components/layout/user-menu";
 import { BrandLogo } from "@/components/brand/brand-logo";
+import { TrialBanner } from "@/components/billing/trial-banner";
 
 export const metadata: Metadata = {
   robots: {
@@ -37,9 +39,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     getSiteBranding(),
   ]);
   const isAdmin = isAdminRole(session?.user?.role);
-  const wsPause = session?.user?.id
-    ? await isUserWorkspaceSendingPaused(session.user.id).catch(() => ({ paused: false, reason: null }))
-    : { paused: false, reason: null };
+  const [wsPause, trialStatus] = session?.user?.id
+    ? await Promise.all([
+        isUserWorkspaceSendingPaused(session.user.id).catch(() => ({ paused: false, reason: null })),
+        getTrialStatus(session.user.id).catch(() => null),
+      ])
+    : [{ paused: false, reason: null }, null];
 
   const sections: NavSection[] = [
     {
@@ -132,6 +137,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             }
           />
           <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1200px] w-full mx-auto">
+            <TrialBanner trial={trialStatus} />
             {wsPause.paused && (
               <div
                 role="alert"

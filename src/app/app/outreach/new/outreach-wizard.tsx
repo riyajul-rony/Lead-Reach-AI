@@ -102,7 +102,7 @@ function isAccountMissingReplyDetection(a: EmailAccountItem): boolean {
   return !hasDirect && !hasLinked;
 }
 
-export function OutreachWizard() {
+export function OutreachWizard({ trialExpired = false }: { trialExpired?: boolean } = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialMode = searchParams.get("mode") === "custom" ? "custom" : "ai";
@@ -2377,7 +2377,7 @@ export function OutreachWizard() {
                   })),
                 });
                 const isLaunchBlocked =
-                  (hasNoReplyDetection && hasFollowups) || !deliverabilityCheck.canLaunch;
+                  trialExpired || (hasNoReplyDetection && hasFollowups) || !deliverabilityCheck.canLaunch;
 
                 return (
                   <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
@@ -2388,11 +2388,30 @@ export function OutreachWizard() {
                       size="lg"
                       onClick={() => handleLaunch(true)}
                       disabled={submitting || isLaunchBlocked}
+                      title={
+                        trialExpired
+                          ? "Your free trial has ended. Upgrade to a paid plan to launch campaigns."
+                          : undefined
+                      }
                       icon={submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                       className="w-full justify-center"
                     >
-                      {submitting ? "Launching..." : "Launch Campaign Now"}
+                      {submitting
+                        ? "Launching..."
+                        : trialExpired
+                        ? "Trial Ended — Upgrade to Launch"
+                        : "Launch Campaign Now"}
                     </Button>
+
+                    {trialExpired && (
+                      <p className="text-[11px] text-rose-600 dark:text-rose-400 text-center font-medium leading-relaxed">
+                        Your free trial has ended.{" "}
+                        <Link href="/app/settings/billing" className="underline font-semibold">
+                          Upgrade to a paid plan
+                        </Link>{" "}
+                        to launch campaigns.
+                      </p>
+                    )}
 
                     {!deliverabilityCheck.canLaunch && (
                       <p className="text-[11px] text-rose-600 dark:text-rose-400 text-center font-medium leading-relaxed">
