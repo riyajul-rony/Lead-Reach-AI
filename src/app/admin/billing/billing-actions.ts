@@ -58,6 +58,7 @@ export async function recordManualPaymentAction(input: RecordManualPaymentInput)
       data: {
         plan_id: plan.id,
         status: "active",
+        provider: subscription.provider === "trial" ? "manual" : subscription.provider,
         current_period_end: newEnd,
         cancel_at_period_end: false,
       },

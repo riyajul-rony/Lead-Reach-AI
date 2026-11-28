@@ -1,5 +1,7 @@
--- Idempotent backfill: give existing free-plan standard users a 14-day trial starting at deploy time.
--- Paid users, staff/admin roles, trial-exempt users, and users who already have any subscription row are untouched.
+-- Idempotent backfill: give every existing free-plan standard user (with trial_exempt = false)
+-- who lacks an active paid subscription or active future trial a 14-day trial starting at deploy time,
+-- including users who previously had expired/canceled/trial/manual/stripe rows.
+-- Paid users, staff/admin roles, trial-exempt users, active future trials, and already-backfilled users are untouched.
 
 INSERT INTO "plans" (
   "name",
@@ -67,7 +69,7 @@ SELECT
   NOW() + INTERVAL '14 days',
   false,
   'trial',
-  'trial_' || u."id"::text,
+  'trial_backfill_' || u."id"::text,
   NOW(),
   NOW()
 FROM "users" u
@@ -78,5 +80,23 @@ WHERE u."role" = 'user'::"UserRole"
   AND u."plan" = 'free'
   AND COALESCE(u."trial_exempt", false) = false
   AND NOT EXISTS (
-    SELECT 1 FROM "subscriptions" s WHERE s."user_id" = u."id"
+    SELECT 1
+    FROM "subscriptions" s
+    WHERE s."user_id" = u."id"
+      AND s."status" = 'active'::"SubscriptionStatus"
+      AND s."plan_id" <> p."id"
+      AND s."current_period_end" > NOW()
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM "subscriptions" s
+    WHERE s."user_id" = u."id"
+      AND s."status" = 'trialing'::"SubscriptionStatus"
+      AND s."current_period_end" > NOW()
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM "subscriptions" s
+    WHERE s."user_id" = u."id"
+      AND s."provider_subscription_id" = 'trial_backfill_' || u."id"::text
   );

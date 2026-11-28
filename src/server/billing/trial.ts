@@ -226,46 +226,40 @@ export async function getTrialStatus(
     .findMany({
       where: { user_id: userId },
       orderBy: { created_at: "desc" },
-      take: 10,
+      take: 20,
     })
     .catch(() => []);
 
-  const trialSub =
-    subs.find((s: any) => s.status === "trialing") ||
-    subs.find((s: any) => s.provider === "trial");
+  const activeTrial = subs.find(
+    (s: any) =>
+      s.status === "trialing" && new Date(s.current_period_end).getTime() > now.getTime()
+  );
 
-  if (!trialSub) {
-    return {
-      status: "not_applicable",
-      daysLeft: 0,
-      endsAt: null,
-      trialDaysConfigured,
-      isExempt: false,
-    };
-  }
-
-  const endsAtDate = new Date(trialSub.current_period_end);
-  const msLeft = endsAtDate.getTime() - now.getTime();
-  const isActive = trialSub.status === "trialing" && msLeft > 0;
-
-  if (isActive) {
+  if (activeTrial) {
+    const endsAtDate = new Date(activeTrial.current_period_end);
+    const msLeft = endsAtDate.getTime() - now.getTime();
     return {
       status: "active",
       daysLeft: Math.max(1, Math.ceil(msLeft / DAY_MS)),
       endsAt: endsAtDate.toISOString(),
       trialDaysConfigured,
       isExempt: false,
-      subscriptionId: trialSub.id,
+      subscriptionId: activeTrial.id,
     };
   }
+
+  // User is non-staff, non-exempt, on the free plan with no active trial and no active paid plan.
+  // Treat as expired regardless of whether prior subscriptions had provider trial, manual, or stripe.
+  const latestSub = subs[0] || null;
+  const endsAtDate = latestSub?.current_period_end ? new Date(latestSub.current_period_end) : null;
 
   return {
     status: "expired",
     daysLeft: 0,
-    endsAt: endsAtDate.toISOString(),
+    endsAt: endsAtDate ? endsAtDate.toISOString() : null,
     trialDaysConfigured,
     isExempt: false,
-    subscriptionId: trialSub.id,
+    subscriptionId: latestSub?.id,
   };
 }
 
@@ -285,48 +279,46 @@ export async function assertTrialActive(userId: string): Promise<TrialStatus> {
  * Used by worker ticks to skip dispatching/scraping for expired-trial tenants.
  */
 export async function getTrialExpiredUserIdsSet(now: Date = new Date()): Promise<Set<string>> {
-  if (!db.subscriptions?.findMany) return new Set();
+  if (!db.users?.findMany || !db.subscriptions?.findMany) return new Set();
 
-  const expiredTrials = await db.subscriptions
-    .findMany({
-      where: {
-        OR: [{ status: "trialing" }, { provider: "trial" }],
-        current_period_end: { lte: now },
-      },
-      select: { user_id: true },
-    })
-    .catch(() => []);
+  const [freeUsers, activeTrials] = await Promise.all([
+    db.users
+      .findMany({
+        where: { role: "user", plan: "free", trial_exempt: false },
+        select: { id: true },
+      })
+      .catch(() => []),
+    db.subscriptions
+      .findMany({
+        where: {
+          status: "trialing",
+          current_period_end: { gt: now },
+        },
+        select: { user_id: true },
+      })
+      .catch(() => []),
+  ]);
 
-  const candidateUserIds = Array.from(
-    new Set(
-      (expiredTrials || [])
-        .map((s: any) => s.user_id)
-        .filter((id: unknown): id is string => typeof id === "string" && id.length > 0)
-    )
+  const activeTrialUserIds = new Set(
+    (activeTrials || [])
+      .map((s: any) => s.user_id)
+      .filter((id: unknown): id is string => typeof id === "string" && id.length > 0)
   );
 
-  if (candidateUserIds.length === 0) return new Set();
-
-  const users = await db.users
-    .findMany({
-      where: { id: { in: candidateUserIds } },
-      select: { id: true, role: true, plan: true, trial_exempt: true },
-    })
-    .catch(() => []);
-
   const expiredSet = new Set<string>();
-  for (const u of users) {
-    if (!u) continue;
-    if (isAdminRole(u.role) || u.trial_exempt) continue;
-    if (u.plan && u.plan !== "free") continue;
-    expiredSet.add(u.id);
+  for (const u of freeUsers) {
+    if (!u?.id) continue;
+    if (!activeTrialUserIds.has(u.id)) {
+      expiredSet.add(u.id);
+    }
   }
   return expiredSet;
 }
 
 /**
- * Idempotent programmatic backfill for existing free-plan standard users without a subscription.
- * Gives each eligible user a 14-day trial starting from `now` without touching paid users or staff.
+ * Idempotent programmatic backfill for every existing standard free-plan user without an
+ * active paid subscription or active future trial, including users with prior expired/canceled
+ * trial, manual, or stripe rows. Running twice changes nothing on the second pass.
  */
 export async function backfillFreeUserTrials(now: Date = new Date()): Promise<{
   createdCount: number;
@@ -339,7 +331,7 @@ export async function backfillFreeUserTrials(now: Date = new Date()): Promise<{
 
   const freeUsers = await db.users
     .findMany({
-      where: { role: "user", plan: "free" },
+      where: { role: "user", plan: "free", trial_exempt: false },
       select: { id: true, role: true, plan: true, plan_id: true, trial_exempt: true },
     })
     .catch(() => []);
@@ -354,10 +346,38 @@ export async function backfillFreeUserTrials(now: Date = new Date()): Promise<{
       continue;
     }
 
-    const existingSub = await db.subscriptions
-      .findFirst({ where: { user_id: u.id } })
-      .catch(() => null);
-    if (existingSub) {
+    const userSubs = await db.subscriptions
+      .findMany({
+        where: { user_id: u.id },
+        take: 25,
+      })
+      .catch(() => []);
+
+    const hasActivePaidSub = userSubs.some(
+      (s: any) =>
+        s.status === "active" &&
+        s.plan_id !== freePlan.id &&
+        new Date(s.current_period_end).getTime() > now.getTime()
+    );
+    if (hasActivePaidSub) {
+      skippedCount++;
+      continue;
+    }
+
+    const hasActiveFutureTrial = userSubs.some(
+      (s: any) =>
+        s.status === "trialing" && new Date(s.current_period_end).getTime() > now.getTime()
+    );
+    if (hasActiveFutureTrial) {
+      skippedCount++;
+      continue;
+    }
+
+    const backfillSubId = `trial_backfill_${u.id}`;
+    const alreadyBackfilled = userSubs.some(
+      (s: any) => s.provider_subscription_id === backfillSubId
+    );
+    if (alreadyBackfilled) {
       skippedCount++;
       continue;
     }
@@ -371,7 +391,7 @@ export async function backfillFreeUserTrials(now: Date = new Date()): Promise<{
         current_period_end: endsAt,
         cancel_at_period_end: false,
         provider: "trial",
-        provider_subscription_id: `trial_${u.id}`,
+        provider_subscription_id: backfillSubId,
       },
     });
 
