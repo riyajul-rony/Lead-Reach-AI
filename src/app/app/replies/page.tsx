@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/pagination";
+import { parsePageParam } from "@/lib/query-params";
 import { ReplyCategoryControls } from "@/components/outreach/reply-category-controls";
 import { VALID_REPLY_CATEGORIES } from "@/server/ai/reply-classifier";
 
@@ -25,7 +26,7 @@ export default async function RepliesInboxPage({
   const userId = user.id;
 
   const sp = searchParams ? await searchParams : {};
-  const currentPage = Math.max(1, parseInt(sp.page || "1", 10));
+  const currentPage = parsePageParam(sp.page);
   const selectedCategory =
     sp.category && (VALID_REPLY_CATEGORIES as readonly string[]).includes(sp.category)
       ? sp.category
@@ -63,6 +64,7 @@ export default async function RepliesInboxPage({
             email: true,
             name: true,
             company: true,
+            campaign_id: true,
           },
         },
       },
@@ -143,6 +145,22 @@ export default async function RepliesInboxPage({
                     />
                   </div>
 
+                  {(reply.recipient?.name || reply.recipient?.email || reply.recipient?.company) && (
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                      {reply.recipient?.name && (
+                        <span className="font-medium text-fg">{reply.recipient.name}</span>
+                      )}
+                      {reply.recipient?.email && (
+                        <span className="text-text-muted font-mono text-[11px]">
+                          {reply.recipient.name ? `<${reply.recipient.email}>` : reply.recipient.email}
+                        </span>
+                      )}
+                      {reply.recipient?.company && (
+                        <span className="text-text-subtle">• {reply.recipient.company}</span>
+                      )}
+                    </div>
+                  )}
+
                   <p className="text-xs text-muted line-clamp-2 leading-relaxed">
                     {reply.snippet || "No message body preview"}
                   </p>
@@ -160,9 +178,9 @@ export default async function RepliesInboxPage({
                   </div>
                 </div>
 
-                {reply.recipient_id && (
+                {(reply.recipient?.campaign_id || reply.recipient_id) && (
                   <Link
-                    href={`/app/outreach`}
+                    href={reply.recipient?.campaign_id ? `/app/outreach/${reply.recipient.campaign_id}` : "/app/outreach"}
                     className="self-end sm:self-center shrink-0"
                   >
                     <Button variant="ghost" size="sm">

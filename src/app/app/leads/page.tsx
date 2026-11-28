@@ -15,6 +15,7 @@ import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/guards";
 import { isApifyConfigured } from "@/server/providers/leads/apify/config";
 import { Pagination } from "@/components/pagination";
+import { parsePageParam } from "@/lib/query-params";
 import { PageHeader } from "@/components/ui/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,30 @@ const leadSources = [
   },
 ];
 
+function getSearchRunTitle(source: string | null | undefined, params: Record<string, any>): string {
+  const keyword = typeof params.keyword === "string" ? params.keyword.trim() : "";
+  if (keyword) return keyword;
+
+  const lines = Array.isArray(params.lines) ? params.lines : [];
+  const firstNiche = typeof lines[0]?.niche === "string" ? lines[0].niche.trim() : "";
+  if (firstNiche) return lines.length > 1 ? `${firstNiche} (+${lines.length - 1})` : firstNiche;
+
+  const titles = Array.isArray(params.titles)
+    ? params.titles.filter((t: unknown): t is string => typeof t === "string" && t.trim().length > 0)
+    : Array.isArray(params.jobTitles)
+    ? params.jobTitles.filter((t: unknown): t is string => typeof t === "string" && t.trim().length > 0)
+    : [];
+  const industry = typeof params.industry === "string" ? params.industry.trim() : "";
+  if (titles.length > 0 && industry) return `${titles.slice(0, 2).join(", ")} · ${industry}`;
+  if (titles.length > 0) return titles.slice(0, 2).join(", ");
+  if (industry) return industry;
+
+  if (source === "linkedin") return "LinkedIn B2B Search";
+  if (source === "meta_ads") return "Meta Ads Search";
+  if (source === "google_maps") return "Google Maps Search";
+  return "Search Run";
+}
+
 export default async function LeadsOverviewPage({
   searchParams,
 }: {
@@ -58,7 +83,7 @@ export default async function LeadsOverviewPage({
   const userId = user.id;
 
   const sp = searchParams ? await searchParams : {};
-  const currentPage = Math.max(1, parseInt(sp.page || "1", 10));
+  const currentPage = parsePageParam(sp.page);
   const pageSize = 50;
   const skip = (currentPage - 1) * pageSize;
 
@@ -114,11 +139,17 @@ export default async function LeadsOverviewPage({
                 Launch Outreach
               </Button>
             </Link>
-            <Link href="/app/leads/google_maps">
-              <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled={!configured}>
+            {configured ? (
+              <Link href="/app/leads/google_maps">
+                <Button variant="primary" size="sm" icon={<Plus size={14} />}>
+                  New Search
+                </Button>
+              </Link>
+            ) : (
+              <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled>
                 New Search
               </Button>
-            </Link>
+            )}
           </div>
         }
       />
@@ -196,14 +227,14 @@ export default async function LeadsOverviewPage({
                 >
                   <div className="flex items-start justify-between">
                     <span className="font-medium text-xs text-text truncate max-w-[180px]">
-                      {params.keyword || "Search Run"}
+                      {getSearchRunTitle(s.source, params)}
                     </span>
                     <Badge variant={isCompleted ? "success" : "warning"} size="sm" dot>
                       {s.status || "completed"}
                     </Badge>
                   </div>
                   <div className="mt-1.5 text-[11px] text-text-muted flex items-center gap-1">
-                    <MapPin size={11} className="text-text-subtle" /> {params.location || "Anywhere"}
+                    <MapPin size={11} className="text-text-subtle" /> {params.location || params.country || "Anywhere"}
                   </div>
                   <div className="mt-2 flex items-center justify-between text-[11px] text-text-muted border-t border-border pt-2">
                     <span>
