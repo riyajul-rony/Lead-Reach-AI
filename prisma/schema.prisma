@@ -581,6 +581,7 @@ model email_accounts {
 
   @@unique([user_id, from_email])
   @@index([reply_inbox_account_id])
+  @@index([google_connection_id])
   // Hard cap: never above 25/hour (spec 5.6). Enforced again in SQL migration CHECK.
 }
 
@@ -660,6 +661,9 @@ model social_campaigns {
 
   @@index([user_id, status])
   @@index([status])
+  @@index([social_account_id])
+  @@index([openai_key_id])
+  @@index([workspace_id])
 }
 
 model assets {
@@ -835,6 +839,9 @@ model export_jobs {
   user                 users               @relation(fields: [user_id], references: [id], onDelete: Cascade)
   search               lead_searches?      @relation(fields: [search_id], references: [id], onDelete: SetNull)
   google_connection    google_connections? @relation(fields: [google_connection_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id])
+  @@index([search_id])
 }
 
 model suppressions {
@@ -1050,6 +1057,7 @@ model email_messages {
   variant          campaign_variants?   @relation(fields: [variant_id], references: [id], onDelete: SetNull)
 
   @@unique([email_account_id, message_id])
+  @@index([recipient_id])
   @@index([email_account_id, sent_at])
   @@index([variant_id])
   @@index([user_id, direction, status])
@@ -1118,6 +1126,7 @@ model followup_sequences {
 
   @@index([user_id])
   @@index([campaign_id, status])
+  @@index([email_account_id])
 }
 
 /// @deprecated Canonical follow-up step storage is `campaign_steps`. Retained for backward data compatibility; do not drop without data verification.
@@ -1309,6 +1318,7 @@ model payments {
   subscription        subscriptions? @relation(fields: [subscription_id], references: [id], onDelete: SetNull)
 
   @@index([user_id])
+  @@index([subscription_id])
   @@index([status])
   @@index([invoice_number])
   @@index([provider_payment_id])
