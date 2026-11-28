@@ -7,6 +7,7 @@ import { queueEmailDispatch } from "@/server/queues";
 import { accountHasWorkingReplyDetection, sanitizeAccount } from "@/server/email/account-service";
 import { assertWorkspaceLegalAcknowledgement } from "@/server/legal/acknowledgement";
 import { assertUserWorkspaceSendingActive } from "@/server/workspace/sending-control";
+import { assertTrialActive } from "@/server/billing/trial";
 import {
   VariantInput,
   validateVariantInputs,
@@ -194,6 +195,7 @@ export async function createOutreachCampaign(userId: string, input: CreateCampai
   }
 
   if (input.launchNow) {
+    await assertTrialActive(userId);
     await assertUserWorkspaceSendingActive(userId);
     await assertWorkspaceLegalAcknowledgement(userId);
   }
@@ -492,6 +494,7 @@ export async function updateCampaignStatus(
   }
 
   if (status === "running" && campaign.status !== "running") {
+    await assertTrialActive(userId);
     await assertUserWorkspaceSendingActive(userId);
     await assertWorkspaceLegalAcknowledgement(userId);
   }

@@ -3,6 +3,8 @@ import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { assertLimit } from "@/server/billing/limits";
+import { assertTrialActive, isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 import { queueLeadSearch } from "@/server/queues";
 import { executeLeadSearch } from "@/server/worker/lead-search-worker";
 import { isApifyConfigured, getApifySettings } from "@/server/providers/leads/apify/config";
@@ -14,6 +16,15 @@ export async function POST(req: NextRequest) {
   const session = await getSessionUser();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
+  }
+
+  try {
+    await assertTrialActive(session.user.id);
+  } catch (err) {
+    if (isTrialExpiredError(err)) {
+      return trialExpiredJsonResponse(err);
+    }
+    throw err;
   }
 
   let body: any;

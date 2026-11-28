@@ -18,6 +18,7 @@ import {
   getPausedUserIdsSet,
   isUserWorkspaceSendingPaused,
 } from "@/server/workspace/sending-control";
+import { getTrialExpiredUserIdsSet, getTrialStatus } from "@/server/billing/trial";
 import { resolveSenderFirstName } from "@/server/email/sender-identity";
 import { resolveAccountJitterBounds } from "@/server/email/send-jitter";
 import {
@@ -286,6 +287,15 @@ export async function sendSingleRecipientFollowup(
       throttled: true,
       workspacePaused: true,
       reason: wsPause.reason || "Workspace sending is paused by an administrator",
+    };
+  }
+
+  const trialStatus = await getTrialStatus(recipient.user_id);
+  if (trialStatus.status === "expired") {
+    return {
+      throttled: true,
+      trialExpired: true,
+      reason: "Free trial expired. Upgrade at /app/settings/billing to resume follow-ups.",
     };
   }
 
@@ -704,6 +714,7 @@ export async function dispatchDueFollowups(
     where: { status: "running" },
   });
   const pausedUsers = await getPausedUserIdsSet();
+  const trialExpiredUsers = await getTrialExpiredUserIdsSet(now);
 
   let totalDispatched = 0;
   let totalThrottled = 0;
@@ -712,8 +723,8 @@ export async function dispatchDueFollowups(
 
   for (const campaign of runningCampaigns) {
     try {
-      if (pausedUsers.has(campaign.user_id)) {
-        continue; // Admin-paused workspace: hold due followups cleanly without stale expiry
+      if (pausedUsers.has(campaign.user_id) || trialExpiredUsers.has(campaign.user_id)) {
+        continue; // Paused workspace or expired trial: hold due followups cleanly
       }
       const startHour = campaign.send_window?.startHour ?? 0;
       const endHour = campaign.send_window?.endHour ?? 24;

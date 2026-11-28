@@ -11,6 +11,7 @@ import {
 } from "@/server/email/daily-capacity";
 import { dispatchEmailTransport } from "@/server/email/sending-engine";
 import { getPausedUserIdsSet } from "@/server/workspace/sending-control";
+import { getTrialExpiredUserIdsSet } from "@/server/billing/trial";
 
 export const WARMUP_HEADER = "X-LeadReachAI-Warmup";
 export const WARMUP_ID_HEADER = "X-LeadReachAI-Warmup-Id";
@@ -187,9 +188,10 @@ export async function runSelfWarmupTick(
   let failed = 0;
 
   const pausedUsers = await getPausedUserIdsSet();
+  const trialExpiredUsers = await getTrialExpiredUserIdsSet(now);
 
   for (const [userId, pool] of byUser.entries()) {
-    if (pausedUsers.has(userId)) {
+    if (pausedUsers.has(userId) || trialExpiredUsers.has(userId)) {
       throttled += pool.length;
       continue;
     }

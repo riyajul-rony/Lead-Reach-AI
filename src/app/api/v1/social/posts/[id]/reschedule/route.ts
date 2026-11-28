@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/server/auth/session";
 import { db, scoped } from "@/server/db";
+import { assertTrialActive, isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 
 export async function POST(
   _req: NextRequest,
@@ -9,6 +11,15 @@ export async function POST(
   const session = await getSessionUser();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    await assertTrialActive(session.user.id);
+  } catch (err) {
+    if (isTrialExpiredError(err)) {
+      return trialExpiredJsonResponse(err);
+    }
+    throw err;
   }
 
   const { id } = await params;

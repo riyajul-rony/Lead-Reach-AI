@@ -3,6 +3,8 @@ import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { scrapeFullCompanyProfile, categorizeEmail, formatSocialUrl } from "@/server/providers/leads/enrichment";
 import { resolveOfficialWebsite } from "@/server/providers/leads/google-maps";
+import { assertTrialActive, isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 
 export const maxDuration = 300; // 5 minutes max
 
@@ -10,6 +12,15 @@ export async function POST(req: NextRequest) {
   const session = await getSessionUser();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
+  }
+
+  try {
+    await assertTrialActive(session.user.id);
+  } catch (err) {
+    if (isTrialExpiredError(err)) {
+      return trialExpiredJsonResponse(err);
+    }
+    throw err;
   }
 
   let body: any;

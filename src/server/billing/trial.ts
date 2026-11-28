@@ -31,6 +31,16 @@ export class TrialExpiredError extends Error {
   }
 }
 
+export function isTrialExpiredError(err: unknown): err is TrialExpiredError {
+  return (
+    err instanceof TrialExpiredError ||
+    (typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: unknown }).code === "trial_expired")
+  );
+}
+
 /**
  * Read TRIAL_DAYS from admin config, honoring 0 as "no trial" instead of falling back to 14.
  */

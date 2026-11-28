@@ -7,6 +7,8 @@ import {
 } from "@/server/email/campaign-service";
 import { LegalAcknowledgementRequiredError } from "@/server/legal/acknowledgement";
 import { WorkspaceSendingPausedError } from "@/server/workspace/sending-control";
+import { isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 
 export async function GET(
   req: NextRequest,
@@ -42,6 +44,9 @@ export async function PATCH(
     const updated = await updateCampaignStatus(session.user.id, id, body.status);
     return NextResponse.json({ data: updated });
   } catch (err: unknown) {
+    if (isTrialExpiredError(err)) {
+      return trialExpiredJsonResponse(err);
+    }
     if (err instanceof WorkspaceSendingPausedError) {
       return NextResponse.json(
         {

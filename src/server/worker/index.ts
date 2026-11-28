@@ -18,6 +18,7 @@ import { incrementWarmupDayForActiveAccounts } from "@/server/email/account-serv
 import { evaluateDailyAccountHealth } from "@/server/email/adaptive-limit-service";
 import { runSelfWarmupTick } from "@/server/email/warmup-pool-service";
 import { recoverStuckLeadSearches } from "@/server/worker/lead-search-worker";
+import { getTrialExpiredUserIdsSet, getTrialStatus } from "@/server/billing/trial";
 
 /**
  * 1. PLANNER WORKER: runs every minute, computes scheduled runs from DB campaigns
@@ -34,8 +35,12 @@ export function startPlannerWorker() {
         where: { status: "active" },
         include: { social_account: true, openai_key: true },
       });
+      const trialExpiredUsers = await getTrialExpiredUserIdsSet(now);
 
       for (const campaign of activeCampaigns) {
+        if (trialExpiredUsers.has(campaign.user_id)) {
+          continue;
+        }
         try {
           const { due } = computePlannerRuns(
             {
@@ -114,6 +119,9 @@ export function startPlannerWorker() {
         });
 
         for (const run of dueRuns) {
+          if (trialExpiredUsers.has(run.user_id)) {
+            continue;
+          }
           await queueSocialPublish(run.id);
         }
       } catch (err) {
@@ -174,6 +182,19 @@ export function startSocialPublishWorker() {
           data: { status: "failed", error_message: err.message },
         });
         throw err;
+      }
+
+      const trialStatus = await getTrialStatus(campaign.user_id);
+      if (trialStatus.status === "expired") {
+        await db.post_runs.update({
+          where: { id: postRun.id },
+          data: {
+            status: "failed",
+            error_message:
+              "Your free trial has ended. Please upgrade to a paid plan at /app/settings/billing to continue.",
+          },
+        });
+        return;
       }
 
       // Transition to generating

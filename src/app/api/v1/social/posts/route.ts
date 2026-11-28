@@ -5,6 +5,8 @@ import { generateSocialPost } from "@/server/ai/social-generator";
 import { decrypt } from "@/server/crypto";
 import { getUserApiKey } from "@/server/api-keys/service";
 import { assertLimit } from "@/server/billing/limits";
+import { assertTrialActive, isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 
 export async function GET() {
   const session = await getSessionUser();
@@ -63,8 +65,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    await assertTrialActive(session.user.id);
     await assertLimit(session.user.id, "monthly_social_posts", 1);
   } catch (err: any) {
+    if (isTrialExpiredError(err)) {
+      return trialExpiredJsonResponse(err);
+    }
     return NextResponse.json({ error: err.message }, { status: 429 });
   }
 

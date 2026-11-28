@@ -4,6 +4,7 @@ import { exchangeGoogleOutreachCode } from "@/server/email/google-oauth";
 import { db } from "@/server/db";
 import { encrypt } from "@/server/crypto";
 import { assertLimit } from "@/server/billing/limits";
+import { assertTrialActive } from "@/server/billing/trial";
 import { logger } from "@/server/logger";
 import { getAppUrl } from "@/server/config";
 import {
@@ -94,7 +95,8 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // New account creation: Check plan limits
+    // New account creation: Check trial status and plan limits
+    await assertTrialActive(effectiveUserId);
     await assertLimit(effectiveUserId, "max_email_accounts", 1);
 
     const created = await db.email_accounts.create({

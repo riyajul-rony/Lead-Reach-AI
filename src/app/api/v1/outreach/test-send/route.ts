@@ -5,6 +5,8 @@ import { ensureFreshGoogleAccessToken, sendViaGmailApi } from "@/server/email/go
 import { renderEmailTemplate } from "@/server/email/template-renderer";
 import { resolveUserWorkspaceBusinessAddress } from "@/server/workspace/settings";
 import { formatFromHeader, resolveSenderFirstName } from "@/server/email/sender-identity";
+import { assertTrialActive, isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 import { logger } from "@/server/logger";
 import nodemailer from "nodemailer";
 import { z } from "zod";
@@ -31,6 +33,15 @@ export async function POST(req: NextRequest) {
   const session = await getSessionUser();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    await assertTrialActive(session.user.id);
+  } catch (err) {
+    if (isTrialExpiredError(err)) {
+      return trialExpiredJsonResponse(err);
+    }
+    throw err;
   }
 
   let body: any;

@@ -11,6 +11,7 @@ import { filterDuplicateLeads } from "@/server/providers/leads/dedupe";
 import { scrapeFullCompanyProfile, formatSocialUrl } from "@/server/providers/leads/enrichment";
 import { normalizeIanaTimezone } from "@/server/email/timezone";
 import { trackUsageIncrement } from "@/server/billing/usage-tracker";
+import { TrialExpiredError, getTrialStatus } from "@/server/billing/trial";
 import type { RawLead } from "@/server/providers/leads/types";
 
 /**
@@ -142,6 +143,19 @@ export async function executeLeadSearch(
   }
 
   const userId = searchRecord.user_id;
+  const trialStatus = await getTrialStatus(userId);
+  if (trialStatus.status === "expired") {
+    const expiredErr = new TrialExpiredError(trialStatus.endsAt);
+    await db.lead_searches.update({
+      where: { id: searchId },
+      data: {
+        status: "failed",
+        error_message: expiredErr.message,
+        finished_at: new Date(),
+      },
+    });
+    return;
+  }
   const source = searchRecord.source;
   const params: any =
     typeof searchRecord.params === "object" && searchRecord.params !== null

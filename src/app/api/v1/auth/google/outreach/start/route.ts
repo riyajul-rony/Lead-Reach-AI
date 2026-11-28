@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/server/auth/session";
 import { getGoogleOutreachAuthUrl } from "@/server/email/google-oauth";
 import { assertLimit } from "@/server/billing/limits";
+import { assertTrialActive, isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 import { getAppUrl } from "@/server/config";
 import {
   OAUTH_STATE_COOKIE,
@@ -16,13 +18,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/login?error=unauthorized", appUrl));
   }
 
-  // Pre-check plan limits for email accounts
+  // Pre-check trial status and plan limits for email accounts
   try {
+    await assertTrialActive(session.user.id);
     await assertLimit(session.user.id, "max_email_accounts", 1);
   } catch (limitErr: any) {
+    if (isTrialExpiredError(limitErr) && req.headers.get("accept")?.includes("application/json")) {
+      return trialExpiredJsonResponse(limitErr);
+    }
     const errorMsg = encodeURIComponent(limitErr.message || "Account limit reached");
+    const extra = isTrialExpiredError(limitErr) ? "&code=trial_expired" : "";
     return NextResponse.redirect(
-      new URL(`/app/outreach/email-accounts?error=${errorMsg}`, appUrl)
+      new URL(`/app/outreach/email-accounts?error=${errorMsg}${extra}`, appUrl)
     );
   }
 

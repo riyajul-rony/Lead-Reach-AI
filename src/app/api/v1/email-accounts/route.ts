@@ -8,6 +8,8 @@ import {
   deriveImapFromSmtp,
 } from "@/server/email/account-service";
 import { assertLimit } from "@/server/billing/limits";
+import { assertTrialActive, isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { z } from "zod";
@@ -76,6 +78,15 @@ export async function POST(req: NextRequest) {
   const session = await getSessionUser();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    await assertTrialActive(session.user.id);
+  } catch (err) {
+    if (isTrialExpiredError(err)) {
+      return trialExpiredJsonResponse(err);
+    }
+    throw err;
   }
 
   let body: any;

@@ -3,6 +3,8 @@ import { getSessionUser } from "@/server/auth/session";
 import { createOutreachCampaign, listCampaigns } from "@/server/email/campaign-service";
 import { LegalAcknowledgementRequiredError } from "@/server/legal/acknowledgement";
 import { WorkspaceSendingPausedError } from "@/server/workspace/sending-control";
+import { isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 import { logger } from "@/server/logger";
 
 export async function GET() {
@@ -26,6 +28,10 @@ export async function POST(req: NextRequest) {
     const result = await createOutreachCampaign(session.user.id, body);
     return NextResponse.json({ data: result }, { status: 201 });
   } catch (err: any) {
+    if (isTrialExpiredError(err)) {
+      return trialExpiredJsonResponse(err);
+    }
+
     if (err instanceof WorkspaceSendingPausedError || err?.code === "WORKSPACE_SENDING_PAUSED") {
       return NextResponse.json(
         {

@@ -4,11 +4,22 @@ import { db, scoped } from "@/server/db";
 import { decrypt } from "@/server/crypto";
 import { getUserApiKey } from "@/server/api-keys/service";
 import { generateSocialPost } from "@/server/ai/social-generator";
+import { assertTrialActive, isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 
 export async function POST(req: NextRequest) {
   const session = await getSessionUser();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    await assertTrialActive(session.user.id);
+  } catch (err) {
+    if (isTrialExpiredError(err)) {
+      return trialExpiredJsonResponse(err);
+    }
+    throw err;
   }
 
   let body: any;

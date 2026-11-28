@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { db, scoped } from "@/server/db";
+import { assertTrialActive, isTrialExpiredError } from "@/server/billing/trial";
+import { trialExpiredJsonResponse } from "@/server/billing/trial-response";
 
 const patchSocialCampaignSchema = z
   .object({
@@ -55,6 +57,17 @@ export async function PATCH(
       { error: "Invalid request payload", details: parsed.error.flatten() },
       { status: 400 }
     );
+  }
+
+  if (parsed.data.status === "active") {
+    try {
+      await assertTrialActive(session.user.id);
+    } catch (err) {
+      if (isTrialExpiredError(err)) {
+        return trialExpiredJsonResponse(err);
+      }
+      throw err;
+    }
   }
 
   const existing = await db.social_campaigns.findFirst({

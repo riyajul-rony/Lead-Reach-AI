@@ -23,6 +23,7 @@ import {
   getPausedUserIdsSet,
   isUserWorkspaceSendingPaused,
 } from "@/server/workspace/sending-control";
+import { getTrialExpiredUserIdsSet, getTrialStatus } from "@/server/billing/trial";
 import { formatFromHeader, resolveSenderFirstName } from "@/server/email/sender-identity";
 import {
   commitAccountDailyCapacity,
@@ -476,6 +477,15 @@ export async function sendSingleRecipientEmail(recipientId: string) {
       throttled: true,
       workspacePaused: true,
       reason: wsPause.reason || "Workspace sending is paused by an administrator",
+    };
+  }
+
+  const trialStatus = await getTrialStatus(recipient.user_id);
+  if (trialStatus.status === "expired") {
+    return {
+      throttled: true,
+      trialExpired: true,
+      reason: "Free trial expired. Upgrade at /app/settings/billing to resume sending.",
     };
   }
 
@@ -1007,6 +1017,7 @@ export async function dispatchRunningCampaigns(
     where: { status: "running" },
   });
   const pausedUsers = await getPausedUserIdsSet();
+  const trialExpiredUsers = await getTrialExpiredUserIdsSet(now);
 
   let totalDispatched = 0;
   let totalThrottled = 0;
@@ -1014,8 +1025,8 @@ export async function dispatchRunningCampaigns(
 
   for (const campaign of runningCampaigns) {
     try {
-      if (pausedUsers.has(campaign.user_id)) {
-        continue; // Admin-paused workspace: preserve queued leads without expiring or dispatching
+      if (pausedUsers.has(campaign.user_id) || trialExpiredUsers.has(campaign.user_id)) {
+        continue; // Paused workspace or expired trial: preserve queued leads without dispatching
       }
       // 0. Recover any recipients stuck in 'sending' after a worker crash (marks needs_review, never auto-resends)
       await recoverStuckSendingRecipients(campaign.id, now);
