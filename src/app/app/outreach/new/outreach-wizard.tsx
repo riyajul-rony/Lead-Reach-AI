@@ -160,7 +160,7 @@ export function OutreachWizard() {
     maxWaitMinutes: number;
   }
   const [accountAllocations, setAccountAllocations] = useState<Record<string, AccountAllocState>>({});
-  const [presetMode, setPresetMode] = useState<"safe" | "balanced" | "custom">("balanced");
+  const [presetMode, setPresetMode] = useState<"safe" | "balanced" | "aggressive" | "custom">("balanced");
 
   // Step 4: Email Content
   const [subjectTemplate, setSubjectTemplate] = useState(
@@ -390,6 +390,7 @@ export function OutreachWizard() {
 
   const applyPresetToAccounts = (presetKey: SpeedPresetKey) => {
     const p = SPEED_PRESETS[presetKey];
+    setPresetMode(presetKey === "fast" ? "aggressive" : presetKey);
     setAccountAllocations((prev) => {
       const next = { ...prev };
       selectedAccountIds.forEach((id) => {
@@ -1234,8 +1235,8 @@ export function OutreachWizard() {
           </div>
 
           <div className="space-y-4">
-            {/* 3 Lead Source Tabs */}
-            <div className="flex gap-2 p-1.5 rounded-xl bg-bgSubtle border border-border">
+            {/* 4 Lead Source Tabs */}
+            <div className="grid grid-cols-2 sm:flex gap-2 p-1.5 rounded-xl bg-bgSubtle border border-border">
               <button
                 type="button"
                 id="lead-source-leads"
@@ -1279,7 +1280,7 @@ export function OutreachWizard() {
                 type="button"
                 id="lead-source-sheet"
                 onClick={() => setRecipientSource("sheet")}
-                className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-colors hidden md:block ${
+                className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-colors ${
                   recipientSource === "sheet"
                     ? "bg-surface text-fg shadow-xs"
                     : "text-muted hover:text-fg"
@@ -1421,7 +1422,7 @@ export function OutreachWizard() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <Button
                     type="button"
-                    variant="secondary"
+                    variant={presetMode === "safe" ? "primary" : "secondary"}
                     size="sm"
                     onClick={() => applyPresetToAccounts("safe")}
                     className="text-xs"
@@ -1430,7 +1431,7 @@ export function OutreachWizard() {
                   </Button>
                   <Button
                     type="button"
-                    variant="secondary"
+                    variant={presetMode === "balanced" ? "primary" : "secondary"}
                     size="sm"
                     onClick={() => applyPresetToAccounts("balanced")}
                     className="text-xs"
@@ -1439,7 +1440,7 @@ export function OutreachWizard() {
                   </Button>
                   <Button
                     type="button"
-                    variant="secondary"
+                    variant={presetMode === "aggressive" ? "primary" : "secondary"}
                     size="sm"
                     onClick={() => applyPresetToAccounts("fast")}
                     className="text-xs"
@@ -2395,11 +2396,13 @@ export function OutreachWizard() {
 
                     {!deliverabilityCheck.canLaunch && (
                       <p className="text-[11px] text-rose-600 dark:text-rose-400 text-center font-medium leading-relaxed">
-                        Resolve {deliverabilityCheck.errors.length} blocking deliverability error(s) before launching.
+                        {deliverabilityCheck.errors[0]?.title
+                          ? `${deliverabilityCheck.errors[0].title}: resolve ${deliverabilityCheck.errors.length} blocking deliverability error(s) before launching.`
+                          : `Resolve ${deliverabilityCheck.errors.length} blocking deliverability error(s) before launching.`}
                       </p>
                     )}
 
-                    {isLaunchBlocked && (
+                    {hasNoReplyDetection && hasFollowups && (
                       <p className="text-[11px] text-rose-600 dark:text-rose-400 text-center font-medium leading-relaxed">
                         Cannot launch with follow-up steps: sender account lacks reply detection. For follow-ups and stop-on-reply, connect with App Password + IMAP, or turn off follow-ups.
                       </p>
