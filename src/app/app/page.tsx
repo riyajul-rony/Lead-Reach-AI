@@ -61,7 +61,7 @@ export default async function HubPage() {
               Generate Leads
             </Button>
           </Link>
-          <Link href="/app/settings/email">
+          <Link href="/app/outreach/email-accounts">
             <Button variant="secondary" size="sm" icon={<Mail size={13} />}>
               Connect Inbox
             </Button>

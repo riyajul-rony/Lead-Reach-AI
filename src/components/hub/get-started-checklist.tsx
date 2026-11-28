@@ -39,7 +39,7 @@ export function GetStartedChecklist({
       id: "inbox",
       title: "Connect an email inbox",
       description: "Link your Gmail or custom SMTP sender account to dispatch outbound messages.",
-      href: "/app/settings/email",
+      href: "/app/outreach/email-accounts",
       completed: hasConnectedInbox,
       actionLabel: "Connect Inbox",
     },
