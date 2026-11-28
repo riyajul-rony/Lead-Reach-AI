@@ -18,6 +18,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
   }
 
+  if (!session.user.email_verified_at) {
+    return NextResponse.json(
+      {
+        error: "Please verify your email address before searching for leads.",
+        code: "EMAIL_NOT_VERIFIED",
+      },
+      { status: 403 }
+    );
+  }
+
   try {
     await assertTrialActive(session.user.id);
   } catch (err) {

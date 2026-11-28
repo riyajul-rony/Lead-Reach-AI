@@ -83,7 +83,9 @@ describe("Phase 6c Item 3 (BUG-017): POST /api/v1/leads/search", () => {
       update: { quantity: 5 },
     });
 
-    mockSession.mockResolvedValue({ user: { id: userId, email: `${userId}@test.io`, role: "user" } });
+    mockSession.mockResolvedValue({
+      user: { id: userId, email: `${userId}@test.io`, role: "user", email_verified_at: new Date() },
+    });
 
     // Requesting 20 leads when only 5 remain must be rejected with 429
     const reqOver = new NextRequest("http://localhost:3000/api/v1/leads/search", {
@@ -122,7 +124,9 @@ describe("Phase 6c Item 3 (BUG-017): POST /api/v1/leads/search", () => {
     await db.users.create({
       data: { id: userId, email: `${userId}@test.io`, role: "user", status: "active", plan: "agency" },
     });
-    mockSession.mockResolvedValue({ user: { id: userId, email: `${userId}@test.io`, role: "user" } });
+    mockSession.mockResolvedValue({
+      user: { id: userId, email: `${userId}@test.io`, role: "user", email_verified_at: new Date() },
+    });
     mockQueueLeadSearch.mockResolvedValue(false);
 
     const req = new NextRequest("http://localhost:3000/api/v1/leads/search", {

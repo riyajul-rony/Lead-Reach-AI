@@ -41,6 +41,15 @@ export async function PATCH(
   const { id } = await params;
   try {
     const body = await req.json();
+    if (body?.status === "running" && !session.user.email_verified_at) {
+      return NextResponse.json(
+        {
+          error: "Please verify your email address before launching outreach campaigns.",
+          code: "EMAIL_NOT_VERIFIED",
+        },
+        { status: 403 }
+      );
+    }
     const updated = await updateCampaignStatus(session.user.id, id, body.status);
     return NextResponse.json({ data: updated });
   } catch (err: unknown) {

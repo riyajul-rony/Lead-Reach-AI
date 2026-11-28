@@ -23,6 +23,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (!session.user.email_verified_at) {
+    return NextResponse.json(
+      {
+        error: "Please verify your email address before creating or launching outreach campaigns.",
+        code: "EMAIL_NOT_VERIFIED",
+      },
+      { status: 403 }
+    );
+  }
+
   try {
     const body = await req.json();
     const result = await createOutreachCampaign(session.user.id, body);

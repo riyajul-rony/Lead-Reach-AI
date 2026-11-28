@@ -264,7 +264,7 @@ describe("Task 9 — Admin Workspace Sending Pause & Audit Controls", () => {
     expect(pauseRes.status).toBe(200);
 
     // 1. User A cannot launch a new running campaign (423), nor PATCH campaign to running (423)
-    mockSession.mockResolvedValue({ user: { id: userA, role: "user" } });
+    mockSession.mockResolvedValue({ user: { id: userA, role: "user", email_verified_at: new Date() } });
     const launchRes = await campaignsPost(
       new NextRequest("http://localhost/api/v1/outreach/campaigns", {
         method: "POST",

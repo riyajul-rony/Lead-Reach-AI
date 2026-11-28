@@ -50,6 +50,7 @@ describe("Phase 6 Task 5: Legal Terms, Signup Consent & First-Launch Acknowledge
         email: `legal-${idx}@leadreach.io`,
         name: "Alex Legal",
         role: "user",
+        email_verified_at: new Date(),
       },
     });
   });
