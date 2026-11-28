@@ -43,13 +43,23 @@ export default async function BillingSettingsPage() {
     })),
   ]);
 
-  // Fetch active subscription
-  const activeSubscription = await db.subscriptions.findFirst({
-    where: {
-      user_id: user.id,
-      status: { in: ["active", "trialing", "past_due"] },
-    },
-  }).catch(() => null);
+  // Fetch active subscription (or most recent expired paid subscription for Renew CTA)
+  const [activeSubscription, lastExpiredPaidSub] = await Promise.all([
+    db.subscriptions.findFirst({
+      where: {
+        user_id: user.id,
+        status: { in: ["active", "trialing", "past_due"] },
+      },
+    }).catch(() => null),
+    db.subscriptions.findFirst({
+      where: {
+        user_id: user.id,
+        status: "expired",
+        provider: { not: "trial" },
+      },
+      orderBy: { current_period_end: "desc" },
+    }).catch(() => null),
+  ]);
 
   // Fetch recent payments / invoices for this user
   const userPayments = await db.payments.findMany({
@@ -110,6 +120,15 @@ export default async function BillingSettingsPage() {
       rejection_reason: typeof details.rejection_reason === "string" ? details.rejection_reason : null,
     };
   });
+
+  const currentActivePlanRecord = !isFree
+    ? plansForClient.find((p: any) => p.slug === plan.slug) || null
+    : null;
+  const expiredRenewablePlan =
+    isFree && lastExpiredPaidSub?.plan_id
+      ? plansForClient.find((p: any) => p.id === lastExpiredPaidSub.plan_id && p.slug !== "free") || null
+      : null;
+  const renewablePlanId = currentActivePlanRecord?.id || expiredRenewablePlan?.id || null;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 pb-16">
@@ -330,6 +349,8 @@ export default async function BillingSettingsPage() {
         isTrialExpired={trialStatus?.status === "expired"}
         manualConfig={manualConfig}
         recentPayments={recentPaymentsForClient}
+        renewablePlanId={renewablePlanId}
+        isPaidExpired={Boolean(expiredRenewablePlan)}
       />
 
       {/* Invoices & Payment History */}

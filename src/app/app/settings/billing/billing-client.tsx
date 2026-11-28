@@ -50,6 +50,8 @@ interface BillingClientProps {
   isTrialExpired?: boolean;
   manualConfig: ManualPaymentConfig;
   recentPayments?: RecentPaymentSummary[];
+  renewablePlanId?: string | null;
+  isPaidExpired?: boolean;
 }
 
 export function BillingClient({
@@ -60,6 +62,8 @@ export function BillingClient({
   isTrialExpired = false,
   manualConfig,
   recentPayments = [],
+  renewablePlanId = null,
+  isPaidExpired = false,
 }: BillingClientProps) {
   const router = useRouter();
   const [interval, setInterval] = useState<"monthly" | "yearly">("monthly");
@@ -115,6 +119,11 @@ export function BillingClient({
   const latestRejected = useMemo(
     () => recentPayments.find((p) => p.status === "failed" && p.rejection_reason),
     [recentPayments]
+  );
+
+  const renewablePlan = useMemo(
+    () => (renewablePlanId ? plans.find((p) => p.id === renewablePlanId) || null : null),
+    [plans, renewablePlanId]
   );
 
   const startManualCheckout = async (plan: PlanItem) => {
@@ -245,6 +254,35 @@ export function BillingClient({
 
   return (
     <div className="space-y-6">
+      {/* Active / Expired Paid Plan Renewal Bar */}
+      {renewablePlan && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-lg bg-surface border border-border text-xs">
+          <div>
+            <div className="font-semibold text-fg">
+              {isPaidExpired
+                ? `Your ${renewablePlan.name} plan has expired`
+                : `Renew ${renewablePlan.name} Plan`}
+            </div>
+            <div className="text-muted mt-0.5">
+              {isPaidExpired
+                ? "Renew now to immediately reactivate your paid plan and lift account restrictions."
+                : "Renew early via manual payment to extend your active period without interruption."}
+            </div>
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => startManualCheckout(renewablePlan)}
+            disabled={loadingPlanId === renewablePlan.id || !manualConfig.isConfigured}
+          >
+            {loadingPlanId === renewablePlan.id ? (
+              <Loader2 size={13} className="animate-spin mr-1.5" />
+            ) : null}
+            Renew {renewablePlan.name}
+          </Button>
+        </div>
+      )}
+
       {/* Active Subscription Cancellation Warning / Trigger */}
       {activeSubscriptionId && currentPlanSlug !== "free" && (
         <div className="flex items-center justify-between p-4 rounded-lg bg-surface border border-border text-xs">
