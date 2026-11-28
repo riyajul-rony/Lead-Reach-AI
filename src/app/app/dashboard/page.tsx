@@ -53,7 +53,12 @@ export default async function DashboardPage() {
     db.email_messages.count({ where: { user_id: userId, direction: "in" } }),
     db.post_runs.count({ where: { user_id: userId, status: "pending_approval" } }),
     db.outreach_campaigns.count({ where: { user_id: userId, status: "running" } }),
-    db.lead_searches.findMany({ where: { user_id: userId }, take: 1, orderBy: { created_at: "desc" } }),
+    db.lead_searches.findMany({
+      where: { user_id: userId },
+      take: 1,
+      orderBy: { created_at: "desc" },
+      select: { id: true, source: true, params: true, found_count: true },
+    }),
     getUserUsageAndLimits(userId),
   ]);
 
@@ -322,19 +327,36 @@ export default async function DashboardPage() {
             <CardContent>
               {recentSearches.length > 0 ? (
                 <div className="space-y-2 text-xs">
-                  {recentSearches.map((s: { id: string; query?: string | null; location?: string | null; results_count?: number | null }) => (
-                    <div key={s.id} className="flex items-center justify-between p-2.5 rounded-[6px] border border-border bg-bg-subtle transition-colors hover:border-borderStrong">
-                      <div>
-                        <p className="font-semibold text-text">{s.query || "Lead Search"}</p>
-                        <p className="text-text-muted mt-0.5">{s.location || "Worldwide"} • {s.results_count || 0} leads</p>
+                  {recentSearches.map((s: { id: string; source?: string | null; params?: unknown; found_count?: number | null }) => {
+                    const params =
+                      s.params && typeof s.params === "object" && !Array.isArray(s.params)
+                        ? (s.params as Record<string, unknown>)
+                        : {};
+                    const keyword =
+                      (typeof params.keyword === "string" && params.keyword.trim()) ||
+                      (Array.isArray(params.titles) && params.titles.length > 0
+                        ? String(params.titles[0])
+                        : typeof params.industry === "string" && params.industry.trim()
+                        ? params.industry.trim()
+                        : "");
+                    const location =
+                      (typeof params.location === "string" && params.location.trim()) ||
+                      (typeof params.country === "string" && params.country.trim()) ||
+                      "";
+                    return (
+                      <div key={s.id} className="flex items-center justify-between p-2.5 rounded-[6px] border border-border bg-bg-subtle transition-colors hover:border-borderStrong">
+                        <div>
+                          <p className="font-semibold text-text">{keyword || "Lead Search"}</p>
+                          <p className="text-text-muted mt-0.5">{location || "Worldwide"} • {s.found_count ?? 0} leads</p>
+                        </div>
+                        <Link href={`/app/leads/searches/${s.id}`}>
+                          <Button variant="secondary" size="sm">
+                            Results
+                          </Button>
+                        </Link>
                       </div>
-                      <Link href={`/app/leads/searches/${s.id}`}>
-                        <Button variant="secondary" size="sm">
-                          Results
-                        </Button>
-                      </Link>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="text-xs text-text-muted p-2">No recent searches performed.</p>
