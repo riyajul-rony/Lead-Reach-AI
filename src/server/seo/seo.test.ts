@@ -271,7 +271,7 @@ describe("Phase 4 Step 3: metadataBase, canonical URLs, OpenGraph & Twitter card
   it("generates a 1200x630 PNG opengraph-image without external network calls", async () => {
     expect(ogSize).toEqual({ width: 1200, height: 630 });
     expect(ogContentType).toBe("image/png");
-    const response = OpenGraphImage();
+    const response = await OpenGraphImage();
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("image/png");
   });

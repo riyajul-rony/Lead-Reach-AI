@@ -1,7 +1,8 @@
 import { ImageResponse } from "next/og";
+import { getSiteBranding } from "@/server/branding";
 
 export const alt =
-  "Lead Reach AI — B2B Lead Discovery, Cold Email Outreach & Social Automation";
+  "B2B Lead Discovery, Cold Email Outreach & Social Automation";
 export const size = {
   width: 1200,
   height: 630,
@@ -17,7 +18,25 @@ const CAPABILITIES = [
   "Scheduled Social Posts",
 ];
 
-export default function OpenGraphImage() {
+export default async function OpenGraphImage() {
+  const branding = await getSiteBranding();
+  const siteName = branding.site_name || "Lead Reach AI";
+  const initials =
+    siteName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() || "")
+      .join("") || "LR";
+  const headline =
+    branding.hero_title ||
+    branding.tagline ||
+    "Multi-Tenant B2B Outreach, Lead Discovery & Social Automation";
+  const subtitle =
+    branding.seo_description ||
+    branding.hero_subtitle ||
+    "Rate-capped cold email campaigns, IMAP stop-on-reply, private self warm-up pools, and custom tracking domains in one workspace.";
+
   return new ImageResponse(
     (
       <div
@@ -48,10 +67,10 @@ export default function OpenGraphImage() {
               fontWeight: 800,
             }}
           >
-            LR
+            {initials}
           </div>
           <div style={{ fontSize: "26px", fontWeight: 700, letterSpacing: "-0.02em" }}>
-            Lead Reach AI
+            {siteName}
           </div>
         </div>
 
@@ -65,7 +84,7 @@ export default function OpenGraphImage() {
               color: "#ffffff",
             }}
           >
-            Multi-Tenant B2B Outreach, Lead Discovery &amp; Social Automation
+            {headline}
           </div>
           <div
             style={{
@@ -74,8 +93,7 @@ export default function OpenGraphImage() {
               color: "#94a3b8",
             }}
           >
-            Rate-capped cold email campaigns, IMAP stop-on-reply, private self warm-up pools, and
-            custom tracking domains in one workspace.
+            {subtitle}
           </div>
         </div>
 

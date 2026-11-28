@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Wrench, Mail, ShieldAlert, ArrowRight } from "lucide-react";
 import { getGlobalPlatformSettings } from "@/server/config";
+import { getSiteBranding } from "@/server/branding";
+import { BrandLogo } from "@/components/brand/brand-logo";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export const metadata: Metadata = {
@@ -14,18 +16,24 @@ export const metadata: Metadata = {
 };
 
 export default async function MaintenancePage() {
-  const settings = await getGlobalPlatformSettings();
+  const [settings, branding] = await Promise.all([
+    getGlobalPlatformSettings(),
+    getSiteBranding(),
+  ]);
+  const siteName = branding.site_name || settings.siteName;
+  const supportEmail = branding.support_email || settings.supportEmail;
 
   return (
     <div className="min-h-screen bg-bg text-fg flex flex-col justify-between p-6 sm:p-12 relative overflow-hidden">
       {/* Header */}
       <header className="flex items-center justify-between max-w-4xl w-full mx-auto relative z-10">
-        <div className="flex items-center gap-2.5">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand text-primary-text font-bold text-sm">
-            ⚡
-          </span>
-          <span className="font-bold text-lg text-fg tracking-tight">{settings.siteName}</span>
-        </div>
+        <BrandLogo
+          siteName={siteName}
+          logoUrl={branding.logo_url}
+          logoDarkUrl={branding.logo_dark_url}
+          size="md"
+          textClassName="font-bold text-lg text-fg tracking-tight"
+        />
         <ThemeToggle />
       </header>
 
@@ -51,10 +59,10 @@ export default async function MaintenancePage() {
 
           <div className="pt-4 border-t border-border flex flex-col sm:flex-row items-center justify-center gap-4 text-xs">
             <a
-              href={`mailto:${settings.supportEmail}`}
+              href={`mailto:${supportEmail}`}
               className="inline-flex items-center gap-1.5 text-muted hover:text-fg transition font-medium"
             >
-              <Mail size={14} className="text-brand" /> Need help? {settings.supportEmail}
+              <Mail size={14} className="text-brand" /> Need help? {supportEmail}
             </a>
           </div>
         </div>
@@ -70,7 +78,7 @@ export default async function MaintenancePage() {
 
       {/* Footer */}
       <footer className="text-center text-xs text-muted relative z-10 max-w-4xl w-full mx-auto">
-        &copy; {new Date().getFullYear()} {settings.siteName}. All rights reserved.
+        &copy; {new Date().getFullYear()} {siteName}. All rights reserved.
       </footer>
     </div>
   );

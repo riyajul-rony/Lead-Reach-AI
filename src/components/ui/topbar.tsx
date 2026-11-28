@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { Menu } from "lucide-react";
 import { useSidebar } from "./sidebar";
 import { ThemeToggle } from "./theme-toggle";
@@ -40,12 +41,12 @@ export const Topbar: React.FC<TopbarProps> = ({
               <React.Fragment key={idx}>
                 {idx > 0 ? <span className="text-border-input select-none">/</span> : null}
                 {crumb.href ? (
-                  <a
+                  <Link
                     href={crumb.href}
                     className="hover:text-text transition-colors truncate max-w-[140px]"
                   >
                     {crumb.label}
-                  </a>
+                  </Link>
                 ) : (
                   <span className="font-semibold text-text truncate max-w-[160px]">{crumb.label}</span>
                 )}
