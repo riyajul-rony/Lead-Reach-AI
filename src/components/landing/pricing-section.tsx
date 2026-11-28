@@ -74,7 +74,29 @@ const PLANS: PricingPlan[] = [
   },
 ];
 
-export function PricingSection() {
+export interface FreeTrialQuotas {
+  monthlyLeads: number;
+  monthlySocialPosts: number;
+  monthlyOutreachEmails: number;
+  maxEmailAccounts: number;
+  maxCampaigns: number;
+}
+
+const DEFAULT_FREE_QUOTAS: FreeTrialQuotas = {
+  monthlyLeads: 100,
+  monthlySocialPosts: 30,
+  monthlyOutreachEmails: 100,
+  maxEmailAccounts: 1,
+  maxCampaigns: 2,
+};
+
+export function PricingSection({
+  trialDays = 14,
+  freeQuotas = DEFAULT_FREE_QUOTAS,
+}: {
+  trialDays?: number;
+  freeQuotas?: FreeTrialQuotas;
+} = {}) {
   const [isYearly, setIsYearly] = useState(false);
 
   return (
@@ -88,7 +110,9 @@ export function PricingSection() {
             Transparent plans for high-growth teams
           </h2>
           <p className="mt-3 text-sm sm:text-base text-muted">
-            Start on the free plan. No surprise fees. Upgrade or cancel anytime with one click.
+            {trialDays > 0
+              ? `Try Lead Reach AI free for ${trialDays} days — no credit card required. Includes up to ${freeQuotas.monthlyLeads.toLocaleString()} leads, ${freeQuotas.monthlyOutreachEmails.toLocaleString()} outreach emails, ${freeQuotas.monthlySocialPosts.toLocaleString()} social posts, ${freeQuotas.maxEmailAccounts} inbox, and ${freeQuotas.maxCampaigns} campaigns. A paid plan is required after the trial ends.`
+              : "Choose a paid plan below to unlock lead discovery, cold outreach automation, and social scheduling."}
           </p>
 
           {/* Billing Interval Toggle */}
@@ -120,6 +144,33 @@ export function PricingSection() {
             </button>
           </div>
         </div>
+
+        {/* Trial Summary Banner */}
+        {trialDays > 0 && (
+          <div className="mb-8 rounded-2xl border border-border bg-surface p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge variant="accent" size="sm">
+                  {trialDays}-Day Free Trial
+                </Badge>
+                <span className="text-xs font-medium text-muted">
+                  $0 · No credit card required · Paid plan required after {trialDays} days
+                </span>
+              </div>
+              <p className="text-xs text-muted leading-relaxed">
+                Includes {freeQuotas.monthlyLeads.toLocaleString()} leads,{" "}
+                {freeQuotas.monthlyOutreachEmails.toLocaleString()} outreach emails,{" "}
+                {freeQuotas.monthlySocialPosts.toLocaleString()} social posts,{" "}
+                {freeQuotas.maxEmailAccounts} email inbox, and {freeQuotas.maxCampaigns} active campaigns.
+              </p>
+            </div>
+            <Link href="/signup" className="shrink-0">
+              <Button variant="secondary" size="sm" rightIcon={<ArrowRight size={13} />}>
+                Start {trialDays}-Day Trial
+              </Button>
+            </Link>
+          </div>
+        )}
 
         {/* Pricing Cards Grid */}
         <div className="grid gap-6 md:grid-cols-3 items-stretch">

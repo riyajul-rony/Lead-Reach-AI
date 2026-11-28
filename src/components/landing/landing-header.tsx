@@ -11,10 +11,12 @@ export function LandingHeader({
   siteName = "Lead Reach AI",
   logoUrl,
   logoDarkUrl,
+  trialDays = 14,
 }: {
   siteName?: string;
   logoUrl?: string | null;
   logoDarkUrl?: string | null;
+  trialDays?: number;
 }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -139,7 +141,7 @@ export function LandingHeader({
             </Link>
             <Link href="/signup" onClick={() => setMobileMenuOpen(false)}>
               <Button variant="primary" size="sm" className="w-full text-xs">
-                Get Started Free
+                {trialDays > 0 ? `Start ${trialDays}-Day Trial` : "Get Started"}
               </Button>
             </Link>
           </div>

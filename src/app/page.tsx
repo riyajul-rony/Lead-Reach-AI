@@ -28,6 +28,8 @@ import { FAQSection } from "@/components/landing/faq-section";
 import { LandingJsonLd } from "@/components/seo/landing-jsonld";
 import { getSiteUrl } from "@/lib/site-url";
 import { getSiteBranding } from "@/server/branding";
+import { db } from "@/server/db";
+import { getConfiguredTrialDays } from "@/server/billing/trial";
 
 export async function generateMetadata(): Promise<Metadata> {
   const branding = await getSiteBranding();
@@ -66,8 +68,19 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function HomePage() {
-  const branding = await getSiteBranding();
+  const [branding, trialDays, freePlan] = await Promise.all([
+    getSiteBranding(),
+    getConfiguredTrialDays().catch(() => 14),
+    db.plans.findUnique({ where: { slug: "free" } }).catch(() => null),
+  ]);
   const siteUrl = getSiteUrl();
+  const freeQuotas = {
+    monthlyLeads: Number(freePlan?.monthly_leads ?? 100),
+    monthlySocialPosts: Number(freePlan?.monthly_social_posts ?? 30),
+    monthlyOutreachEmails: Number(freePlan?.monthly_outreach_emails ?? 100),
+    maxEmailAccounts: Number(freePlan?.max_email_accounts ?? 1),
+    maxCampaigns: Number(freePlan?.max_campaigns ?? 2),
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-bg text-fg selection:bg-primary selection:text-primaryText">
@@ -77,6 +90,7 @@ export default async function HomePage() {
         siteName={branding.site_name}
         logoUrl={branding.logo_url}
         logoDarkUrl={branding.logo_dark_url}
+        trialDays={trialDays}
       />
 
       <main className="flex-1">
@@ -111,7 +125,7 @@ export default async function HomePage() {
                   className="w-full sm:w-auto text-sm px-6 py-2.5"
                   rightIcon={<ArrowRight size={15} />}
                 >
-                  Start 14-Day Free Trial
+                  {trialDays > 0 ? `Start ${trialDays}-Day Free Trial` : "Choose a Paid Plan"}
                 </Button>
               </Link>
               <a href="#features" className="w-full sm:w-auto">
@@ -123,9 +137,16 @@ export default async function HomePage() {
 
             {/* Trust Points */}
             <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted">
-              <span className="flex items-center gap-1.5">
-                <Check size={14} className="text-success" /> No credit card required
-              </span>
+              {trialDays > 0 ? (
+                <span className="flex items-center gap-1.5">
+                  <Check size={14} className="text-success" />
+                  {trialDays}-day free trial · No credit card required · Up to {freeQuotas.monthlyLeads.toLocaleString()} leads &amp; {freeQuotas.monthlyOutreachEmails.toLocaleString()} emails (paid plan required after trial)
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5">
+                  <Check size={14} className="text-success" /> Transparent paid plans
+                </span>
+              )}
               <span className="flex items-center gap-1.5">
                 <Check size={14} className="text-success" /> 5-minute setup
               </span>
@@ -444,7 +465,7 @@ export default async function HomePage() {
         </section>
 
         {/* Pricing Section */}
-        <PricingSection />
+        <PricingSection trialDays={trialDays} freeQuotas={freeQuotas} />
 
         {/* FAQ Accordion Section */}
         <FAQSection />
@@ -467,7 +488,7 @@ export default async function HomePage() {
                   className="w-full sm:w-auto text-sm px-7 py-3"
                   rightIcon={<ArrowRight size={15} />}
                 >
-                  Get Started Free
+                  {trialDays > 0 ? `Start ${trialDays}-Day Free Trial` : "View Paid Plans"}
                 </Button>
               </Link>
               <Link href="/login" className="w-full sm:w-auto">
