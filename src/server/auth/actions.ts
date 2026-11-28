@@ -6,6 +6,7 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { rateLimit } from "@/server/security/rate-limit";
 import { getAppUrl, getConfig, getRegistrationMode } from "@/server/config";
+import { startFreeTrialForUser } from "@/server/billing/trial";
 import { sendSystemMail } from "@/server/email/system-mailer";
 import { getSiteBranding } from "@/server/branding";
 import { hashPassword, validatePasswordStrength, verifyPassword } from "./password";
@@ -123,6 +124,7 @@ export async function signupAction(_: FormState, form: FormData): Promise<FormSt
         user_settings: { create: {} },
       },
     });
+    await startFreeTrialForUser(user.id);
     const mail = await sendVerificationEmail(email);
     if (!mail.ok) {
       await db.activity_logs.create({

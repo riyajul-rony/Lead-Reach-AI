@@ -3,6 +3,7 @@ import { getSessionUser, createSession } from "@/server/auth/session";
 import { exchangeGoogleCode, saveGoogleConnection } from "@/server/integrations/google-sheets";
 import { db } from "@/server/db";
 import { getConfig, getAppUrl, getRegistrationMode } from "@/server/config";
+import { startFreeTrialForUser } from "@/server/billing/trial";
 import { logger } from "@/server/logger";
 import {
   OAUTH_STATE_COOKIE,
@@ -105,6 +106,7 @@ export async function GET(req: NextRequest) {
             },
           },
         });
+        await startFreeTrialForUser(user.id);
       }
 
       // Save Google tokens for this user for Sheets and Outreach integrations

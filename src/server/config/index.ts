@@ -228,11 +228,18 @@ export async function getGlobalPlatformSettings(): Promise<GlobalPlatformSetting
     getMaintenanceMode(),
   ]);
 
+  const parsedTrialDays =
+    typeof trialDaysStr === "string" && trialDaysStr.trim() !== ""
+      ? Number.parseInt(trialDaysStr.trim(), 10)
+      : Number.NaN;
+  const trialDays =
+    Number.isFinite(parsedTrialDays) && parsedTrialDays >= 0 ? parsedTrialDays : 14;
+
   return {
     siteName: siteName || "Lead Reach AI",
     supportEmail: supportEmail || "support@leadreachai.cerkitlabs.tech",
     defaultPlan: defaultPlan || "free",
-    trialDays: trialDaysStr ? parseInt(trialDaysStr, 10) || 14 : 14,
+    trialDays,
     registrationMode: regMode,
     maintenanceMode: maint.active,
     maintenanceMessage: maint.message,

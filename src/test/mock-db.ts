@@ -230,6 +230,13 @@ class LocalDevMockDb {
     findMany: async ({ where, take, skip, orderBy }: any = {}) => {
       await ensureDevAdminUser();
       let items = localDevStore.getUsers((u) => {
+        if (where?.id) {
+          if (where.id.in && Array.isArray(where.id.in)) {
+            if (!where.id.in.includes(u.id)) return false;
+          } else if (u.id !== where.id) {
+            return false;
+          }
+        }
         if (where?.role) {
           if (where.role.in && Array.isArray(where.role.in)) {
             if (!where.role.in.includes(u.role)) return false;
@@ -239,6 +246,9 @@ class LocalDevMockDb {
         }
         if (where?.status && u.status !== where.status) return false;
         if (where?.plan && u.plan !== where.plan) return false;
+        if (where?.trial_exempt !== undefined && Boolean(u.trial_exempt) !== Boolean(where.trial_exempt)) {
+          return false;
+        }
         if (where?.email && u.email?.toLowerCase() !== where.email?.toLowerCase()) return false;
         if (where?.OR && Array.isArray(where.OR)) {
           const matched = where.OR.some((cond: any) => {
@@ -1671,14 +1681,39 @@ class LocalDevMockDb {
 
   subscriptions = {
     findMany: async ({ where, orderBy, take, skip }: any = {}) => {
-      let items = localDevStore.getSubscriptions((s) => {
+      const matchSub = (s: any) => {
         if (where?.user_id && s.user_id !== where.user_id) return false;
-        if (where?.status && s.status !== where.status) return false;
         if (where?.plan_id && s.plan_id !== where.plan_id) return false;
+        if (where?.provider && s.provider !== where.provider) return false;
+        if (where?.status) {
+          if (where.status.in && Array.isArray(where.status.in)) {
+            if (!where.status.in.includes(s.status)) return false;
+          } else if (s.status !== where.status) {
+            return false;
+          }
+        }
+        if (where?.OR && Array.isArray(where.OR)) {
+          const ok = where.OR.some((cond: any) => {
+            if (cond.status && s.status !== cond.status) return false;
+            if (cond.provider && s.provider !== cond.provider) return false;
+            return true;
+          });
+          if (!ok) return false;
+        }
+        if (where?.current_period_end) {
+          const endMs = new Date(s.current_period_end).getTime();
+          if (where.current_period_end.lt && !(endMs < new Date(where.current_period_end.lt).getTime())) return false;
+          if (where.current_period_end.lte && !(endMs <= new Date(where.current_period_end.lte).getTime())) return false;
+          if (where.current_period_end.gt && !(endMs > new Date(where.current_period_end.gt).getTime())) return false;
+          if (where.current_period_end.gte && !(endMs >= new Date(where.current_period_end.gte).getTime())) return false;
+        }
         return true;
-      });
+      };
+      let items = localDevStore.getSubscriptions(matchSub);
       if (orderBy?.created_at === "desc") {
         items = [...items].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      } else if (orderBy?.current_period_end === "desc") {
+        items = [...items].sort((a, b) => new Date(b.current_period_end || 0).getTime() - new Date(a.current_period_end || 0).getTime());
       }
       if (skip && typeof skip === "number") items = items.slice(skip);
       if (take && typeof take === "number") items = items.slice(0, take);
@@ -1688,7 +1723,14 @@ class LocalDevMockDb {
       return localDevStore.findSubscription((s) => {
         if (where?.id && s.id !== where.id) return false;
         if (where?.user_id && s.user_id !== where.user_id) return false;
-        if (where?.status && s.status !== where.status) return false;
+        if (where?.provider && s.provider !== where.provider) return false;
+        if (where?.status) {
+          if (where.status.in && Array.isArray(where.status.in)) {
+            if (!where.status.in.includes(s.status)) return false;
+          } else if (s.status !== where.status) {
+            return false;
+          }
+        }
         if (where?.provider_subscription_id && s.provider_subscription_id !== where.provider_subscription_id) return false;
         return true;
       });

@@ -335,6 +335,7 @@ model users {
   status                UserStatus   @default(active)
   plan                  String       @default("free")
   plan_id               String?      @db.Uuid
+  trial_exempt          Boolean      @default(false)
   timezone              String       @default("UTC")
   sender_legal_name     String?
   sender_address        String?
