@@ -9,7 +9,7 @@ import { getAppUrl, getConfig, getRegistrationMode } from "@/server/config";
 import { sendSystemMail } from "@/server/email/system-mailer";
 import { getSiteBranding } from "@/server/branding";
 import { hashPassword, validatePasswordStrength, verifyPassword } from "./password";
-import { createSession, destroyAllSessions, destroySession, getSessionUser } from "./session";
+import { createSession, destroyAllSessions, destroySession, getSessionUser, invalidateOtherSessions } from "./session";
 import { randomToken, sha256 } from "./token";
 
 export type FormState = { error?: string; message?: string } | undefined;
@@ -306,4 +306,66 @@ export async function resetPasswordAction(_: FormState, form: FormData): Promise
   ]);
   await destroyAllSessions(user.id);
   redirect("/login?reset=1");
+}
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Please enter your current password."),
+  newPassword: z.string().min(1, "Please enter a new password."),
+});
+
+/** Change the authenticated user's password and revoke all other sessions. */
+export async function changePasswordAction(_: FormState, form: FormData): Promise<FormState> {
+  const session = await getSessionUser();
+  if (!session) {
+    return { error: "You must be logged in to change your password." };
+  }
+
+  const rl = await rateLimit(`change_pw:${session.user.id}`, 5, 15 * 60_000);
+  if (!rl.ok) {
+    return { error: "Too many password change attempts. Please try again in 15 minutes." };
+  }
+
+  const parsed = changePasswordSchema.safeParse(Object.fromEntries(form));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message || "Please enter both current and new passwords." };
+  }
+  const { currentPassword, newPassword } = parsed.data;
+
+  const user = await db.users.findUnique({
+    where: { id: session.user.id },
+    select: { id: true, status: true, password_hash: true },
+  });
+  if (!user || user.status !== "active") {
+    return { error: "Account not found or inactive." };
+  }
+  if (!user.password_hash) {
+    return {
+      error:
+        "This account uses Google Sign-In and does not have a current password. Use Forgot Password on the login page to set one.",
+    };
+  }
+
+  const currentValid = await verifyPassword(user.password_hash, currentPassword);
+  if (!currentValid) {
+    return { error: "Current password is incorrect." };
+  }
+
+  const pwErr = validatePasswordStrength(newPassword);
+  if (pwErr) {
+    return { error: pwErr };
+  }
+
+  if (newPassword === currentPassword) {
+    return { error: "New password must be different from your current password." };
+  }
+
+  const newHash = await hashPassword(newPassword);
+  await db.users.update({
+    where: { id: user.id },
+    data: { password_hash: newHash },
+  });
+
+  await invalidateOtherSessions(user.id, session.sessionId);
+
+  return { message: "Password successfully updated. Other active sessions have been signed out." };
 }

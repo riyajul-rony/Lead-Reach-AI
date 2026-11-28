@@ -352,7 +352,12 @@ class LocalDevMockDb {
       return localDevStore.updateSession(where.id, data) || { ...data };
     },
     deleteMany: async ({ where }: any = {}) => {
-      localDevStore.deleteSessions((s) => (!where?.token_hash || s.token_hash === where.token_hash) && (!where?.user_id || s.user_id === where.user_id));
+      localDevStore.deleteSessions(
+        (s) =>
+          (!where?.token_hash || s.token_hash === where.token_hash) &&
+          (!where?.user_id || s.user_id === where.user_id) &&
+          (!where?.id?.not || s.id !== where.id.not)
+      );
       return { count: 1 };
     },
   };

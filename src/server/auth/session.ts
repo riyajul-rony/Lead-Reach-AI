@@ -177,6 +177,58 @@ export async function invalidateUserSessions(userId: string) {
   }
 }
 
+async function getCurrentSessionTokenHash(): Promise<string | null> {
+  let token: string | undefined;
+  try {
+    const jar = await cookies();
+    token = jar.get(SESSION_COOKIE)?.value;
+  } catch {
+    // cookies() unavailable in non-request contexts
+  }
+  if (!token) {
+    try {
+      const h = await headers();
+      const auth = h.get("authorization");
+      if (auth?.startsWith("Bearer ")) {
+        token = auth.slice(7).trim();
+      }
+    } catch {
+      // headers() unavailable
+    }
+  }
+  return token ? sha256(token) : null;
+}
+
+/** Invalidate all other sessions for a user while keeping the current session active. */
+export async function invalidateOtherSessions(userId: string, keepSessionId: string) {
+  const keepTokenHash = await getCurrentSessionTokenHash();
+  try {
+    await db.sessions.deleteMany({
+      where: {
+        user_id: userId,
+        id: { not: keepSessionId },
+      },
+    });
+  } catch {
+    // ignore DB error
+  }
+  try {
+    const userSessionKeys = await cacheFindKeys(`user_session:${userId}:*`);
+    const keysToDelete: string[] = [];
+    for (const k of userSessionKeys) {
+      const tokenHash = k.substring(k.lastIndexOf(":") + 1);
+      if (!tokenHash || tokenHash === keepTokenHash) continue;
+      keysToDelete.push(`session:${tokenHash}`);
+      keysToDelete.push(k);
+    }
+    if (keysToDelete.length > 0) {
+      await cacheDel(...keysToDelete);
+    }
+  } catch {
+    // cache errors non-fatal
+  }
+}
+
 /**
  * Invalidate Redis session cache for a user or current session so DB updates (e.g. onboarded_at, role, profile)
  * take effect immediately on next request without deleting active DB sessions or logging the user out.

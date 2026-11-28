@@ -46,7 +46,7 @@ export default async function SecuritySettingsPage() {
         </Card>
 
         {/* Change Password Form (Client Component) */}
-        <PasswordForm />
+        <PasswordForm hasPassword={Boolean(dbUser?.password_hash)} />
 
         {/* GDPR Export & Self-Service Account Deletion */}
         <GdprControls
