@@ -163,4 +163,32 @@ describe("HIGH-02: Secure Click Tracking & Link Wrapping", () => {
       else process.env.AUTH_SECRET = prevAuth;
     }
   });
+
+  it("throws a clear error in production when TRACKING_SECRET, AUTH_SECRET, and APP_ENCRYPTION_KEY are all missing", () => {
+    const mutableEnv = process.env as Record<string, string | undefined>;
+    const prevNodeEnv = mutableEnv.NODE_ENV;
+    const prevTracking = mutableEnv.TRACKING_SECRET;
+    const prevAuth = mutableEnv.AUTH_SECRET;
+    const prevEnc = mutableEnv.APP_ENCRYPTION_KEY;
+
+    try {
+      mutableEnv.NODE_ENV = "production";
+      delete mutableEnv.TRACKING_SECRET;
+      delete mutableEnv.AUTH_SECRET;
+      delete mutableEnv.APP_ENCRYPTION_KEY;
+
+      expect(() => createSignedTrackingToken("tok_prod", "https://example.com")).toThrow(
+        /TRACKING_SECRET/
+      );
+      expect(() => verifySignedTrackingToken("abc.def")).toThrow(/TRACKING_SECRET/);
+    } finally {
+      mutableEnv.NODE_ENV = prevNodeEnv;
+      if (prevTracking === undefined) delete mutableEnv.TRACKING_SECRET;
+      else mutableEnv.TRACKING_SECRET = prevTracking;
+      if (prevAuth === undefined) delete mutableEnv.AUTH_SECRET;
+      else mutableEnv.AUTH_SECRET = prevAuth;
+      if (prevEnc === undefined) delete mutableEnv.APP_ENCRYPTION_KEY;
+      else mutableEnv.APP_ENCRYPTION_KEY = prevEnc;
+    }
+  });
 });
