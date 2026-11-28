@@ -14,6 +14,7 @@ import { requireUser } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { getUserUsageAndLimits } from "@/server/billing/limits";
 import { getTrialStatus } from "@/server/billing/trial";
+import { getManualPaymentConfig } from "@/server/billing/manual-settings";
 import { BillingClient } from "./billing-client";
 import { PageHeader } from "@/components/ui/page-header";
 import { SettingsNav } from "@/components/settings/settings-nav";
@@ -27,18 +28,38 @@ export const metadata = {
 
 export default async function BillingSettingsPage() {
   const user = await requireUser();
-  const [limitsAndUsage, trialStatus] = await Promise.all([
+  const [limitsAndUsage, trialStatus, manualConfig] = await Promise.all([
     getUserUsageAndLimits(user.id),
     getTrialStatus(user.id).catch(() => null),
+    getManualPaymentConfig().catch(() => ({
+      bkashNumber: "",
+      nagadNumber: "",
+      bankName: "",
+      bankAccountName: "",
+      bankAccountNumber: "",
+      note: "",
+      usdToBdtRate: null,
+      isConfigured: false,
+    })),
   ]);
 
-  // Fetch active subscription
-  const activeSubscription = await db.subscriptions.findFirst({
-    where: {
-      user_id: user.id,
-      status: { in: ["active", "trialing", "past_due"] },
-    },
-  }).catch(() => null);
+  // Fetch active subscription (or most recent expired paid subscription for Renew CTA)
+  const [activeSubscription, lastExpiredPaidSub] = await Promise.all([
+    db.subscriptions.findFirst({
+      where: {
+        user_id: user.id,
+        status: { in: ["active", "trialing", "past_due"] },
+      },
+    }).catch(() => null),
+    db.subscriptions.findFirst({
+      where: {
+        user_id: user.id,
+        status: "expired",
+        provider: { not: "trial" },
+      },
+      orderBy: { current_period_end: "desc" },
+    }).catch(() => null),
+  ]);
 
   // Fetch recent payments / invoices for this user
   const userPayments = await db.payments.findMany({
@@ -75,6 +96,39 @@ export default async function BillingSettingsPage() {
   const periodEnd = activeSubscription?.current_period_end
     ? new Date(activeSubscription.current_period_end)
     : null;
+
+  const recentPaymentsForClient = userPayments.map((p: any) => {
+    const details =
+      p.method_details && typeof p.method_details === "object"
+        ? (p.method_details as Record<string, any>)
+        : {};
+    return {
+      id: p.id,
+      invoice_number: p.invoice_number,
+      amount: Number(p.amount || 0),
+      currency: p.currency || "USD",
+      status: p.status,
+      plan_id: typeof details.plan_id === "string" ? details.plan_id : null,
+      plan_name: typeof details.plan_name === "string" ? details.plan_name : null,
+      interval: details.interval === "yearly" ? ("yearly" as const) : ("monthly" as const),
+      method: typeof details.method === "string" ? details.method : null,
+      transaction_id: typeof details.transaction_id === "string" ? details.transaction_id : null,
+      sender_number: typeof details.sender_number === "string" ? details.sender_number : null,
+      user_note: typeof details.user_note === "string" ? details.user_note : null,
+      bdt_amount: typeof details.bdt_amount === "number" ? details.bdt_amount : null,
+      submitted_at: typeof details.submitted_at === "string" ? details.submitted_at : null,
+      rejection_reason: typeof details.rejection_reason === "string" ? details.rejection_reason : null,
+    };
+  });
+
+  const currentActivePlanRecord = !isFree
+    ? plansForClient.find((p: any) => p.slug === plan.slug) || null
+    : null;
+  const expiredRenewablePlan =
+    isFree && lastExpiredPaidSub?.plan_id
+      ? plansForClient.find((p: any) => p.id === lastExpiredPaidSub.plan_id && p.slug !== "free") || null
+      : null;
+  const renewablePlanId = currentActivePlanRecord?.id || expiredRenewablePlan?.id || null;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 pb-16">
@@ -293,6 +347,10 @@ export default async function BillingSettingsPage() {
         activeSubscriptionId={activeSubscription?.id}
         isCanceled={Boolean(activeSubscription?.cancel_at_period_end)}
         isTrialExpired={trialStatus?.status === "expired"}
+        manualConfig={manualConfig}
+        recentPayments={recentPaymentsForClient}
+        renewablePlanId={renewablePlanId}
+        isPaidExpired={Boolean(expiredRenewablePlan)}
       />
 
       {/* Invoices & Payment History */}
@@ -330,28 +388,65 @@ export default async function BillingSettingsPage() {
                     const dateStr = p.created_at
                       ? new Date(p.created_at).toLocaleDateString()
                       : "—";
+                    const details =
+                      p.method_details && typeof p.method_details === "object"
+                        ? (p.method_details as Record<string, any>)
+                        : {};
+                    const isSubmittedPending =
+                      p.status === "pending" && Boolean(details.submitted_at || details.transaction_id);
 
                     return (
                       <tr key={p.id} className="hover:bg-surfaceHover transition">
                         <td className="py-3 font-mono font-medium text-fg">
-                          {p.invoice_number}
+                          <div>{p.invoice_number}</div>
+                          {details.plan_name && (
+                            <div className="text-[11px] font-sans text-muted">
+                              {details.plan_name} ({details.interval === "yearly" ? "Yearly" : "Monthly"})
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 text-muted">{dateStr}</td>
                         <td className="py-3 font-mono font-medium text-fg">
-                          {p.currency} {Number(p.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          <div>
+                            {p.currency} {Number(p.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </div>
+                          {details.bdt_amount ? (
+                            <div className="text-[11px] text-muted">
+                              BDT {Number(details.bdt_amount).toLocaleString()}
+                            </div>
+                          ) : null}
                         </td>
-                        <td className="py-3 capitalize text-muted">
-                          {p.method_details?.method || p.provider}
+                        <td className="py-3 text-muted">
+                          <div className="capitalize font-medium text-fg">
+                            {details.method || p.provider}
+                          </div>
+                          {details.transaction_id && (
+                            <div className="text-[11px] font-mono text-muted">
+                              TrxID: {details.transaction_id}
+                            </div>
+                          )}
+                          {details.sender_number && (
+                            <div className="text-[11px] text-muted">
+                              From: {details.sender_number}
+                            </div>
+                          )}
                         </td>
-                        <td className="py-3">
+                        <td className="py-3 space-y-1">
                           {p.status === "succeeded" ? (
-                            <Badge variant="success" size="sm">Paid</Badge>
+                            <Badge variant="success" size="sm">Approved</Badge>
+                          ) : isSubmittedPending ? (
+                            <Badge variant="warning" size="sm">Waiting for Review</Badge>
                           ) : p.status === "pending" ? (
-                            <Badge variant="neutral" size="sm">Pending</Badge>
+                            <Badge variant="neutral" size="sm">Awaiting Submission</Badge>
                           ) : p.status === "refunded" ? (
                             <Badge variant="warning" size="sm">Refunded</Badge>
                           ) : (
-                            <Badge variant="danger" size="sm">Failed</Badge>
+                            <Badge variant="danger" size="sm">Rejected</Badge>
+                          )}
+                          {p.status === "failed" && details.rejection_reason && (
+                            <div className="text-[11px] text-danger max-w-xs">
+                              Reason: {details.rejection_reason}
+                            </div>
                           )}
                         </td>
                       </tr>

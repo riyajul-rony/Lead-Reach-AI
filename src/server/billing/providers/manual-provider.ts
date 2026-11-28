@@ -1,40 +1,96 @@
 import { db } from "@/server/db";
 import { PaymentProvider, CheckoutSessionOptions, CheckoutResult, WebhookResult } from "./types";
-import { getConfig } from "@/server/config";
+import {
+  computeBdtAmount,
+  formatManualInstructionsText,
+  getManualPaymentConfig,
+} from "@/server/billing/manual-settings";
 
 export class ManualPaymentProvider implements PaymentProvider {
   readonly id = "manual";
-  readonly name = "Manual Payment (bKash / Bank / Crypto)";
+  readonly name = "Manual Payment (bKash / Nagad / Bank)";
 
   async createCheckout(options: CheckoutSessionOptions): Promise<CheckoutResult> {
     const now = new Date();
-    const periodEnd = new Date(now);
-    if (options.interval === "yearly") {
-      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-    } else {
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-    }
+    const config = await getManualPaymentConfig();
+    const bdtAmount = computeBdtAmount(options.amount, config.usdToBdtRate);
 
-    // 1. Create or link subscription in pending/active status
-    let subscription = await db.subscriptions.findFirst({
+    // Link existing active/past_due paid subscription if present (never activate a paid sub before admin approval)
+    const existingSub = await db.subscriptions.findFirst({
       where: {
         user_id: options.userId,
-        status: { in: ["active", "trialing", "past_due"] },
+        status: { in: ["active", "past_due"] },
+        provider: { not: "trial" },
       },
+      orderBy: { created_at: "desc" },
     });
 
-    if (!subscription) {
-      subscription = await db.subscriptions.create({
-        data: {
-          user_id: options.userId,
-          plan_id: options.planId,
-          status: "active",
-          current_period_start: now,
-          current_period_end: periodEnd,
-          provider: "manual",
-          provider_subscription_id: `manual_sub_${Date.now()}`,
-        },
-      });
+    // Enforce at most one open pending manual payment per (userId, planId)
+    const pendingPayments = await db.payments.findMany({
+      where: {
+        user_id: options.userId,
+        status: "pending",
+        provider: "manual",
+      },
+      orderBy: { created_at: "desc" },
+      take: 25,
+    });
+
+    const existingPending = pendingPayments.find((p: any) => {
+      const details = p.method_details && typeof p.method_details === "object"
+        ? (p.method_details as Record<string, any>)
+        : {};
+      return details.plan_id === options.planId;
+    });
+
+    if (existingPending) {
+      const existingDetails =
+        existingPending.method_details && typeof existingPending.method_details === "object"
+          ? (existingPending.method_details as Record<string, any>)
+          : {};
+      const alreadySubmitted = Boolean(existingDetails.submitted_at || existingDetails.transaction_id);
+
+      if (!alreadySubmitted) {
+        await db.payments.update({
+          where: { id: existingPending.id },
+          data: {
+            amount: options.amount,
+            currency: options.currency || "USD",
+            subscription_id: existingSub?.id ?? existingPending.subscription_id ?? null,
+            method_details: {
+              ...existingDetails,
+              plan_id: options.planId,
+              plan_slug: options.planSlug,
+              plan_name: options.planName,
+              interval: options.interval,
+              bdt_amount: bdtAmount,
+              usd_to_bdt_rate: config.usdToBdtRate,
+              note: "Pending manual payment submission",
+            },
+          },
+        });
+      }
+
+      const instructionHtml = config.isConfigured
+        ? formatManualInstructionsText(
+            config,
+            alreadySubmitted ? Number(existingPending.amount) : options.amount,
+            existingPending.currency || options.currency || "USD",
+            existingPending.invoice_number
+          )
+        : "";
+
+      return {
+        sessionId: existingPending.id,
+        provider: "manual",
+        invoiceNumber: existingPending.invoice_number,
+        instructionHtml,
+        configured: config.isConfigured,
+        alreadySubmitted,
+        existingStatus: alreadySubmitted ? "waiting_review" : "pending_submission",
+        bdtAmount: alreadySubmitted ? (existingDetails.bdt_amount ?? bdtAmount) : bdtAmount,
+        usdToBdtRate: config.usdToBdtRate,
+      };
     }
 
     // 2. Generate unique invoice number: INV-YYYYMM-XXXX
@@ -42,11 +98,11 @@ export class ManualPaymentProvider implements PaymentProvider {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const invoiceNumber = `INV-${yyyymm}-${randomSuffix}`;
 
-    // 3. Create payment record
+    // 3. Create pending payment record
     const payment = await db.payments.create({
       data: {
         user_id: options.userId,
-        subscription_id: subscription.id,
+        subscription_id: existingSub?.id ?? null,
         amount: options.amount,
         currency: options.currency || "USD",
         status: "pending",
@@ -58,23 +114,27 @@ export class ManualPaymentProvider implements PaymentProvider {
           plan_slug: options.planSlug,
           plan_name: options.planName,
           interval: options.interval,
-          note: "Pending manual verification by admin",
+          bdt_amount: bdtAmount,
+          usd_to_bdt_rate: config.usdToBdtRate,
+          note: "Pending manual payment submission",
         },
       },
     });
 
-    const customInstructions = (await getConfig("MANUAL_PAYMENT_INSTRUCTIONS" as any)) || `
-      Please send ${options.currency} ${options.amount} to our official accounts:
-      - bKash / Nagad: 01700-000000 (Personal)
-      - Bank Transfer: Cerkit Labs / Lead Reach AI, AC: 123456789, Routing: 987654321
-      Include your Invoice #${invoiceNumber} in the reference, then notify admin.
-    `;
+    const instructionHtml = config.isConfigured
+      ? formatManualInstructionsText(config, options.amount, options.currency || "USD", invoiceNumber)
+      : "";
 
     return {
       sessionId: payment.id,
       provider: "manual",
       invoiceNumber,
-      instructionHtml: customInstructions.trim(),
+      instructionHtml,
+      configured: config.isConfigured,
+      alreadySubmitted: false,
+      existingStatus: "pending_submission",
+      bdtAmount,
+      usdToBdtRate: config.usdToBdtRate,
     };
   }
 

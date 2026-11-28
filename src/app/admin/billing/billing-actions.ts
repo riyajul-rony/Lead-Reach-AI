@@ -4,6 +4,72 @@ import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
+import {
+  saveManualPaymentConfig,
+  SaveManualPaymentConfigInput,
+} from "@/server/billing/manual-settings";
+import {
+  approveManualPayment,
+  ManualPaymentError,
+  rejectManualPayment,
+} from "@/server/billing/manual-payments";
+
+export async function approveManualPaymentAction(paymentId: string) {
+  const admin = await requirePermission("billing.manage");
+  try {
+    const res = await approveManualPayment({
+      paymentId,
+      adminId: admin.id,
+      adminEmail: admin.email || "admin",
+    });
+    revalidatePath("/admin/billing");
+    revalidatePath("/app/settings/billing");
+    if (res.userId) {
+      revalidatePath(`/admin/users/${res.userId}`);
+    }
+    return res;
+  } catch (err: any) {
+    if (err instanceof ManualPaymentError) {
+      return { success: false, error: err.message };
+    }
+    return { success: false, error: err?.message || "Failed to approve payment." };
+  }
+}
+
+export async function rejectManualPaymentAction(paymentId: string, reason: string) {
+  const admin = await requirePermission("billing.manage");
+  try {
+    const res = await rejectManualPayment({
+      paymentId,
+      reason,
+      adminId: admin.id,
+      adminEmail: admin.email || "admin",
+    });
+    revalidatePath("/admin/billing");
+    revalidatePath("/app/settings/billing");
+    if (res.userId) {
+      revalidatePath(`/admin/users/${res.userId}`);
+    }
+    return res;
+  } catch (err: any) {
+    if (err instanceof ManualPaymentError) {
+      return { success: false, error: err.message };
+    }
+    return { success: false, error: err?.message || "Failed to reject payment." };
+  }
+}
+
+export async function saveManualPaymentSettingsAction(input: SaveManualPaymentConfigInput) {
+  const admin = await requirePermission("billing.manage");
+  try {
+    const saved = await saveManualPaymentConfig(input, admin.id);
+    revalidatePath("/admin/billing");
+    revalidatePath("/app/settings/billing");
+    return { success: true, config: saved };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Failed to save manual payment settings." };
+  }
+}
 
 export interface RecordManualPaymentInput {
   userId: string;

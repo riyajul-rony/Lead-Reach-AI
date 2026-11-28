@@ -18,7 +18,8 @@ export type ConfigKey =
   | "PLACES_API_KEY" | "APIFY_TOKEN" | "OPENAI_API_KEY"
   | "DEFAULT_TEXT_MODEL" | "DEFAULT_IMAGE_MODEL"
   | "DEFAULT_PAYMENT_PROVIDER" | "ONLINE_PAYMENT_PUBLIC_KEY" | "ONLINE_PAYMENT_SECRET_KEY"
-  | "ONLINE_PAYMENT_WEBHOOK_SECRET" | "MANUAL_PAYMENT_INSTRUCTIONS";
+  | "ONLINE_PAYMENT_WEBHOOK_SECRET" | "MANUAL_PAYMENT_INSTRUCTIONS"
+  | "MANUAL_PAYMENT_CONFIG" | "USD_TO_BDT_RATE";
 
 const DEV_KEY_B64 = Buffer.alloc(32, "leadreach-dev-master-config-key").toString("base64");
 function encKey(): string | undefined {
@@ -36,6 +37,20 @@ export function clearConfigMemoryCache(key?: string) {
   } else {
     inMemoryConfigCache.clear();
   }
+}
+
+/**
+ * Persist an encrypted value into system_settings using the exact same key used by getConfig().
+ */
+export async function setEncryptedConfig(key: ConfigKey, value: string): Promise<void> {
+  const { encrypt } = await import("@/server/crypto");
+  const encrypted = encrypt(value, encKey());
+  await db.system_settings.upsert({
+    where: { key },
+    create: { key, value_enc: encrypted },
+    update: { value_enc: encrypted },
+  });
+  await invalidateSettingCache(key);
 }
 
 /**
