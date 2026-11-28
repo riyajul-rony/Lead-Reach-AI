@@ -34,14 +34,14 @@ const PLANS: PricingPlan[] = [
       "IMAP Automated Stop-on-Reply",
       "Single user workspace",
     ],
-    cta: "Start 14-Day Free Trial",
+    cta: "Get Started with Starter",
   },
   {
     id: "growth",
     name: "Growth",
     badge: "Most Popular",
     popular: true,
-    description: "Built for scaling agencies and sales teams demanding high volume.",
+    description: "Built for scaling agencies and solo operators demanding high volume.",
     monthlyPrice: 79,
     yearlyPrice: 64,
     features: [
@@ -51,7 +51,6 @@ const PLANS: PricingPlan[] = [
       "AI Personalized Intro generator (OpenAI)",
       "10 Social Media Accounts (FB, IG, LinkedIn)",
       "Multi-step automated drip sequences",
-      "Team collaboration (up to 5 members)",
       "Priority customer support",
     ],
     cta: "Scale With Growth",
@@ -69,7 +68,6 @@ const PLANS: PricingPlan[] = [
       "25+ Connected Email Accounts with Warmup Jitter",
       "Unlimited Social Accounts & Custom Review Modes",
       "Custom Webhook & API integrations",
-      "Role-Based Access Control (Admin / Staff / Member)",
       "Dedicated account manager & 99.9% uptime SLA",
     ],
     cta: "Contact Enterprise",
@@ -90,7 +88,7 @@ export function PricingSection() {
             Transparent plans for high-growth teams
           </h2>
           <p className="mt-3 text-sm sm:text-base text-muted">
-            Start free for 14 days. No surprise fees. Upgrade or cancel anytime with one click.
+            Start on the free plan. No surprise fees. Upgrade or cancel anytime with one click.
           </p>
 
           {/* Billing Interval Toggle */}

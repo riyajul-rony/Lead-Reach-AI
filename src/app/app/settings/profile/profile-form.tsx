@@ -278,11 +278,12 @@ export function ProfileForm({ initialValues }: ProfileFormProps) {
             </div>
 
             <Input
-              label="Sender Physical Address"
+              label="Sender Physical Address (Optional)"
               type="text"
               value={senderAddress}
               onChange={(e) => setSenderAddress(e.target.value)}
               placeholder="e.g. 123 Main St, Suite 400, New York, NY 10001"
+              helperText="Optional — sent only when you include {{business_address}} in your email copy. Nothing is ever auto-appended."
             />
 
             {/* Theme Mode Selector */}

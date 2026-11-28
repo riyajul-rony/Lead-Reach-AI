@@ -73,7 +73,7 @@ export default function PrivacyPolicyPage() {
           <section className="space-y-2">
             <h2 className="text-base font-semibold text-fg">4. Email Outreach &amp; Recipient Privacy</h2>
             <p>
-              Emails dispatched through Lead Reach AI follow strict anti-spam guidelines, including an enforced hard limit of 25 emails per hour per account, automated random jitter delays, mandatory CAN-SPAM physical sender addresses, and one-click RFC 8058 unsubscribe mechanisms. Recipients who unsubscribe are immediately added to suppression lists and permanently excluded from future campaigns.
+              Emails dispatched through Lead Reach AI follow strict anti-spam guidelines, including an enforced hard limit of 25 emails per hour per account, automated random jitter delays, and one-click RFC 8058 List-Unsubscribe headers. Email bodies are sent exactly as written by the sender—no unrequested footers or addresses are auto-appended—while optional <code className="font-mono text-fg">{"{{business_address}}"}</code> and <code className="font-mono text-fg">{"{{unsubscribe_url}}"}</code> merge tags are available whenever you choose to include them. Recipients who unsubscribe are immediately added to suppression lists and permanently excluded from future campaigns.
             </p>
           </section>
 
